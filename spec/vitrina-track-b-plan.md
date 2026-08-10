@@ -28,13 +28,13 @@ B.7 onboarding copy  ├─ independent of all the above; writing, not tooling
 B.8 record decisions─┘
 ```
 
-**B.2 first after B.1, and it is not optional.** `CLAUDE.md` instructs Claude Code to read `spec/vitrina-encryption-spec.md`. Documents uploaded to the Claude project are visible to *chats*, not to Claude Code reading your filesystem. Until the specs are committed, every Claude Code session is as blind as the Track A chat was — and that already cost a header layout reconstructed from memory.
+**B.2 first after B.1, and it is not optional.** `CLAUDE.md` instructs Claude Code to read `spec/vitrina-encryption-spec.md`. Documents uploaded to the Claude project are visible to _chats_, not to Claude Code reading your filesystem. Until the specs are committed, every Claude Code session is as blind as the Track A chat was — and that already cost a header layout reconstructed from memory.
 
 **B.3 before Track C accumulates code.** Configuring CI against an almost-empty repo means any failure is your config. Configuring it against 500 lines of Rust plus a WASM build step means every failure is ambiguous.
 
 ## 3. The steps
 
-### B.1 — Monorepo skeleton · *yours*
+### B.1 — Monorepo skeleton · _yours_
 
 `pnpm` workspace plus `cargo` workspace, directories per brief §6 and the component table.
 
@@ -52,15 +52,15 @@ vitrina/
 
 **Done when:** `pnpm install` and `cargo build` both succeed from the root, and the C.1 work has been moved into `crates/envelope/` rather than living in a standalone crate outside the workspace.
 
-*Move C.1 in before it grows. Trivial today; mildly annoying once there are several modules, a `wasm-bindgen` target, and CI paths.*
+_Move C.1 in before it grows. Trivial today; mildly annoying once there are several modules, a `wasm-bindgen` target, and CI paths._
 
-### B.2 — Commit the specifications · *yours, 5 minutes*
+### B.2 — Commit the specifications · _yours, 5 minutes_
 
 All five documents into `spec/`: brief, encryption spec, invite spec, roadmap, Phase 0 plan. Plus this document.
 
 **Done when:** `CLAUDE.md`'s spec table resolves to real paths, and a Claude Code session launched in the repo can read the encryption spec without being handed it.
 
-### B.3 — CI · *delegate*
+### B.3 — CI · _delegate_
 
 Green on a near-empty repo, then kept green.
 
@@ -70,17 +70,26 @@ Green on a near-empty repo, then kept green.
 
 **Done when:** a pull request runs all of the above, and a commit adding the string `crypto_secretstream` to any file fails CI. Test that deliberately, then revert it.
 
-*Deferred to later phases, but design CI so they slot in: running the exported JSON vectors (C.9), the WASM build (C.10), and the invite-spec §7.3 assertion that no outbound request carries key material (Phase 1).*
+_Deferred to later phases, but design CI so they slot in: running the exported JSON vectors (C.9), the WASM build (C.10), and the invite-spec §7.3 assertion that no outbound request carries key material (Phase 1)._
 
-*Context, not enforcement: `CLAUDE.md` is advisory. Anything that can become a failing build should.*
+_Context, not enforcement: `CLAUDE.md` is advisory. Anything that can become a failing build should._
 
-### B.4 — Local infrastructure · *delegate*
+### B.4 — Local infrastructure · _delegate_
 
-`docker-compose` bringing up Postgres and MinIO, with a documented one-command start and seeded bucket.
+`docker-compose` bringing up Postgres and an **S3-compatible object store**, with a documented one-command start and a seeded bucket.
 
-**Done when:** `docker compose up -d` gives you a reachable Postgres and a MinIO console, and the README's development block is corrected to match reality.
+The dependency is the **S3 API**, not any particular implementation. Two capabilities are load-bearing and must be verified rather than assumed:
 
-### B.5 — Initial migration · *delegate, review yourself*
+- **HTTP `Range` requests.** The entire chunked envelope design rests on fetching one chunk's byte range from a single object (encryption spec §3.3).
+- **Presigned URLs.** B.6's proxy-versus-signed-URL decision depends on them.
+
+**Current implementation: SeaweedFS** (Apache-2.0). Its all-in-one server mode runs master, volume, filer, and S3 gateway in one process, which is sufficient for a dev dependency. _Chosen 10 August 2026, replacing MinIO — MinIO's community repository was archived on 25 April 2026 and receives no further security patches, and its successor AIStor is commercial with capacity-based pricing._
+
+**Done when:** `docker compose up -d` gives you a reachable Postgres and a reachable S3 endpoint; a test writes an object, fetches a byte range of it through a presigned URL, and asserts the returned bytes are correct; and the README's development block matches reality.
+
+_That test is not ceremony. An emulator approximately right about `Range` or presigned URLs would let bugs through to production, and this is the cheapest place to catch it._
+
+### B.5 — Initial migration · _delegate, review yourself_
 
 From brief §9. Tables: `owners`, `albums`, `media`, `recipients`, `access_tokens`, `access_log`.
 
@@ -91,13 +100,13 @@ Non-negotiables this must respect:
 - Table and column names use `media`, never `photos`
 - `media.status` is an enum: `pending → processing → ready → failed`
 - `media.kind` discriminator present from the start
-- `recipients` holds a *hashed* access token, never a plaintext one
+- `recipients` holds a _hashed_ access token, never a plaintext one
 - Nothing in the schema can store key material. `recipients.wrapped_key` holds a wrapped blob for passphrase recipients only; QR recipients store nothing
 - No column ever holds a plaintext filename
 
 **Done when:** it applies cleanly to the B.4 Postgres, and you have personally read every column against brief §9 and encryption spec §6.
 
-### B.6 — API surface sketch · *yours*
+### B.6 — API surface sketch · _yours_
 
 A design document in `spec/`, not code. This is where non-negotiable #5 either happens or quietly doesn't.
 
@@ -114,23 +123,23 @@ Signed URLs are cheaper and let the browser range-request storage directly. But 
 
 **Done when:** the document exists in `spec/`, and someone could write the Fastify routes from it without asking you a question.
 
-### B.7 — Onboarding copy · *yours, and don't defer it*
+### B.7 — Onboarding copy · _yours, and don't defer it_
 
 Three sentences a grandmother would understand, stating the guarantee **and its limit**.
 
 Must convey: nothing lands on their device, nothing syncs to a cloud, nothing forwards with a tap, you can revoke it. Must not imply screenshots are prevented — see brief §3, which makes this a product rule rather than a preference.
 
-**Done when:** three sentences exist and you'd be comfortable putting them in front of a data protection officer *and* your own mother.
+**Done when:** three sentences exist and you'd be comfortable putting them in front of a data protection officer _and_ your own mother.
 
-*If you can't do it in three sentences, the product isn't clear yet, and that's the finding — not a reason to write four.*
+_If you can't do it in three sentences, the product isn't clear yet, and that's the finding — not a reason to write four._
 
-### B.8 — Record decisions · *yours, 10 minutes*
+### B.8 — Record decisions · _yours, 10 minutes_
 
 Update brief §12 in place. SvelteKit is confirmed. License stays absent (all rights reserved) with the real deadline being the first external pull request. Hosting remains open and is low-stakes given the blind relay.
 
 **Done when:** brief §12 contains no decision that's actually been made.
 
-*Keep this in the brief. Don't start a separate decision log — a second source of truth is exactly the drift this project keeps engineering against.*
+_Keep this in the brief. Don't start a separate decision log — a second source of truth is exactly the drift this project keeps engineering against._
 
 ## 4. Explicitly not in Track B
 
@@ -146,16 +155,16 @@ A session told "set up the repository" will cheerfully scaffold far more than th
 
 ## 5. Energy map
 
-| Step | Cost | Needs focus? |
-|---|---|---|
-| B.1 | 1 session | No |
-| B.2 | 5 minutes | No |
-| B.3 | 1 session, delegable | No |
-| B.4 | Half a session, delegable | No |
-| B.5 | 1 session including your review | Review does |
-| B.6 | 1–2 sessions | **Yes** |
-| B.7 | Half a session, and it will feel harder than that | **Yes** |
-| B.8 | 10 minutes | No |
+| Step | Cost                                              | Needs focus? |
+| ---- | ------------------------------------------------- | ------------ |
+| B.1  | 1 session                                         | No           |
+| B.2  | 5 minutes                                         | No           |
+| B.3  | 1 session, delegable                              | No           |
+| B.4  | Half a session, delegable                         | No           |
+| B.5  | 1 session including your review                   | Review does  |
+| B.6  | 1–2 sessions                                      | **Yes**      |
+| B.7  | Half a session, and it will feel harder than that | **Yes**      |
+| B.8  | 10 minutes                                        | No           |
 
 B.1 through B.5 and B.8 are thin-evening work. B.6 and B.7 are not — they're design and writing, and doing them tired produces something you'll have to redo.
 
@@ -165,7 +174,7 @@ B.1 through B.5 and B.8 are thin-evening work. B.6 and B.7 are not — they're d
 - [ ] `crates/envelope/` lives inside the cargo workspace
 - [ ] All specifications committed to `spec/`
 - [ ] CI green, and a `crypto_secretstream` commit demonstrably fails it
-- [ ] `docker compose up -d` brings up Postgres and MinIO
+- [ ] `docker compose up -d` brings up Postgres and an S3-compatible store, with `Range` and presigned URLs verified by test
 - [ ] Provisional migration applies, personally reviewed against brief §9
 - [ ] API surface sketch in `spec/`, including the proxy-versus-signed-URL decision
 - [ ] Three sentences of onboarding copy exist

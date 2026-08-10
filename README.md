@@ -56,7 +56,7 @@ Full detail in `spec/`.
 | `packages/web/`    | SvelteKit client — owner and recipient                                                                      |
 | `packages/server/` | The HTTP API. Deliberately boring; holds no keys.                                                           |
 | `packages/shared/` | Types shared across web and server                                                                          |
-| `infra/`           | Migrations, local Postgres and MinIO, CI                                                                    |
+| `infra/`           | Migrations, local Postgres and object storage, CI                                                           |
 
 ## Documentation
 
@@ -74,13 +74,13 @@ The encryption specification is deliberately written so a third party could impl
 
 ## Development
 
-Requires Rust with the `wasm32-unknown-unknown` target, Node with `pnpm`, and Docker for local Postgres and MinIO.
+Requires Rust with the `wasm32-unknown-unknown` target, Node with `pnpm`, and Docker for local Postgres and S3-compatible object storage.
 
 ```bash
 pnpm install
 cargo test              # envelope crate
 pnpm test               # TypeScript
-docker compose up -d    # local Postgres + MinIO
+docker compose up -d    # local Postgres + SeaweedFS (S3)
 ```
 
 _(Commands to be confirmed once the skeleton is complete.)_
