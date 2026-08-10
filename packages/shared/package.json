@@ -1,5 +1,5 @@
 {
-  "name": "vitrina",
+  "name": "shared",
   "version": "1.0.0",
   "description": "",
   "main": "index.js",
@@ -9,12 +9,5 @@
   "keywords": [],
   "author": "",
   "license": "ISC",
-  "devEngines": {
-    "packageManager": {
-      "name": "pnpm",
-      "version": "^11.21.0",
-      "onFail": "download"
-    }
-  },
   "type": "module"
 }
