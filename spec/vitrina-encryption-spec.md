@@ -48,7 +48,9 @@ K_album  (32 bytes, random, one per album)
     └── K_meta(id)  = BLAKE2b-256(key = K_album, msg = "vitrina-meta-v1"  ‖ asset_id)
 ```
 
-`asset_id` is 16 random bytes from a CSPRNG, generated client-side. It MUST be unique within an album. Because it is 128 random bits, collision across albums is negligible at any scale this system will reach, so a relay MAY use it as a global identifier and as an object key — but note that this is a property of how it is generated, not a constraint a client can verify.
+`asset_id` is a **UUIDv4**, generated client-side from a CSPRNG, and appears in the envelope header as its 16 raw bytes. Six of those bits are fixed by the UUID version and variant fields, so it carries 122 bits of entropy rather than 128. Collision remains negligible at any scale this system will reach, so a relay MAY use it as a global identifier and as an object key — but that is a property of how it is generated, not a constraint a client can verify.
+
+**`base_nonce` is not a UUID and MUST NOT be made one for consistency.** It is 16 fully random bytes. The nonce-collision argument in §4.1 depends on all 128 bits, and spending six of them on version and variant markers would weaken it for no benefit — a nonce is not an identifier.
 
 The domain-separation strings are ASCII, without a null terminator, and are part of the format. Changing one is a breaking change.
 

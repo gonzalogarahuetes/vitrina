@@ -161,6 +161,24 @@ The "short-lived" property that a session table would provide for recipients is 
 
 **`owners` stays minimal.** §12 still lists the owner account model as undecided — email required, or invite-only. A migration is not the place to resolve an open decision, so the initial table carries only what login demonstrably needs.
 
+### 9.3 Constraints a migration cannot express
+
+The migration is the canonical column list — this section records only what DDL cannot state.
+
+**`media.id` and `recipients.id` are client-generated and MUST NOT carry a database default.** `media.id` _is_ the envelope's `asset_id`, which the client creates before encrypting. `recipients.id` is inside the wrap AAD (encryption spec §6.2: `"vitrina-wrap-v1" ‖ recipient_id`), so the client needs it before it can compute `wrapped`. A server-assigned default breaks unwrapping, works fine for QR recipients, and fails as an opaque AEAD error. Every other `id` is server-assigned.
+
+**Every timestamp is `timestamptz`.** The canonical user story spans Spain and Argentina; `timestamp without time zone` looks right in development and misorders the access log in production.
+
+**Three different kinds of hash, and they are not interchangeable.** `token_hash` columns hold SHA-256 of a 32-byte random token — there is nothing to brute-force in 256 bits of entropy, and a password hash there would be pure per-request cost. `recipients.wrapped` is protected by Argon2id because a human-transcribable passphrase _is_ brute-forceable (§6.3). An owner password, when `owners` grows one, needs Argon2id as well. Note this in the migration comments so neither gets "optimised" into the other.
+
+**Every identifier is a UUIDv4** (decided 11 August 2026), stored in `uuid` columns and carried in the envelope header as 16 raw bytes. Encryption spec §2 has been amended accordingly: 122 bits of entropy rather than 128, which is irrelevant at any scale this system reaches. `base_nonce` is explicitly **not** a UUID — it stays 16 fully random bytes, because §4.1's nonce argument needs all 128 of them.
+
+**`access_log` granularity is per asset opened, not per chunk fetched.** A hundred-photo album is roughly twelve hundred chunk requests; logging those answers no question anyone has and makes the table unusable. `event` needs a CHECK constraint like `kind` and `status`, or it drifts into three spellings of "viewed" within a month.
+
+**Foreign key `ON DELETE` behaviour is a deliberate decision, not a default.** Cascade serves the right-to-erasure requirement in §11; cascading into `access_log` destroys the audit trail that would evidence the erasure. Resolve it in B.6 rather than by whatever the migration happens to say.
+
+**`owners` is deferred, not designed.** With only `id` and `created_at` there is nothing to authenticate against, so the Phase 1 owner flow cannot start without adding to it. That is acceptable in a provisional migration and should be labelled as such. A password column would not resolve §12 — both candidate account models need one.
+
 ## 10. Web friction layer
 
 All of the following are bypassable. They are included because they defeat accident, which is the threat model.
