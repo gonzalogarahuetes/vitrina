@@ -1,7 +1,7 @@
-const EXPECTED_MAGIC: [u8; 4] = [86, 84, 82, 78];
+pub const EXPECTED_MAGIC: [u8; 4] = [86, 84, 82, 78];
 
 #[derive(Debug)]
-struct Header {
+pub struct Header {
     version: u8,
     cipher: u8,
     base_nonce: [u8; 16],
@@ -11,7 +11,7 @@ struct Header {
 }
 
 #[derive(Debug)]
-enum HeaderError {
+pub enum HeaderError {
     BadMagic,
     WrongVersion(u8),
     WrongCipher(u8),
@@ -30,7 +30,7 @@ impl Header {
             });
         }
         // The first chunk of 4 bytes must be an ASCII code
-        if &bytes[0..4] != EXPECTED_MAGIC {
+        if bytes[0..4] != EXPECTED_MAGIC {
             return Err(HeaderError::BadMagic);
         }
         // Version is the fifth byte and must be 1
