@@ -1,0 +1,41 @@
+services:
+  vitrina-postgres:
+    image: postgres:15
+    container_name: vitrina-postgres
+    environment:
+      - POSTGRES_USER=admin
+      - POSTGRES_PASSWORD=password
+      - POSTGRES_DB=vitrina
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  seaweedfs:
+    image: chrislusf/seaweedfs:4.41
+    container_name: seaweedfs-s3
+    command: server -s3 -s3.config=/etc/seaweedfs/s3.json -dir=/data
+    volumes:
+      - ./s3-config.json:/etc/seaweedfs/s3.json:ro
+      - seaweed-data:/data
+    ports:
+      - "8333:8333"
+    restart: unless-stopped
+
+  createbucket:
+    image: amazon/aws-cli
+    depends_on: [seaweedfs]
+    environment:
+      AWS_ACCESS_KEY_ID: 10881ccdfa15dda85b360cf10d216988
+      AWS_SECRET_ACCESS_KEY: ba68c34138d377ae4522f13c55675c9c
+      AWS_DEFAULT_REGION: us-east-1
+    entrypoint: >
+      sh -c '
+        until aws --endpoint-url http://seaweedfs:8333 s3 ls >/dev/null 2>&1; do sleep 1; done;
+        aws --endpoint-url http://seaweedfs:8333 s3 mb s3://vitrina-media || true
+      '
+    restart: "no"
+
+volumes:
+  seaweed-data:
+  pgdata:
