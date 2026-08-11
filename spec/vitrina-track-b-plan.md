@@ -81,7 +81,16 @@ _Context, not enforcement: `CLAUDE.md` is advisory. Anything that can become a f
 The dependency is the **S3 API**, not any particular implementation. Two capabilities are load-bearing and must be verified rather than assumed:
 
 - **HTTP `Range` requests.** The entire chunked envelope design rests on fetching one chunk's byte range from a single object (encryption spec §3.3).
-- **Presigned URLs.** B.6's proxy-versus-signed-URL decision depends on them.
+- **Presigned URLs.** Needed for Phase 3 video delivery (brief §10.1), and for the `Cache-Control` reconnaissance below.
+
+**`Cache-Control` reconnaissance — no longer blocking, still worth doing.** Brief §10.1 settles v1 on proxying, so `no-store` is enforced by the API and this does not gate Phase 1. It gates Phase 3. Two mechanisms, and the negative case is the point:
+
+- Set `Cache-Control` as **object metadata** at upload (`CacheControl` on `PutObject`) and assert it comes back on a presigned `GET`. This is the stronger mechanism — nothing for a client to strip.
+- Set it as a **per-request override** (`response-cache-control`) and assert it comes back.
+- **Assert that tampering with the override in the query string returns 403.** If SeaweedFS serves a modified `response-cache-control` without a signature failure, the header is client-controllable and the mechanism is decorative — a recipient could strip `no-store` and let the browser cache ciphertext. This is the assertion that would change a design, and a happy-path test never reaches it.
+- **Assert it survives a `Range` request** (206, not just 200). Real requests are ranged, and a store can implement overrides correctly for full responses and drop them for partial ones.
+
+**Result (11 August 2026): all six cases pass against SeaweedFS 4.41**, giving fifteen tests in `infra/object-store.test.mjs`. Both mechanisms work; tampering and stripping both return `403 SignatureDoesNotMatch`; both survive range requests. Two additions worth keeping: tamper via raw string replacement rather than `URLSearchParams`, because `searchParams.set()` re-serialises the query and can re-encode the slashes in `X-Amz-Credential` — breaking the signature for a reason unrelated to the tamper and producing a false pass on the assertion that matters most; and asserting the mutation applied before asserting the status, so a no-op replace fails loudly. The design consequence is recorded in brief §10.1.
 
 **Current implementation: SeaweedFS** (Apache-2.0). Its all-in-one server mode runs master, volume, filer, and S3 gateway in one process, which is sufficient for a dev dependency. _Chosen 10 August 2026, replacing MinIO — MinIO's community repository was archived on 25 April 2026 and receives no further security patches, and its successor AIStor is commercial with capacity-based pricing._
 
@@ -120,9 +129,13 @@ Cover:
 - **A stated constraint that no endpoint may accept key material in any parameter, header, or body.** Write it down so a future route can be checked against it
 - **A stated constraint that no endpoint deletes an album or owner row without having deleted its storage objects first.** `ON DELETE CASCADE` tidies rows and orphans every object in the bucket — including the record of which objects existed. See schema doc §5.1
 
-**The decision worth thinking hardest about:** does the API proxy ciphertext bytes, or issue short-lived signed URLs pointing at object storage?
+**The proxy-versus-signed-URL question is now decided** — brief §10.1. Photos and thumbnails are proxied; signed URLs are deferred to Phase 3 video. B.6 records the consequences rather than reopening the choice:
 
-Signed URLs are cheaper and let the browser range-request storage directly. But a signed URL already issued keeps working until it expires, so revocation is only as fast as your URL lifetime. Proxying gives you revocation checked per request and exact access logging — which powers "María viewed this" — at the cost of every ciphertext byte crossing your server. Brief §10 already assumes short-lived signed URLs; confirm that deliberately and record the expiry you chose and why.
+- A chunk-fetch route that streams a byte range from object storage, forwarding `206` and `Content-Range` faithfully
+- `Cache-Control: no-store` set by the API on every ciphertext response
+- Revocation checked per request, and therefore genuinely immediate — the UI may say so without hedging
+- `asset_viewed` recorded on an asset's **first** chunk request, never per chunk (schema §3)
+- A note that a later per-asset signed-URL endpoint is additive, so nothing here forecloses Phase 3
 
 **Done when:** the document exists in `spec/`, and someone could write the Fastify routes from it without asking you a question.
 
@@ -138,7 +151,7 @@ _If you can't do it in three sentences, the product isn't clear yet, and that's 
 
 ### B.8 — Record decisions · _yours, 10 minutes_
 
-Update brief §12 in place. SvelteKit is confirmed. License stays absent (all rights reserved) with the real deadline being the first external pull request. Hosting remains open and is low-stakes given the blind relay.
+Update brief §12 in place. SvelteKit and Fastify are both confirmed as of 11 August 2026, with the server choice following from the §10.1 proxy decision. License stays absent (all rights reserved) with the real deadline being the first external pull request. Hosting remains open and is low-stakes given the blind relay — though brief §10.1's proxying decision means egress now crosses your server, so it is slightly less low-stakes than it was.
 
 **Done when:** brief §12 contains no decision that's actually been made.
 

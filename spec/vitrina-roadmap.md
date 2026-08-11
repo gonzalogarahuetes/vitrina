@@ -1,6 +1,6 @@
 # Vitrina — Roadmap
 
-**Status:** Draft v0.1 · last updated 11 August 2026
+**Status:** Draft v0.1 · last updated 11 August 2026 · Phase 3 signed-URL note
 **Companion to:** `vitrina-project-brief.md` (canonical; this document defers to it on any conflict)
 
 Resolution decreases deliberately as phases advance. Phase 1 is specified because you are about to build it. Phase 4 is a sketch because specifying it now would be fiction. **Do not sharpen the later phases prematurely** — the point of the non-negotiables in the brief is that they let you leave the future blurry without being trapped by it.
@@ -86,6 +86,7 @@ The encryption format already supports it if Phase 0 was done properly. What is 
 - Server-side transcoding worker (ffmpeg) — the first component that must decrypt, so it needs its own trust analysis, or must run client-side
 - Bitrate ladder decisions, or a single sensible profile to start
 - Chunked encrypted playback via Media Source Extensions
+- **Signed URLs direct to object storage**, deferred here from v1 (brief §10.1). Proxying every seek through the API is worse in both cost and latency, and by this phase real egress numbers exist. The trade returning with it: revocation latency equals URL lifetime, and the access log measures issuance rather than viewing unless URLs are issued lazily per asset. The `Cache-Control` mechanism is already settled and verified — object metadata at upload, not a per-request override (brief §10.1)
 - Seeking against independently-decryptable chunks
 - Poster frame extraction
 - Duration and size limits

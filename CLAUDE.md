@@ -36,6 +36,7 @@ Delegable: repo tooling, CI, `docker-compose`, migrations, the JSON vector expor
 5. **Watermarking stays client-side.** Moving it server-side would require a server that can decrypt.
 6. **The domain object is `media`, not `photos`** — schema, routes, types. It carries a `kind` discriminator and a status field (`pending → processing → ready → failed`).
 7. **Access control and key wrapping live in `packages/server`**, never inside SvelteKit page routes. The web app is one client of the API, not its owner.
+8. **Ciphertext is proxied through the API in v1**, not served by signed URL from object storage — brief §10.1. The API sets `Cache-Control: no-store`, checks revocation per request, and records `asset_viewed` on an asset's first chunk request only. Signed URLs are Phase 3, for video.
 
 If a task appears to require breaking one of these, stop and say so rather than resolving it locally.
 
