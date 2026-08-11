@@ -175,7 +175,9 @@ The migration is the canonical column list — this section records only what DD
 
 **`access_log` granularity is per asset opened, not per chunk fetched.** A hundred-photo album is roughly twelve hundred chunk requests; logging those answers no question anyone has and makes the table unusable. `event` needs a CHECK constraint like `kind` and `status`, or it drifts into three spellings of "viewed" within a month.
 
-**Foreign key `ON DELETE` behaviour is a deliberate decision, not a default.** Cascade serves the right-to-erasure requirement in §11; cascading into `access_log` destroys the audit trail that would evidence the erasure. Resolve it in B.6 rather than by whatever the migration happens to say.
+**Every foreign key is `ON DELETE CASCADE`** (decided 11 August 2026), including both of `access_log`'s. An earlier version of this line claimed cascading into `access_log` would destroy an audit trail evidencing erasure; that was wrong — the log records views, not deletions, and is itself personal data subject to erasure. Cascade is also forced: with `albums → recipients` cascading, a non-cascading `recipients → access_log` would make albums undeletable.
+
+**But cascade is not erasure.** A database cascade removes rows and leaves every encrypted object in the bucket, while destroying the only record of which objects existed — `media.id` _is_ the object key. The result is storage you pay for forever and a right-to-erasure request you have reported as satisfied without deleting the images. **Deleting an album or an owner must therefore be an application operation that removes storage objects first and rows second.** Recorded as a B.6 requirement; see schema doc §5.1.
 
 **`owners` is deferred, not designed.** With only `id` and `created_at` there is nothing to authenticate against, so the Phase 1 owner flow cannot start without adding to it. That is acceptable in a provisional migration and should be labelled as such. A password column would not resolve §12 — both candidate account models need one.
 

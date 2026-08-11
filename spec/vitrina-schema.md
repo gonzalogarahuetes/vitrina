@@ -1,6 +1,6 @@
 # Vitrina — Database Schema
 
-**Status:** Draft v0.1 · 11 August 2026 · **provisional**
+**Status:** Draft v0.1 · last updated 11 August 2026 · **provisional**
 **Companion to:** `vitrina-project-brief.md` §9–§9.3, `vitrina-encryption-spec.md` §6
 **Implemented by:** the B.5 migration
 
@@ -16,19 +16,21 @@ Reasoning lives in brief §9.1 (why two auth mechanisms), §9.2 (what is deliber
 
 ## 1. Conventions
 
-| Convention | Rule |
-| --- | --- |
-| Identifiers | UUIDv4 in `uuid` columns, everywhere |
-| Timestamps | `timestamptz` always, never `timestamp` |
-| ID generation | Server-assigned (`gen_random_uuid()`) **except** `media.id` and `recipients.id`, which are client-supplied with **no default** |
-| Enumerations | `text` plus a `CHECK`, not native Postgres `ENUM` — a provisional schema needs values that are cheap to change |
-| Token hashes | SHA-256 of a 32-byte random token, stored `bytea` (32 bytes) |
-| Password / passphrase | Argon2id, never SHA-256 |
-| Deletion | `ON DELETE` behaviour is **not yet decided** — see §5 |
+| Convention            | Rule                                                                                                                           |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| Identifiers           | UUIDv4 in `uuid` columns, everywhere                                                                                           |
+| Timestamps            | `timestamptz` always, never `timestamp`                                                                                        |
+| ID generation         | Server-assigned (`gen_random_uuid()`) **except** `media.id` and `recipients.id`, which are client-supplied with **no default** |
+| Enumerations          | `text` plus a `CHECK`, not native Postgres `ENUM` — a provisional schema needs values that are cheap to change                 |
+| Token hashes          | SHA-256 of a 32-byte random token, stored `bytea` (32 bytes)                                                                   |
+| Password / passphrase | Argon2id, never SHA-256                                                                                                        |
+| Deletion              | `ON DELETE CASCADE` on every foreign key — see §5, and the constraint it does _not_ satisfy                                    |
 
-**The two client-generated IDs are not a style choice.** `media.id` *is* the envelope's `asset_id`, fixed before encryption begins. `recipients.id` sits inside the wrap AAD (`"vitrina-wrap-v1" ‖ recipient_id`, encryption spec §6.2), so the client must know it before it can compute `wrapped`. A `DEFAULT gen_random_uuid()` on either column produces blobs that cannot be unwrapped, works fine for QR recipients, and fails as an opaque AEAD error.
+**The two client-generated IDs are not a style choice.** `media.id` _is_ the envelope's `asset_id`, fixed before encryption begins. `recipients.id` sits inside the wrap AAD (`"vitrina-wrap-v1" ‖ recipient_id`, encryption spec §6.2), so the client must know it before it can compute `wrapped`. A `DEFAULT gen_random_uuid()` on either column produces blobs that cannot be unwrapped, works fine for QR recipients, and fails as an opaque AEAD error.
 
 ## 2. Diagram
+
+_Illustrative only. The §3 tables are normative — Mermaid cannot express nullability, defaults, or `CHECK` constraints, so nothing about those should be inferred from here._
 
 ```mermaid
 erDiagram
@@ -100,49 +102,49 @@ erDiagram
 
 ### `owners`
 
-| Column | Type | Constraints |
-| --- | --- | --- |
-| `id` | `uuid` | PK, default `gen_random_uuid()` |
-| `created_at` | `timestamptz` | NOT NULL, default `now()` |
+| Column       | Type          | Constraints                     |
+| ------------ | ------------- | ------------------------------- |
+| `id`         | `uuid`        | PK, default `gen_random_uuid()` |
+| `created_at` | `timestamptz` | NOT NULL, default `now()`       |
 
 **Deliberately incomplete.** There is nothing here to authenticate against, because brief §12 still lists the account model as undecided — email required, or invite-only. Phase 1 cannot build the owner flow without adding to this table, and that is the right place to resolve it. A migration is not where an open product decision gets settled.
 
 ### `owner_tokens`
 
-| Column | Type | Constraints |
-| --- | --- | --- |
-| `id` | `uuid` | PK, default `gen_random_uuid()` |
-| `owner_id` | `uuid` | NOT NULL, FK → `owners(id)` |
-| `token_hash` | `bytea` | NOT NULL, UNIQUE |
-| `expires_at` | `timestamptz` | NOT NULL |
-| `revoked_at` | `timestamptz` | NULL |
-| `created_at` | `timestamptz` | NOT NULL, default `now()` |
+| Column       | Type          | Constraints                     |
+| ------------ | ------------- | ------------------------------- |
+| `id`         | `uuid`        | PK, default `gen_random_uuid()` |
+| `owner_id`   | `uuid`        | NOT NULL, FK → `owners(id)`     |
+| `token_hash` | `bytea`       | NOT NULL, UNIQUE                |
+| `expires_at` | `timestamptz` | NOT NULL                        |
+| `revoked_at` | `timestamptz` | NULL                            |
+| `created_at` | `timestamptz` | NOT NULL, default `now()`       |
 
 Hashed rows with expiry, **not** server-side sessions — non-negotiable #6. Several rows per owner is normal, one per signed-in device. `token_hash` is SHA-256 of a 32-byte random token; there is nothing to brute-force in 256 bits of entropy, and Argon2id here would be pure per-request cost.
 
 ### `albums`
 
-| Column | Type | Constraints |
-| --- | --- | --- |
-| `id` | `uuid` | PK, default `gen_random_uuid()` |
-| `owner_id` | `uuid` | NOT NULL, FK → `owners(id)` |
-| `title` | `text` | NOT NULL |
-| `created_at` | `timestamptz` | NOT NULL, default `now()` |
+| Column       | Type          | Constraints                     |
+| ------------ | ------------- | ------------------------------- |
+| `id`         | `uuid`        | PK, default `gen_random_uuid()` |
+| `owner_id`   | `uuid`        | NOT NULL, FK → `owners(id)`     |
+| `title`      | `text`        | NOT NULL                        |
+| `created_at` | `timestamptz` | NOT NULL, default `now()`       |
 
 No `status` column — brief §9.2. `title` is plaintext on the relay; that is a recorded limitation (encryption spec §10), coupled to the unresolved owner-key question in brief §11, and it must not be read as settled design.
 
 ### `media`
 
-| Column | Type | Constraints |
-| --- | --- | --- |
-| `id` | `uuid` | PK, **no default** — client-supplied |
-| `album_id` | `uuid` | NOT NULL, FK → `albums(id)` |
-| `kind` | `text` | NOT NULL, `CHECK (kind IN ('photo','video'))` |
-| `status` | `text` | NOT NULL, default `'pending'`, `CHECK (status IN ('pending','processing','ready','failed'))` |
-| `byte_size` | `bigint` | NULL |
-| `metadata` | `bytea` | NULL |
-| `created_at` | `timestamptz` | NOT NULL, default `now()` |
-| `updated_at` | `timestamptz` | NOT NULL, default `now()` |
+| Column       | Type          | Constraints                                                                                  |
+| ------------ | ------------- | -------------------------------------------------------------------------------------------- |
+| `id`         | `uuid`        | PK, **no default** — client-supplied                                                         |
+| `album_id`   | `uuid`        | NOT NULL, FK → `albums(id)`                                                                  |
+| `kind`       | `text`        | NOT NULL, `CHECK (kind IN ('photo','video'))`                                                |
+| `status`     | `text`        | NOT NULL, default `'pending'`, `CHECK (status IN ('pending','processing','ready','failed'))` |
+| `byte_size`  | `bigint`      | NULL                                                                                         |
+| `metadata`   | `bytea`       | NULL                                                                                         |
+| `created_at` | `timestamptz` | NOT NULL, default `now()`                                                                    |
+| `updated_at` | `timestamptz` | NOT NULL, default `now()`                                                                    |
 
 `id` is the envelope's `asset_id`. Asset and thumbnail object keys derive from it; there is no object-key column (brief §9.2).
 
@@ -152,21 +154,21 @@ No `status` column — brief §9.2. `title` is plaintext on the relay; that is a
 
 ### `recipients`
 
-| Column | Type | Constraints |
-| --- | --- | --- |
-| `id` | `uuid` | PK, **no default** — client-supplied |
-| `album_id` | `uuid` | NOT NULL, FK → `albums(id)` |
-| `kind` | `text` | NOT NULL, `CHECK (kind IN ('qr','passphrase'))` |
-| `label` | `text` | NOT NULL |
-| `token_hash` | `bytea` | NOT NULL, UNIQUE |
-| `revoked_at` | `timestamptz` | NULL |
-| `created_at` | `timestamptz` | NOT NULL, default `now()` |
-| `wrapped` | `bytea` | NULL |
-| `wrap_nonce` | `bytea` | NULL |
-| `kdf_salt` | `bytea` | NULL |
-| `kdf_memory_kib` | `integer` | NULL |
-| `kdf_iterations` | `integer` | NULL |
-| `kdf_parallelism` | `integer` | NULL |
+| Column            | Type          | Constraints                                     |
+| ----------------- | ------------- | ----------------------------------------------- |
+| `id`              | `uuid`        | PK, **no default** — client-supplied            |
+| `album_id`        | `uuid`        | NOT NULL, FK → `albums(id)`                     |
+| `kind`            | `text`        | NOT NULL, `CHECK (kind IN ('qr','passphrase'))` |
+| `label`           | `text`        | NOT NULL                                        |
+| `token_hash`      | `bytea`       | NOT NULL, UNIQUE                                |
+| `revoked_at`      | `timestamptz` | NULL                                            |
+| `created_at`      | `timestamptz` | NOT NULL, default `now()`                       |
+| `wrapped`         | `bytea`       | NULL                                            |
+| `wrap_nonce`      | `bytea`       | NULL                                            |
+| `kdf_salt`        | `bytea`       | NULL                                            |
+| `kdf_memory_kib`  | `integer`     | NULL                                            |
+| `kdf_iterations`  | `integer`     | NULL                                            |
+| `kdf_parallelism` | `integer`     | NULL                                            |
 
 The last six columns are the four conceptual items of encryption spec §6.2 — `wrapped`, `wrap_nonce`, `salt`, and the Argon2id parameters, which are three integers. All six are NULL for QR recipients and all six NOT NULL for passphrase recipients, enforced by one constraint:
 
@@ -188,13 +190,13 @@ Recipients have no account and no separate token table. There is no `access_toke
 
 ### `access_log`
 
-| Column | Type | Constraints |
-| --- | --- | --- |
-| `id` | `bigint` | PK, `GENERATED ALWAYS AS IDENTITY` |
-| `recipient_id` | `uuid` | NOT NULL, FK → `recipients(id)` |
-| `media_id` | `uuid` | NULL, FK → `media(id)` |
-| `event` | `text` | NOT NULL, `CHECK (event IN ('album_opened','asset_viewed'))` |
-| `occurred_at` | `timestamptz` | NOT NULL, default `now()` |
+| Column         | Type          | Constraints                                                  |
+| -------------- | ------------- | ------------------------------------------------------------ |
+| `id`           | `bigint`      | PK, `GENERATED ALWAYS AS IDENTITY`                           |
+| `recipient_id` | `uuid`        | NOT NULL, FK → `recipients(id)`                              |
+| `media_id`     | `uuid`        | NULL, FK → `media(id)`                                       |
+| `event`        | `text`        | NOT NULL, `CHECK (event IN ('album_opened','asset_viewed'))` |
+| `occurred_at`  | `timestamptz` | NOT NULL, default `now()`                                    |
 
 **Granularity is per asset opened, never per chunk fetched.** A hundred-photo album is roughly twelve hundred chunk requests; logging those answers no question anyone asked and makes the table unusable. `media_id` is NULL for `album_opened`.
 
@@ -218,7 +220,37 @@ The last two serve the two questions the log exists to answer: what has this rec
 
 ## 5. Open, and not to be resolved by whatever the migration happens to say
 
-**`ON DELETE` behaviour.** Cascade serves the right-to-erasure requirement in brief §11; cascading into `access_log` destroys the audit trail that would evidence the erasure having happened. Decide in B.6.
+**`ON DELETE` behaviour is decided: `CASCADE` on every foreign key** (11 August 2026).
+
+| Foreign key                              | Behaviour |
+| ---------------------------------------- | --------- |
+| `owner_tokens.owner_id` → `owners`       | `CASCADE` |
+| `albums.owner_id` → `owners`             | `CASCADE` |
+| `media.album_id` → `albums`              | `CASCADE` |
+| `recipients.album_id` → `albums`         | `CASCADE` |
+| `access_log.recipient_id` → `recipients` | `CASCADE` |
+| `access_log.media_id` → `media`          | `CASCADE` |
+
+An earlier draft of this document claimed that cascading into `access_log` would destroy an audit trail evidencing erasure. **That reasoning was wrong and has been withdrawn.** `access_log` records views, not deletions, so it was never evidence that an erasure happened — and it is itself personal data about recipients' viewing behaviour, which makes it subject to erasure rather than something to preserve against it.
+
+Cascade is also structurally forced. `albums → recipients` cascades, so if `recipients → access_log` did not, log rows would block every recipient delete and albums would become undeletable. Note that revoking a recipient sets `revoked_at` and deletes nothing; a `recipients` row is only ever deleted when its album or owner goes, which is exactly when that history should go too.
+
+`media → access_log` is moot in v1, since Phase 1 has no album editing and individual assets are never deleted. Cascade for consistency; revisit when editing arrives.
+
+### 5.1 What cascade does not do, and why it is dangerous on its own
+
+**A database cascade deletes rows. It does not delete objects from the bucket.**
+
+Delete an owner and Postgres will tidily remove their albums, media rows, recipients, and log entries — while every encrypted photograph remains in object storage indefinitely. Two consequences, and the second is serious:
+
+- You keep paying to store data you believe is gone.
+- **You have failed to erase the actual image data while reporting success.** That is a GDPR erasure failure with a false confirmation attached.
+
+Cascade makes it worse rather than better, because the rows it removes are the only record of which objects existed. `media.id` _is_ the object key (§3), so once the row is gone the ciphertext is unreachable, unidentifiable, and undiscoverable except by enumerating the entire bucket.
+
+**Therefore: deleting an album or an owner MUST be an application operation, never a raw `DELETE`.** Enumerate the media, delete the storage objects, verify, then delete the rows — or soft-delete and reconcile with a worker. `ON DELETE CASCADE` is a referential-integrity safety net for rows, not the mechanism of erasure.
+
+This is a **B.6 requirement**: the API sketch must state that no endpoint deletes an album or owner row without first having deleted the corresponding storage objects.
 
 **`owners` shape**, pending brief §12's account model.
 
