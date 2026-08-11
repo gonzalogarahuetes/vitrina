@@ -91,7 +91,9 @@ _That test is not ceremony. An emulator approximately right about `Range` or pre
 
 ### B.5 — Initial migration · _delegate, review yourself_
 
-From brief §9. Tables: `owners`, `albums`, `media`, `recipients`, `access_tokens`, `access_log`.
+From brief §9. Tables: `owners`, `owner_tokens`, `albums`, `media`, `recipients`, `access_log`.
+
+**There is no `access_tokens` table.** Recipient tokens live hashed on the `recipients` row; owners have their own table. See brief §9.1 — conflating them is the easiest way to leak album access.
 
 Mark it **provisional** in a comment — Phase 1 will change it, and that's expected.
 

@@ -1,7 +1,7 @@
 # Vitrina — Encryption Envelope Specification
 
 **Version:** 1 (envelope format version `0x01`)
-**Status:** Draft for review · 6 August 2026 · Section #8 reviewed on 9 August 2026
+**Status:** Draft for review · last updated 11 August 2026 · §2, §7, §8 and §10 revised during C.1 and B.5
 **Companion to:** `vitrina-project-brief.md` §6–§8
 
 ---
@@ -48,7 +48,7 @@ K_album  (32 bytes, random, one per album)
     └── K_meta(id)  = BLAKE2b-256(key = K_album, msg = "vitrina-meta-v1"  ‖ asset_id)
 ```
 
-`asset_id` is 16 random bytes, generated client-side, unique within an album.
+`asset_id` is 16 random bytes from a CSPRNG, generated client-side. It MUST be unique within an album. Because it is 128 random bits, collision across albums is negligible at any scale this system will reach, so a relay MAY use it as a global identifier and as an object key — but note that this is a property of how it is generated, not a constraint a client can verify.
 
 The domain-separation strings are ASCII, without a null terminator, and are part of the format. Changing one is a breaking change.
 
@@ -216,9 +216,13 @@ They travel together in one invite payload but are independent secrets serving d
 
 ## 7. Metadata
 
-Filenames, capture timestamps, dimensions, and (Phase 3) duration are serialized as JSON, encrypted under `K_meta(asset_id)` using this same envelope format, and stored as a separate small object.
+Filenames, capture timestamps, dimensions, and (Phase 3) duration are serialized as JSON and encrypted under `K_meta(asset_id)` using this same envelope format. There is no separate format for metadata.
 
-The relay therefore learns nothing about filenames or image dimensions. The cost is that a client must fetch and decrypt metadata before it can lay out a grid, since it does not know aspect ratios in advance. Clients SHOULD fetch all metadata objects for an album in a single batched request.
+**Storage location: a binary column on the `media` row, not an object in the bucket.** A metadata envelope is a few hundred bytes, is never range-requested, and is always fetched together with its album rather than individually. Clients SHOULD fetch all metadata for an album in a single request — and that requirement is only cheap if a single query returns all of them. Held as objects instead, opening a hundred-photo album would mean a hundred storage fetches proxied through the API on every load.
+
+_This is a judgement call with a real cost, recorded so it is not mistaken for an oversight: it means the object bucket alone is not a complete backup. Losing the database loses filenames and capture dates even though every photograph survives. The database was never disposable — it also holds album membership, recipients, and the access log — so this changes the recovery story less than it first appears. Asset and thumbnail ciphertext still goes to object storage, one object per asset._
+
+The relay learns nothing about filenames or image dimensions either way. The cost that remains is that a client must fetch and decrypt metadata before it can lay out a grid, since it does not know aspect ratios in advance.
 
 **Plaintext filenames MUST NEVER reach the server**, including as object keys. Object keys are random identifiers. `IMG_20260612_bathtime.jpg` describes a child's routine to anyone who reads a bucket listing.
 
@@ -285,5 +289,9 @@ Recorded honestly so they are not mistaken for oversights.
 **Access patterns are visible to the relay.** The server sees which recipient fetched which object and when. This powers the "María viewed this" feature, so it is partly intentional — but it means the relay learns viewing behaviour even though it cannot see content.
 
 **The number of assets in an album is visible**, as is upload timing.
+
+**Album titles and recipient labels are stored in plaintext.** §6.1 says the relay holds "a label" for each recipient, and albums carry a title the owner can read back without holding a key. This is intended, and it is also the sharpest inconsistency in the product: _"Sofía's first birthday"_ and _"María"_ are a child's name and a family member's name sitting readable in a database whose entire pitch is that it cannot read anything.
+
+It is a defensible trade under the accident-not-adversary threat model — the names alone are not the harm the product exists to prevent, and encrypting them costs real usability. But the reason it is not simply fixed is worth stating: encrypting an album title means the owner cannot see their own album list without holding the album key, which requires solving how an owner retains `K_album` across sessions and devices — an unresolved question (brief §11). **The two decisions are coupled and must be made together.** Until then, treat this as a recorded limitation rather than a settled design.
 
 **Client-side watermarking is bypassable** by editing the JavaScript. See brief §5 for why this is the correct trade and why it must not be "fixed" by moving watermarking server-side.
