@@ -4,7 +4,10 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "infra:up": "docker compose up -d",
+    "infra:down": "docker compose down",
+    "test:infra": "node --test infra/object-store.test.mjs"
   },
   "keywords": [],
   "author": "",
@@ -16,5 +19,9 @@
       "onFail": "download"
     }
   },
-  "type": "module"
+  "type": "module",
+  "devDependencies": {
+    "@aws-sdk/client-s3": "^3.1106.0",
+    "@aws-sdk/s3-request-presigner": "^3.1106.0"
+  }
 }

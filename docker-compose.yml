@@ -14,7 +14,15 @@ services:
   seaweedfs:
     image: chrislusf/seaweedfs:4.41
     container_name: seaweedfs-s3
-    command: server -s3 -s3.config=/etc/seaweedfs/s3.json -dir=/data
+    # -volume.max and -master.volumeSizeLimitMB are both load-bearing. Left at
+    # their defaults, `weed server` auto-sizes volume slots as free-disk /
+    # volume-size (1 GiB each); on a nearly-full dev disk that yields ~4 slots,
+    # the default collection claims them all, and every bucket collection is
+    # left with no writable volume — PUTs then fail with a 500. 32 × 64 MiB is
+    # ample for local test objects and does not depend on host free space.
+    command: >
+      server -s3 -s3.config=/etc/seaweedfs/s3.json -dir=/data
+      -volume.max=32 -master.volumeSizeLimitMB=64
     volumes:
       - ./s3-config.json:/etc/seaweedfs/s3.json:ro
       - seaweed-data:/data
