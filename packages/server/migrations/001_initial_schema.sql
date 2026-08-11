@@ -34,7 +34,8 @@ CREATE TABLE owner_tokens (
     "created_at" TIMESTAMP WITH TIME ZONE NOT NULL default now(),
     CONSTRAINT "PK_owner_tokens" PRIMARY KEY ("id"),
     CONSTRAINT "UQ_owner_tokens_token_hash" UNIQUE ("token_hash"),
-    CONSTRAINT "FK_owner_token_owner" FOREIGN KEY ("owner_id") REFERENCES "owners" ("id") ON DELETE CASCADE
+    CONSTRAINT "FK_owner_token_owner" FOREIGN KEY ("owner_id") REFERENCES "owners" ("id") ON DELETE CASCADE,
+    CONSTRAINT "CHK_owner_tokens_token_hash_len" CHECK (octet_length(token_hash) = 32)
 );
 
 CREATE TABLE albums (
@@ -81,7 +82,19 @@ CREATE TABLE recipients (
         num_nonnulls(wrapped, wrap_nonce, kdf_salt,
                     kdf_memory_kib, kdf_iterations, kdf_parallelism)
         = CASE kind WHEN 'passphrase' THEN 6 ELSE 0 END
+    ),
+    CONSTRAINT "CHK_recipients_token_hash_len" CHECK (octet_length(token_hash) = 32),
+    CONSTRAINT "CHK_recipients_kdf_wrap_kind"
+    CHECK (
+        kind = 'qr' OR (
+                octet_length(kdf_salt)   = 16      -- crypto_pwhash_SALTBYTES
+            AND octet_length(wrap_nonce) = 24      -- XChaCha20-Poly1305 nonce
+            AND octet_length(wrapped)    = 48      -- K_album (32) + Poly1305 tag (16)
+            AND kdf_memory_kib  >= 65536     
+            AND kdf_iterations  >= 3
+            AND kdf_parallelism >= 1
     )
+)
 );
 
 CREATE TABLE access_log (
