@@ -190,6 +190,17 @@ wrapped = XChaCha20-Poly1305(
 
 The server stores `salt`, the Argon2id parameters, `wrap_nonce`, and `wrapped`. It never sees the passphrase or `KEK`.
 
+**Exact lengths for version 1.** Every one of these is fixed, and a reader or a database MAY enforce them:
+
+| Value        | Bytes | Why                                                                    |
+| ------------ | ----- | ---------------------------------------------------------------------- |
+| `salt`       | 16    | libsodium's `crypto_pwhash` requires exactly `crypto_pwhash_SALTBYTES` |
+| `wrap_nonce` | 24    | XChaCha20-Poly1305 nonce                                               |
+| `KEK`        | 32    | Argon2id output length                                                 |
+| `wrapped`    | 48    | `K_album` (32) plus the Poly1305 tag (16)                              |
+
+The salt length deserves particular attention, because it is the one that **will not fail in Rust**. RustCrypto's `argon2` accepts salts from 8 to 64 bytes, so a 32-byte salt passes every test in `crates/envelope` and is then rejected by libsodium in the browser. Confirm the constant against libsodium directly during C.8 rather than trusting this table.
+
 **Argon2id parameters for version 1:** memory 64 MiB, iterations 3, parallelism 1.
 
 Parameters are stored per recipient, not hardcoded, so they can be raised later without invalidating existing invitations. 64 MiB is a floor chosen for mobile browsers running libsodium under WASM — libsodium's `MODERATE` preset (256 MiB) risks failing on the low-end Android devices in our audience. **Verify on real target devices before shipping**, not in a desktop browser.

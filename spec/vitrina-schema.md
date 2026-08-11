@@ -184,6 +184,31 @@ CHECK (
 )
 ```
 
+A second constraint pins the lengths the spec fixes exactly, and floors the KDF parameters so they can be raised but never weakened:
+
+```sql
+CHECK (
+  kind = 'qr' OR (
+        octet_length(kdf_salt)   = 16      -- crypto_pwhash_SALTBYTES
+    AND octet_length(wrap_nonce) = 24      -- XChaCha20-Poly1305 nonce
+    AND octet_length(wrapped)    = 48      -- K_album (32) + Poly1305 tag (16)
+    AND kdf_memory_kib  >= 16384           -- absolute floor, NOT the v1 value
+    AND kdf_iterations  >= 2
+    AND kdf_parallelism >= 1
+  )
+)
+```
+
+For QR recipients every column is NULL, the right-hand side evaluates to NULL, and `kind = 'qr'` satisfies the OR. A wrong length in any of the three `bytea` columns is not a style problem — it is a blob that cannot be unwrapped, discovered at unwrap time rather than at insert time.
+
+The `48` is coupled to version 1 of the wrap format. If §6.2 ever changes, this constraint must change with it — which is a feature: it forces the format change to be deliberate rather than silent.
+
+**The KDF floors are deliberately well below v1's chosen parameters** (64 MiB, t=3, p=1 — encryption spec §6.2). They are an absolute minimum, not a restatement of the current value, and the distinction matters: Phase 0 plan §8 schedules V.1 to test whether 64 MiB allocates in a WASM heap on a low-end Android phone, and states that a failure there _is_ a spec change. A floor pinned to 65536 would block the corrected value rather than protect anything.
+
+What the floor does protect against is degradation to something pointless — a bug or a careless migration setting memory to a few hundred KiB, which would make the offline attack §6.3 exists to manage effectively free.
+
+If V.1 ever forces the chosen value _below_ this floor, do not relax the floor. That result would mean Argon2id cannot be run at meaningful strength on target hardware, which is a question about whether passphrase mode is viable at all — not a constraint to loosen quietly.
+
 Parameters are stored per row rather than hardcoded so they can be raised later without invalidating existing invitations (encryption spec §6.2). **`wrap_nonce` is the column that gets forgotten**, and without it the wrapped blob is undecryptable.
 
 Recipients have no account and no separate token table. There is no `access_tokens` table — brief §9.1. Revocation is setting `revoked_at`; it stops future ciphertext being served and does nothing about anything already retrieved (encryption spec §6.4).
@@ -206,30 +231,33 @@ Retention is a Phase 2 GDPR item — viewing behaviour is personal data.
 
 ## 4. Indexes
 
-Beyond primary keys and the two unique constraints:
+Beyond primary keys and the two unique constraints, six indexes exist as created by the B.5 migration:
 
 ```sql
-CREATE INDEX ON media (album_id);
-CREATE INDEX ON recipients (album_id);
-CREATE INDEX ON owner_tokens (owner_id);
-CREATE INDEX ON access_log (recipient_id, occurred_at DESC);
-CREATE INDEX ON access_log (media_id);
+CREATE INDEX "IDX_album_owner_id"          ON "albums"       ("owner_id");
+CREATE INDEX "IDX_owner_token_owner_id"    ON "owner_tokens" ("owner_id");
+CREATE INDEX "IDX_media_album_id"          ON "media"        ("album_id");
+CREATE INDEX "IDX_recipient_album_id"      ON "recipients"   ("album_id");
+CREATE INDEX "IDX_access_log_recipient_id" ON "access_log"   ("recipient_id", occurred_at DESC);
+CREATE INDEX "IDX_access_log_media_id"     ON "access_log"   ("media_id");
 ```
 
-The last two serve the two questions the log exists to answer: what has this recipient seen, and who has seen this photograph.
+`albums(owner_id)` serves the most frequent query in the owner flow — listing an owner's albums. The two `access_log` indexes serve the two questions the log exists to answer: what has this recipient seen, and who has seen this photograph. The composite one carries `occurred_at DESC` so the common "most recent activity" read is satisfied by the index alone.
 
 ## 5. Open, and not to be resolved by whatever the migration happens to say
 
 **`ON DELETE` behaviour is decided: `CASCADE` on every foreign key** (11 August 2026).
 
-| Foreign key                              | Behaviour |
-| ---------------------------------------- | --------- |
-| `owner_tokens.owner_id` → `owners`       | `CASCADE` |
-| `albums.owner_id` → `owners`             | `CASCADE` |
-| `media.album_id` → `albums`              | `CASCADE` |
-| `recipients.album_id` → `albums`         | `CASCADE` |
-| `access_log.recipient_id` → `recipients` | `CASCADE` |
-| `access_log.media_id` → `media`          | `CASCADE` |
+| Foreign key (where the constraint lives)     | On delete | What that means in practice                   |
+| -------------------------------------------- | --------- | --------------------------------------------- |
+| `owner_tokens.owner_id` → `owners(id)`       | `CASCADE` | Delete an **owner** → their auth tokens go    |
+| `albums.owner_id` → `owners(id)`             | `CASCADE` | Delete an **owner** → their albums go         |
+| `media.album_id` → `albums(id)`              | `CASCADE` | Delete an **album** → its media rows go       |
+| `recipients.album_id` → `albums(id)`         | `CASCADE` | Delete an **album** → its recipients go       |
+| `access_log.recipient_id` → `recipients(id)` | `CASCADE` | Delete a **recipient** → their log entries go |
+| `access_log.media_id` → `media(id)`          | `CASCADE` | Delete a **media row** → its log entries go   |
+
+Note that the arrows point _up_ the tree — a foreign key is named for where it lives and what it references — while the cascade propagates _down_ it. Deleting one owner therefore removes that owner's tokens, albums, every media row and recipient in those albums, and every log entry belonging to those recipients, in one statement.
 
 An earlier draft of this document claimed that cascading into `access_log` would destroy an audit trail evidencing erasure. **That reasoning was wrong and has been withdrawn.** `access_log` records views, not deletions, so it was never evidence that an erasure happened — and it is itself personal data about recipients' viewing behaviour, which makes it subject to erasure rather than something to preserve against it.
 
