@@ -4,17 +4,29 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "lint": "pnpm -r --if-present lint",
+    "test": "pnpm -r --if-present test",
+    "build": "pnpm -r --if-present build",
+    "check:forbidden": "./scripts/check-forbidden-constructions.sh",
+    "infra:up": "docker compose up -d",
+    "infra:wait": "./scripts/wait-for-createbucket.sh",
+    "infra:down": "docker compose down",
+    "test:infra": "node --test infra/object-store.test.mjs"
   },
   "keywords": [],
   "author": "",
   "license": "UNLICENSED",
+  "packageManager": "pnpm@11.21.0",
   "devEngines": {
     "packageManager": {
       "name": "pnpm",
-      "version": "^11.21.0",
+      "version": "11.21.0",
       "onFail": "download"
     }
   },
-  "type": "module"
+  "type": "module",
+  "devDependencies": {
+    "@aws-sdk/client-s3": "^3.1106.0",
+    "@aws-sdk/s3-request-presigner": "^3.1106.0"
+  }
 }
