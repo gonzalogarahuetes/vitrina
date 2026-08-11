@@ -52,6 +52,16 @@ const OBJECT_SIZE = (CHUNK_COUNT - 1) * CHUNK_SIZE + LAST_CHUNK_SIZE
 /** Opaque key. Plaintext filenames must never reach the server, keys included. */
 const KEY = `test/${randomBytes(16).toString('hex')}`
 
+/** Same, for the object written with Cache-Control as stored object metadata. */
+const CACHE_CONTROL_KEY = `test/${randomBytes(16).toString('hex')}`
+
+/**
+ * What we want on every ciphertext response. `no-store` rather than `no-cache`:
+ * the recipient's browser and any intermediary must not retain the bytes at all,
+ * not merely revalidate before reusing them.
+ */
+const CACHE_CONTROL = 'no-store'
+
 /** Stands in for ciphertext: the store must return these bytes unaltered. */
 const BODY = randomBytes(OBJECT_SIZE)
 
@@ -63,6 +73,14 @@ const chunkRange = (i) => ({
 
 const presignGet = (expiresIn = 60) =>
 	getSignedUrl(s3, new GetObjectCommand({ Bucket: BUCKET, Key: KEY }), { expiresIn })
+
+/** Presigns a GET carrying the per-request `response-cache-control` override. */
+const presignGetWithCacheControlOverride = (key = KEY, expiresIn = 60) =>
+	getSignedUrl(
+		s3,
+		new GetObjectCommand({ Bucket: BUCKET, Key: key, ResponseCacheControl: CACHE_CONTROL }),
+		{ expiresIn },
+	)
 
 before(async () => {
 	try {
@@ -82,10 +100,20 @@ before(async () => {
 			ContentType: 'application/octet-stream',
 		}),
 	)
+	await s3.send(
+		new PutObjectCommand({
+			Bucket: BUCKET,
+			Key: CACHE_CONTROL_KEY,
+			Body: BODY,
+			ContentType: 'application/octet-stream',
+			CacheControl: CACHE_CONTROL,
+		}),
+	)
 })
 
 after(async () => {
 	await s3.send(new DeleteObjectCommand({ Bucket: BUCKET, Key: KEY }))
+	await s3.send(new DeleteObjectCommand({ Bucket: BUCKET, Key: CACHE_CONTROL_KEY }))
 })
 
 test('a presigned URL serves the whole object', async () => {
@@ -191,4 +219,97 @@ test('an expired presigned URL is denied', async () => {
 
 	const res = await fetch(url)
 	assert.ok(res.status === 401 || res.status === 403, `expected 401/403, got ${res.status}`)
+})
+
+// Cache-Control, two mechanisms.
+//
+// A store that will not emit `no-store` on ciphertext responses is a finding:
+// the bytes are decryptable by whoever holds the key, and a disk cache keeps
+// them past the point where the recipient's tab is closed.
+//
+// Stored object metadata (A, B) is the mechanism to prefer — set once at upload,
+// returned on every GET, with no per-request query parameter for a client to
+// alter. The `response-cache-control` override (C, D, E) is the per-request
+// alternative and is the one that has to be probed adversarially: it travels in
+// the query string, so if the store honours it *unsigned*, a recipient can swap
+// `no-store` for `max-age=31536000` and have their browser retain the ciphertext.
+// That is the case a happy-path assertion never reaches.
+
+test('Cache-Control set as object metadata is returned on a whole-object GET', async () => {
+	const url = await getSignedUrl(
+		s3,
+		new GetObjectCommand({ Bucket: BUCKET, Key: CACHE_CONTROL_KEY }),
+		{ expiresIn: 60 },
+	)
+
+	const res = await fetch(url)
+	assert.equal(res.status, 200)
+	assert.equal(res.headers.get('cache-control'), CACHE_CONTROL)
+})
+
+test('Cache-Control set as object metadata survives a range-GET', async () => {
+	// Every real request for an asset is ranged, so a store that emits the header
+	// on 200s and drops it on 206s would be useless to us in practice.
+	const { start, end } = chunkRange(1)
+	const url = await getSignedUrl(
+		s3,
+		new GetObjectCommand({ Bucket: BUCKET, Key: CACHE_CONTROL_KEY }),
+		{ expiresIn: 60 },
+	)
+
+	const res = await fetch(url, { headers: { Range: `bytes=${start}-${end}` } })
+	assert.equal(res.status, 206)
+	assert.equal(res.headers.get('cache-control'), CACHE_CONTROL)
+})
+
+test('the response-cache-control override is honoured on a whole-object GET', async () => {
+	const url = await presignGetWithCacheControlOverride()
+	assert.match(url, /response-cache-control=/, 'SDK did not put the override in the query string')
+
+	const res = await fetch(url)
+	assert.equal(res.status, 200)
+	assert.equal(res.headers.get('cache-control'), CACHE_CONTROL)
+})
+
+test('a tampered response-cache-control override is denied', async () => {
+	// The assertion that decides whether the override is a control or a
+	// decoration. It is covered by the SigV4 signature, so altering the value
+	// must invalidate the URL rather than change the header we get back.
+	const url = await presignGetWithCacheControlOverride()
+	const tampered = url.replace('response-cache-control=no-store', 'response-cache-control=max-age%3D31536000')
+	assert.notEqual(tampered, url, 'tamper did not apply — the assertion below would pass vacuously')
+
+	const res = await fetch(tampered)
+	assert.ok(
+		res.status === 401 || res.status === 403,
+		`expected 401/403 for a tampered override, got ${res.status}. If the store served ` +
+			`this, response-cache-control is client-controllable and cannot be relied on; ` +
+			`Cache-Control must be set as object metadata at upload time instead.`,
+	)
+})
+
+test('removing the response-cache-control override is denied', async () => {
+	// The other half of the same threat: a recipient who cannot forge a longer
+	// max-age may still try simply dropping the parameter to get an unrestricted
+	// response. Deleting a signed query parameter must also break the signature.
+	const url = await presignGetWithCacheControlOverride()
+	const stripped = url
+		.replace('&response-cache-control=no-store', '')
+		.replace('response-cache-control=no-store&', '')
+	assert.notEqual(stripped, url, 'strip did not apply — the assertion below would pass vacuously')
+
+	const res = await fetch(stripped)
+	assert.ok(
+		res.status === 401 || res.status === 403,
+		`expected 401/403 after stripping the override, got ${res.status}`,
+	)
+})
+
+test('the response-cache-control override survives a range-GET', async () => {
+	const { start, end } = chunkRange(1)
+	const url = await presignGetWithCacheControlOverride()
+
+	const res = await fetch(url, { headers: { Range: `bytes=${start}-${end}` } })
+	assert.equal(res.status, 206)
+	assert.equal(res.headers.get('cache-control'), CACHE_CONTROL)
 })
