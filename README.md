@@ -78,12 +78,45 @@ Requires Rust with the `wasm32-unknown-unknown` target, Node with `pnpm`, and Do
 
 ```bash
 pnpm install
-cargo test              # envelope crate
-pnpm test               # TypeScript
-docker compose up -d    # local Postgres + SeaweedFS (S3)
+pnpm infra:up           # one command; brings up the whole local stack
 ```
 
-_(Commands to be confirmed once the skeleton is complete.)_
+`pnpm infra:up` is `docker compose up -d`. It brings up:
+
+| Service            | Where                    | What                                                                                 |
+| ------------------ | ------------------------ | ------------------------------------------------------------------------------------ |
+| `vitrina-postgres` | `localhost:5432`         | Postgres 15. Database `vitrina`, user `admin`, password `password`.                   |
+| `seaweedfs`        | `localhost:8333`         | SeaweedFS S3 gateway — the S3-compatible object store that holds ciphertext.          |
+| `createbucket`     | — (one-shot, then exits) | Waits for the gateway, then creates the `vitrina-media` bucket. Exiting `0` is done.  |
+
+Credentials for the object store live in `s3-config.json` and are shared by the
+gateway, the bucket seeder, and the tests, so there is one source of truth. They
+are local development credentials with no production counterpart.
+
+`pnpm infra:down` stops the stack. Volumes are named (`pgdata`, `seaweed-data`)
+and survive it; `docker compose down -v` is the way to start from empty.
+
+### Tests
+
+```bash
+cargo test              # envelope crate
+pnpm test               # TypeScript — no Docker needed
+pnpm test:infra         # object store — requires the stack to be up
+```
+
+`pnpm test:infra` is deliberately **not** part of `pnpm test`. It talks to a live
+SeaweedFS over the network, so it needs `pnpm infra:up` first and would otherwise
+make the ordinary suite fail on a machine without Docker running. What it checks
+is `infra/object-store.test.mjs`: that a presigned URL round-trips bytes
+unaltered, that byte-range GETs return exactly the right chunk (arithmetic
+offsets, first / middle / partial-final), and that unsigned, tampered, and
+expired URLs are refused. Those are the transport-layer properties the chunked
+envelope depends on.
+
+It reads credentials from `s3-config.json`; `S3_ENDPOINT`, `S3_BUCKET`, and the
+usual `AWS_*` variables override that if you point it at something else.
+
+_(`pnpm test` has no TypeScript suites behind it yet — the packages are still empty.)_
 
 ## Status
 
