@@ -1,7 +1,7 @@
 # Vitrina — Invite Payload Specification
 
 **Version:** 1
-**Status:** Draft for review · 6 August 2026
+**Status:** Draft for review · last updated 11 August 2026 · §4 corrected, §8 added
 **Companion to:** `vitrina-encryption-spec.md`, `vitrina-project-brief.md` §6.7
 
 ---
@@ -18,11 +18,11 @@ Defining the payload as an object with three serialisations costs nothing now an
 
 ```jsonc
 {
-  "v":     1,                  // integer, payload version
-  "relay": "https://…",        // origin of the relay serving this album
-  "album": "…",                // 16 bytes, base64url, no padding
-  "token": "…",                // 32 bytes, base64url, no padding — access token
-  "key":   "…"                 // 32 bytes, base64url, no padding — K_album
+  "v": 1, // integer, payload version
+  "relay": "https://…", // origin of the relay serving this album
+  "album": "…", // 16 bytes, base64url, no padding
+  "token": "…", // 32 bytes, base64url, no padding — access token
+  "key": "…", // 32 bytes, base64url, no padding — K_album
 }
 ```
 
@@ -81,7 +81,7 @@ The QR encodes the §2 URL verbatim.
 - Error correction level M or higher
 - Quiet zone of at least 4 modules
 - Rendered at a size that survives being photographed off a screen — this is how it will actually be delivered most of the time
-- The recipient-facing UI MUST accompany it with plain language: *this QR is like a house key — anyone who photographs it can see the album.* The audience will not infer this.
+- The recipient-facing UI MUST accompany it with plain language: _this QR is like a house key — anyone who photographs it can see the album._ The audience will not infer this.
 
 A QR printed on paper is a physical bearer secret with no expiry beyond token revocation. That is an acceptable and even desirable property — it is how a grandparent can be given access at a family lunch without any account, email address, or app install — but the UI must not present it as merely a convenience.
 
@@ -101,7 +101,7 @@ The recipient receives the link (or scans a QR of it) **and, separately, a 5-wor
 
 Passphrases are system-generated, minimum 5 words, from a Spanish or Catalan wordlist. See encryption spec §6.3 — user-chosen passphrases are forbidden, and the reason is not paternalism.
 
-**Security note:** this mode is strictly weaker than direct mode, because the relay now stores a wrapped copy of `K_album` and can attack it offline given a weak passphrase. It exists because delivery constraints are real. Direct mode is the default; passphrase mode is the fallback, and the owner-facing UI SHOULD present it that way rather than as an equal choice.
+**Security note:** this mode is weaker than direct mode **against database theft**, because the relay stores a wrapped copy of `K_album` and can attack it offline given a weak passphrase. It is _stronger_ against a forwarded invite, because the relay participates in every unwrap and therefore has a lever direct mode does not — see encryption spec §6.5 and §8 below. Direct mode remains the default and the owner-facing UI SHOULD present passphrase mode as the fallback, but not on the grounds that it is weaker in every respect.
 
 ---
 
@@ -132,3 +132,52 @@ Native clients inherit every obligation in §2.2, with one addition: iOS and And
 5. Rejection or explicit confirmation of an unrecognised `relay` origin
 6. Passphrase unwrap against fixed vectors
 7. Assertion that after load, `key` appears in no persistent browser storage
+
+---
+
+## 8. Invite reuse and single-use redemption — **not in v1**
+
+_Recorded 11 August 2026 because the reasoning is easy to lose and the failure mode is easy to miss. Nothing here is scheduled. It requires no encryption format change, which is what makes it genuinely deferrable._
+
+### 8.1 What can and cannot be limited
+
+The question is whether an invite can be restricted to one person, so that a recipient forwarding their QR to three relatives does not grant three more people access.
+
+`token` and `key` are independent secrets (§1.1), and only one of them is the relay's to control:
+
+- **The token can be limited.** The relay stores its hash, and can refuse to serve ciphertext to a second redeemer.
+- **The key cannot be un-given.** In direct mode `K_album` is inside the QR. Anyone who photographs that code holds it permanently, and no server behaviour retracts it.
+
+So single-use redemption prevents further recipients from **fetching** ciphertext. It does not prevent them **decrypting** ciphertext they obtained some other way. In practice they are locked out; the guarantee is server-enforced, not mathematical, exactly as with revocation (encryption spec §6.4).
+
+### 8.2 The buildable shape
+
+Device-bound redemption. On first open the client generates a device secret, presents it alongside the invite token, and the relay marks the invite redeemed and issues a device-bound access token. Subsequent redemptions of the same invite are refused.
+
+Schema cost: a `redeemed_at` column, or a small `recipient_devices` table if several devices per recipient should be allowed. One endpoint. **No change to the envelope format or the payload object.**
+
+### 8.3 The failure mode, which is the reason this is not obviously good
+
+**Hard single-use converts a sharing problem into a race.** If a recipient forwards the QR and the second person opens it first, the second person is admitted and the intended recipient is locked out — and the intended recipient is the one who telephones about it.
+
+This is not theoretical for this audience. A grandparent may not open an invite for three days. First-come-first-served over a multi-day window, with no way for the owner to tell who won, is a support burden and a trust problem at the same time.
+
+It also cuts against a property §3 deliberately values: a printed QR with no expiry beyond revocation is how someone is given access at a family lunch with no account, no email address, and no app install. Single-use redemption and short invite lifetimes both erode that. A trade, not a free win.
+
+### 8.4 The asymmetry that decides the mechanism
+
+Direct mode cannot gate redemption at the moment of decryption, because the relay never sees the key. Passphrase mode can, because the client must fetch the wrapped blob and the relay therefore participates in every unwrap (encryption spec §6.5).
+
+If invite sharing ever becomes the primary concern, that asymmetry — not a preference for QR codes — is what should drive the choice of default.
+
+### 8.5 The likely better answer: visibility, not prevention
+
+**"María's invite has been opened on 2 devices," surfaced to the owner** alongside the existing access log.
+
+This matches the threat model. Forwarding an invite to an aunt who would love to see the photographs is an accident of ordinary generosity, not an attack — and it is the same reasoning that makes the watermark social rather than forensic (brief §5). A hard lock generates support calls; a visible device count generates a conversation the parent can have themselves.
+
+It is also closer to what a nervous parent actually wants to hear. Not _this is impossible_, but _you would know_.
+
+### 8.6 Copy constraint
+
+Whatever is built, the UI MUST NOT claim that only one person can view an album. A recipient showing another person their phone screen defeats every mechanism above, and so does a screenshot. Brief §3 applies unchanged.

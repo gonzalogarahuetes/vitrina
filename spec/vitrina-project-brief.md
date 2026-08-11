@@ -1,6 +1,6 @@
 # Vitrina — Project Brief
 
-**Status:** Draft v0.1 · 6 August 2026
+**Status:** Draft v0.1 · last updated 11 August 2026
 **Purpose of this document:** the single canonical description of what Vitrina is, what it promises, and the constraints every implementation decision must respect. Paste this into any new chat or Claude Code session before asking for work.
 
 > `Vitrina` is a working codename, not a decision. Naming is an open item.
@@ -47,7 +47,7 @@ This is the most important sentence in this document, because it sets the design
 - That a technically sophisticated recipient cannot extract what is displayed
 - That the images are "un-copyable" or "DRM-protected"
 
-**This is a product rule, not just an ethical one.** Overclaiming invites a betrayal-of-trust incident the first time a user discovers a screenshot, and in the EU it is a marketing claim we cannot substantiate. Onboarding copy must state the limit plainly and frame the value correctly: *nothing lands on their device, nothing syncs to a cloud, nothing forwards with a tap, and you can revoke it.*
+**This is a product rule, not just an ethical one.** Overclaiming invites a betrayal-of-trust incident the first time a user discovers a screenshot, and in the EU it is a marketing claim we cannot substantiate. Onboarding copy must state the limit plainly and frame the value correctly: _nothing lands on their device, nothing syncs to a cloud, nothing forwards with a tap, and you can revoke it._
 
 ## 4. Architecture: blind relay
 
@@ -67,7 +67,7 @@ The parent's device encrypts before upload. The relay stores and forwards opaque
 
 ## 5. Watermarking: client-side and visible
 
-Each rendered image carries a visible overlay: recipient name and date, e.g. *"Shared privately with María · 6 Aug 2026."*
+Each rendered image carries a visible overlay: recipient name and date, e.g. _"Shared privately with María · 6 Aug 2026."_
 
 This is generated **client-side, after decryption.** That means it is bypassable by anyone who opens DevTools and edits the JavaScript. This is an accepted trade, and the reasoning must be preserved so nobody "fixes" it later:
 
@@ -90,7 +90,7 @@ These exist because they are cheap now and expensive or impossible later. Any im
 ### Portability across clients
 
 4. **libsodium everywhere** — WASM in the browser, native bindings in Swift and Kotlin. Not Web Crypto: it is browser-only and lacks Argon2id.
-5. **A real HTTP API boundary.** Access-control and key-wrapping logic must live in a layer the web framework merely *calls*, never inside page-rendering routes. The web app is one client of the API, not the API's owner.
+5. **A real HTTP API boundary.** Access-control and key-wrapping logic must live in a layer the web framework merely _calls_, never inside page-rendering routes. The web app is one client of the API, not the API's owner.
 6. **Token-based auth, not cookie-session auth.** A cookie may carry the token in the browser; the server contract assumes a stateless, untrusted client.
 7. **A structured invite payload** — relay URL, album ID, key material as a defined serializable object. It renders into a URL fragment, a QR code, or an iOS universal link. Do not let "a link with a fragment" become the abstraction.
 
@@ -132,14 +132,54 @@ State this accurately in the UI. "Revoked" must not imply "they can no longer de
 
 ## 9. Data model sketch
 
-| Table | Notes |
-|---|---|
-| `owners` | Parent accounts |
-| `albums` | Owner, title, created, status |
-| `media` | Album, `kind`, `status`, `chunk_count`, `base_nonce`, byte size, encrypted metadata blob |
-| `recipients` | Album, label, wrapped key, KDF salt + params, `revoked_at` |
-| `access_tokens` | Short-lived, per recipient |
-| `access_log` | Recipient, media, event, timestamp — powers "María viewed this" |
+| Table          | Notes                                                                                                                                                                                                                                                    |
+| -------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `owners`       | Parent accounts                                                                                                                                                                                                                                          |
+| `owner_tokens` | Owner auth tokens — hashed rows with expiry, not server-side sessions (non-negotiable #6)                                                                                                                                                                |
+| `albums`       | Owner, title, created, status                                                                                                                                                                                                                            |
+| `media`        | Album, `kind`, `status`, byte size, encrypted metadata blob                                                                                                                                                                                              |
+| `recipients`   | Album, label, hashed access token, `revoked_at`; plus `wrapped`, `salt`, `wrap_nonce` and Argon2id params **for passphrase recipients only** — spec §6.2, all four; `wrap_nonce` is the one that gets forgotten and without it the blob is undecryptable |
+| `access_log`   | Recipient, media, event, timestamp — powers "María viewed this"                                                                                                                                                                                          |
+
+### 9.1 Two auth mechanisms, deliberately not one table
+
+Owners hold account auth tokens. Recipients hold a long-lived invite access token and have no account at all (encryption spec §6.4, invite spec §1.1). These are different mechanisms, and a single shared token table would invite treating them as one — which is the easiest way to leak album access. Recipient tokens live hashed on the `recipients` row and are revoked by setting `revoked_at`; there is no separate recipient token table.
+
+The "short-lived" property that a session table would provide for recipients is instead delivered by short-lived signed URLs for chunk fetches (§10). Confirm the expiry deliberately in the API sketch — it _is_ the revocation latency.
+
+### 9.2 What is deliberately not stored
+
+**`base_nonce` and `chunk_count` are not columns.** Both already live in the authenticated 64-byte envelope header, which every chunk's AAD covers. A database copy cannot be authenticated against anything, so if the two ever disagree the header wins and the row is simply lying. The server never decrypts and therefore never needs either value; the client fetches the header regardless.
+
+**`byte_size` is a denormalised convenience** for owner quota and storage accounting, so that answering "how much is this owner storing" does not require enumerating a bucket. Object storage is authoritative; treat the column as a cache.
+
+**No column ever holds a plaintext filename**, and none holds key material. `recipients.wrapped_key` holds a wrapped blob for passphrase recipients; QR recipients store nothing at all (encryption spec §6.1).
+
+**No object-key column.** `media.id` _is_ the 16-byte `asset_id`, and encryption spec §7 requires object keys to be random identifiers — which `asset_id` already is. Asset and thumbnail object keys are derived from it rather than stored, so there is no second value that can drift. See encryption spec §2 on why relying on it as a global identifier is safe.
+
+**`albums.status` is not in the initial migration.** It appeared in earlier sketches with no enumerated values, unlike `media.status`, and v1 has no state an album moves through. Add it when something needs it — a plausible future use is Phase 5 time-limited albums.
+
+**`owners` stays minimal.** §12 still lists the owner account model as undecided — email required, or invite-only. A migration is not the place to resolve an open decision, so the initial table carries only what login demonstrably needs.
+
+### 9.3 Constraints a migration cannot express
+
+The migration is the canonical column list — this section records only what DDL cannot state.
+
+**`media.id` and `recipients.id` are client-generated and MUST NOT carry a database default.** `media.id` _is_ the envelope's `asset_id`, which the client creates before encrypting. `recipients.id` is inside the wrap AAD (encryption spec §6.2: `"vitrina-wrap-v1" ‖ recipient_id`), so the client needs it before it can compute `wrapped`. A server-assigned default breaks unwrapping, works fine for QR recipients, and fails as an opaque AEAD error. Every other `id` is server-assigned.
+
+**Every timestamp is `timestamptz`.** The canonical user story spans Spain and Argentina; `timestamp without time zone` looks right in development and misorders the access log in production.
+
+**Three different kinds of hash, and they are not interchangeable.** `token_hash` columns hold SHA-256 of a 32-byte random token — there is nothing to brute-force in 256 bits of entropy, and a password hash there would be pure per-request cost. `recipients.wrapped` is protected by Argon2id because a human-transcribable passphrase _is_ brute-forceable (§6.3). An owner password, when `owners` grows one, needs Argon2id as well. Note this in the migration comments so neither gets "optimised" into the other.
+
+**Every identifier is a UUIDv4** (decided 11 August 2026), stored in `uuid` columns and carried in the envelope header as 16 raw bytes. Encryption spec §2 has been amended accordingly: 122 bits of entropy rather than 128, which is irrelevant at any scale this system reaches. `base_nonce` is explicitly **not** a UUID — it stays 16 fully random bytes, because §4.1's nonce argument needs all 128 of them.
+
+**`access_log` granularity is per asset opened, not per chunk fetched.** A hundred-photo album is roughly twelve hundred chunk requests; logging those answers no question anyone has and makes the table unusable. `event` needs a CHECK constraint like `kind` and `status`, or it drifts into three spellings of "viewed" within a month.
+
+**Every foreign key is `ON DELETE CASCADE`** (decided 11 August 2026), including both of `access_log`'s. An earlier version of this line claimed cascading into `access_log` would destroy an audit trail evidencing erasure; that was wrong — the log records views, not deletions, and is itself personal data subject to erasure. Cascade is also forced: with `albums → recipients` cascading, a non-cascading `recipients → access_log` would make albums undeletable.
+
+**But cascade is not erasure.** A database cascade removes rows and leaves every encrypted object in the bucket, while destroying the only record of which objects existed — `media.id` _is_ the object key. The result is storage you pay for forever and a right-to-erasure request you have reported as satisfied without deleting the images. **Deleting an album or an owner must therefore be an application operation that removes storage objects first and rows second.** Recorded as a B.6 requirement; see schema doc §5.1.
+
+**`owners` is deferred, not designed.** With only `id` and `created_at` there is nothing to authenticate against, so the Phase 1 owner flow cannot start without adding to it. That is acceptable in a provisional migration and should be labelled as such. A password column would not resolve §12 — both candidate account models need one.
 
 ## 10. Web friction layer
 
@@ -161,13 +201,15 @@ These are real and will need answers. Recorded here so they are not discovered l
 
 **Key loss.** If a recipient loses their passphrase, nobody can recover it — that is the design working correctly. The recovery path is the parent re-inviting them. This must be explained in onboarding.
 
-**Abuse, and the consequence of being blind.** An architecture that hides content from the host and resists copying is also attractive for distributing illegal imagery of children, and by design we cannot detect it. If Vitrina is only ever self-hosted for one family, this is moot. **If it is ever offered as a public service, it stops being moot and becomes a serious legal and moral exposure** — terms of service, abuse reporting, jurisdiction-dependent reporting obligations, and possibly client-side scanning before encryption. This must be resolved *before* any public launch, not after. It also interacts with EU regulatory debate on this exact class of service.
+**Abuse, and the consequence of being blind.** An architecture that hides content from the host and resists copying is also attractive for distributing illegal imagery of children, and by design we cannot detect it. If Vitrina is only ever self-hosted for one family, this is moot. **If it is ever offered as a public service, it stops being moot and becomes a serious legal and moral exposure** — terms of service, abuse reporting, jurisdiction-dependent reporting obligations, and possibly client-side scanning before encryption. This must be resolved _before_ any public launch, not after. It also interacts with EU regulatory debate on this exact class of service.
 
 **GDPR.** Operating this for anyone beyond yourself makes you a data controller processing images of minors in the EU. Privacy policy, lawful basis, retention, right to erasure. Phase 2 at the latest.
 
+**How does an owner retain `K_album`?** The invite spec says precisely how a recipient obtains an album key. Nothing says how the _owner_ keeps it. An owner needs `K_album` every time they add photos to an existing album or mint a new invite, so a memory-only key means losing your own album on a page refresh. The options are a password-derived master key, device-local storage (lost when the device changes), or a server-stored blob wrapped under a password-derived key — which reintroduces the offline-attack surface that encryption spec §6.3 exists to manage, this time against the owner's own password. This blocks Phase 1, interacts with the owner account model in §12, and is coupled to whether album titles can be encrypted (encryption spec §10). **Not a Phase 0 blocker; decide it before the upload flow is built.**
+
 **Storage economics and retention.** Encrypted blobs accumulate. Who pays, and do albums expire?
 
-**The delivered bundle cannot be verified against the source.** This is the fundamental soft spot in all browser-based end-to-end encryption, and it limits exactly the trust argument that publishing the source is meant to buy. A user can read this repository and confirm that `K_album` never reaches the relay — but they cannot confirm that the JavaScript their browser *actually received* is the code in the repository. A compromised or coerced server could serve a modified bundle to one targeted recipient, and nothing in the client would reveal it.
+**The delivered bundle cannot be verified against the source.** This is the fundamental soft spot in all browser-based end-to-end encryption, and it limits exactly the trust argument that publishing the source is meant to buy. A user can read this repository and confirm that `K_album` never reaches the relay — but they cannot confirm that the JavaScript their browser _actually received_ is the code in the repository. A compromised or coerced server could serve a modified bundle to one targeted recipient, and nothing in the client would reveal it.
 
 Partial mitigations, in increasing order of strength: subresource integrity on the WASM module; reproducible builds with published hashes; serving the client from a separate origin or CDN from the relay API, so that compromising the relay does not compromise the code; and ultimately the Phase 4 native apps, where the binary is distributed and signed through app stores rather than fetched fresh on every visit.
 
@@ -175,16 +217,98 @@ None of these fully solve it, and no browser-based product has solved it. **Stat
 
 ## 12. Open decisions
 
-| Decision | Notes |
-|---|---|
-| Product name | `Vitrina` is a placeholder |
-| Framework | TypeScript recommended; SvelteKit vs Next.js undecided |
-| Hosting | Low-stakes given blind relay; still unanswered |
-| Owner account model | Email required, or invite-only/self-hosted? |
-| Monetisation | Unaddressed; affects the abuse question in §11 |
-| Licensing | Repo starts with **no LICENSE file** — deliberately, which means all rights reserved and nobody may legally use it yet. Per-component when decided: `crates/envelope/` → MIT OR Apache-2.0 (Rust convention, patent grant, maximises reuse); `spec/` → CC BY 4.0 (prose, and wide reimplementation is the goal); `packages/` → AGPL-3.0 vs MIT. **AGPL keeps commercial dual-licensing open** for the institutional direction below, and source availability is itself a product feature for a privacy tool. **Real deadline: before the first external pull request**, not before the first commit — sole copyright holder can relicense freely, a contributor's code in the tree cannot be relicensed without their permission. If dual-licensing matters, a CLA is needed from day one of accepting contributions. Dependencies impose no constraint (RustCrypto MIT/Apache, libsodium ISC, sharp Apache-2.0), and publishing open-source cryptography is broadly exempt from EU dual-use export controls. |
-| Institutional direction | Nurseries and schools in Spain have this exact problem under GDPR pressure and have budget. Not a v1 concern; worth keeping in view |
+| Decision                | Notes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Product name            | `Vitrina` is a placeholder                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| Framework               | TypeScript recommended; SvelteKit vs Next.js undecided                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| Hosting                 | Low-stakes given blind relay; still unanswered                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| Owner account model     | Email required, or invite-only/self-hosted?                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| Monetisation            | Unaddressed; affects the abuse question in §11                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| Licensing               | Repo starts with **no LICENSE file** — deliberately, which means all rights reserved and nobody may legally use it yet. Per-component when decided: `crates/envelope/` → MIT OR Apache-2.0 (Rust convention, patent grant, maximises reuse); `spec/` → CC BY 4.0 (prose, and wide reimplementation is the goal); `packages/` → AGPL-3.0 vs MIT. **AGPL keeps commercial dual-licensing open** for the institutional direction below, and source availability is itself a product feature for a privacy tool. **Real deadline: before the first external pull request**, not before the first commit — sole copyright holder can relicense freely, a contributor's code in the tree cannot be relicensed without their permission. If dual-licensing matters, a CLA is needed from day one of accepting contributions. Dependencies impose no constraint (RustCrypto MIT/Apache, libsodium ISC, sharp Apache-2.0), and publishing open-source cryptography is broadly exempt from EU dual-use export controls. |
+| Institutional direction | Nurseries and schools have this problem acutely and, unlike individual parents, have budget. Promoted to §14 as a research hypothesis. Not a v1 concern                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 
 ## 13. Out of scope for v1
 
 Video · native mobile apps · screenshot detection or blocking · forensic or steganographic watermarking · comments, reactions, or any social feature · multi-owner albums · album sharing between parents.
+
+---
+
+## 14. Institutional direction — a hypothesis, not a plan
+
+_Added 10 August 2026. Recorded at this length because the reasoning is worth preserving, not because anything here is decided. **Nothing in this section is scheduled.** It does not change Phase 0 or Phase 1, and per roadmap sequencing rule 3 it sits behind Phase 2's abuse resolution._
+
+### 14.1 The thesis
+
+Nurseries and primary schools share photographs of children with parents constantly, and they currently do it through tools built for something else — Google Classroom, WhatsApp groups, commercial nursery apps. They have the problem Vitrina solves, they have it acutely, and unlike individual parents they have budget.
+
+The regulatory backdrop is documented rather than speculative. Denmark banned Google Workspace in schools in 2022 over insufficient data-protection guarantees. The Netherlands ran a DPIA identifying high privacy risks in education. France's CNIL recommended against Google and Microsoft cloud services in educational settings, and the Ministry of National Education issued guidance discouraging both in primary and secondary schools. Multiple German states have restricted use.
+
+The most instructive data point is subtler. Finland's Supreme Administrative Court held that a statutory obligation can serve as a lawful basis for a school using Google Workspace, _provided the specific service is shown to be necessary and proportionate_. A blanket ban would send schools stampeding toward whatever alternative already has market presence. A necessity-and-proportionality test instead creates sustained demand for options a school can defend on paper — which is a market rather than a stampede, and a better one to enter late.
+
+**The blind relay is an unusually strong procurement position.** "We process ciphertext we cannot decrypt" is a claim no incumbent can match, and it is the kind of claim that makes a data protection officer's job easier rather than harder.
+
+### 14.2 What the architecture permits, and what it forbids
+
+**No encryption format change is required.** Per-child access can be built from per-child albums alongside a shared class album, with photographs encrypted under both keys where they appear in both. That costs storage and nothing else. This matters more than it sounds: it means this entire direction stays genuinely deferrable, since the only irreversible decisions in the system are format decisions.
+
+**The relay cannot identify children, by design.** Any feature of the form "photographs where my child appears" therefore requires tagging, and tagging has exactly two implementations:
+
+- **Face recognition is excluded.** It is biometric processing of children's data under GDPR Article 9, it requires explicit consent, it is precisely what these institutions are moving away from, and it would destroy the "not feeding AI models, not building digital identities for children" proposition that makes the product worth buying.
+- **Manual tagging by staff, client-side, with encrypted tags.** Needs no new cryptography.
+
+**The primary risk here is labour, not engineering.** A nursery uploading forty photographs a day now has a member of staff tagging forty photographs a day. If tagging is tedious it will be done sloppily or abandoned, and every feature built on top of it degrades. Any serious version of this product lives or dies on how cheap tagging is to do.
+
+### 14.3 The download-request flow
+
+Proposed shape: a parent requests a photograph in which their child appears; the school approves; the parent may then download it.
+
+This appears to contradict the entire product and does not, because the rights structure differs. Parent→grandparent is an owner sharing with an audience that has no claim to accumulate copies. School→parent is a custodian holding images of someone else's child, and that parent has a genuine claim — arguably a GDPR right of access — to a photograph of their own child.
+
+It is therefore coherent **in this context only**, and must be built so it cannot leak into the consumer product as a general "download" toggle:
+
+- Per photograph, never per album
+- Watermarked and metadata-stripped, never the original file
+- Logged on both sides, visible to the school
+- Onboarding copy stating plainly that **once approved, the photograph is an ordinary file on the parent's phone and Vitrina's guarantees end at that boundary**
+
+That last point is non-negotiable for the same reason as §3: a guarantee described as extending further than it does is worse than no guarantee.
+
+### 14.4 The genuinely hard part is consent
+
+A class photograph contains other people's children. Schools handle this today with a paper form in September and optimism.
+
+- Some parents refuse permission, and refusal must be enforced at the point of sharing rather than remembered
+- What happens to a photograph where one child's parents consented and another's did not?
+- What happens when consent is withdrawn months after distribution?
+
+**If Vitrina makes this tractable — per-child consent records, enforcement at share time, an audit trail a school can hand an inspector — that is the product.** The encryption is table stakes. The consent ledger is the thing worth paying for. This is a meaningful reframe of what would actually be built, and it is mostly organisational logic rather than cryptography.
+
+### 14.5 What changes, legally and commercially
+
+**You become a processor, not a controller** (GDPR Article 28). That means a Data Processing Agreement with every institution, sub-processor disclosure, breach notification within 72 hours, records of processing, and security questionnaires from procurement staff who may ask for ISO 27001. For a solo developer this administrative load plausibly exceeds the software.
+
+**It reduces the abuse exposure in §11.** Customers become identifiable legal entities under contract rather than anonymous public signups. The institutional route may be the _safer_ commercial path, not merely the more lucrative one — which is a genuine argument for it over consumer public launch.
+
+**The sharpest objections, recorded so they are not rediscovered enthusiastically:**
+
+- Google Classroom is free and bundled. Schools use it for that reason, not because they evaluated it.
+- Privacy is not currently a budget line in most schools. It has to become one, or the sale requires a regulator's letter.
+- Sales cycles run six to eighteen months against budgets tied to the academic year.
+- Multi-tenant accounts, staff roles, parent accounts, consent records, audit trails and approval workflows amount to a different product sharing an encryption layer — several times the scope of Phase 1.
+
+### 14.6 Open questions — research, not code
+
+The cheap validating action is to **talk to two or three nurseries.** Not to sell; to find out whether the problem is felt. A few hours, no code, and it separates a good hypothesis from a good market. If two of three shrug, a year has been saved.
+
+1. Do they experience photo sharing as a problem, or only we?
+2. What do they use today, and who chose it?
+3. Has anyone — parent, inspector, regulator — ever questioned them on it?
+4. Would staff realistically tag photographs? What is the true daily volume?
+5. How is consent handled now, and what happens when a parent refuses or withdraws?
+6. Who holds the budget, and what does the decision process look like?
+7. **Spain specifically:** what does AEPD guidance actually say about schools sharing images of minors?
+8. Does a Spanish or EU competitor already occupy this space?
+9. What would they pay, and on what unit — per child per year, or per institution?
+10. Is the download-request flow answering a real need, or did we invent it?
+
+Question 10 deserves suspicion. It was designed before anyone asked for it.

@@ -91,7 +91,9 @@ _That test is not ceremony. An emulator approximately right about `Range` or pre
 
 ### B.5 — Initial migration · _delegate, review yourself_
 
-From brief §9. Tables: `owners`, `albums`, `media`, `recipients`, `access_tokens`, `access_log`.
+From brief §9. Tables: `owners`, `owner_tokens`, `albums`, `media`, `recipients`, `access_log`.
+
+**There is no `access_tokens` table.** Recipient tokens live hashed on the `recipients` row; owners have their own table. See brief §9.1 — conflating them is the easiest way to leak album access.
 
 Mark it **provisional** in a comment — Phase 1 will change it, and that's expected.
 
@@ -116,6 +118,7 @@ Cover:
 - **Two distinct auth schemes.** Owners hold account tokens. Recipients hold an invite access token and have no account at all. These are different mechanisms and conflating them is the easiest way to leak album access
 - **Error shapes** — one consistent envelope, no internal detail leaking outward
 - **A stated constraint that no endpoint may accept key material in any parameter, header, or body.** Write it down so a future route can be checked against it
+- **A stated constraint that no endpoint deletes an album or owner row without having deleted its storage objects first.** `ON DELETE CASCADE` tidies rows and orphans every object in the bucket — including the record of which objects existed. See schema doc §5.1
 
 **The decision worth thinking hardest about:** does the API proxy ciphertext bytes, or issue short-lived signed URLs pointing at object storage?
 
