@@ -118,6 +118,40 @@ usual `AWS_*` variables override that if you point it at something else.
 
 _(`pnpm test` has no TypeScript suites behind it yet — the packages are still empty.)_
 
+### CI
+
+`.github/workflows/ci.yml` runs on pull requests and on pushes to `main`, as two
+independent jobs that mirror the split above:
+
+- **`checks`** — hermetic. The forbidden-construction gate, then `pnpm lint`,
+  `pnpm test`, `pnpm build`, then `cargo fmt --check`, `cargo test`,
+  `cargo clippy -- -D warnings`. No Docker.
+- **`infra`** — brings up the compose stack, waits for the `createbucket` seeder
+  to exit 0, runs `pnpm test:infra`, tears down.
+
+They do not depend on each other, so a failure in one still reports the other's
+real result.
+
+Two of the steps are runnable locally:
+
+```bash
+pnpm check:forbidden    # the crypto_secretstream gate CI runs
+pnpm infra:wait         # block until the bucket seeder has exited 0
+```
+
+`pnpm check:forbidden` fails the build if `crypto_secretstream` appears in
+`crates/` or `packages/`. It is scoped to application source on purpose: the
+identifier appears legitimately in `spec/` and `CLAUDE.md`, because that is where
+the ban is written down, and a tree-wide grep would match the ban itself and fail
+forever. The script explains the reasoning on failure — read it before changing
+it.
+
+> **Known red:** `cargo clippy -- -D warnings` currently fails. Nothing in
+> `crates/envelope` is `pub` yet, so `dead_code` fires on `EXPECTED_MAGIC`,
+> `Header`, `HeaderError` and `Header::parse`; clippy also flags an `op_ref` on
+> `lib.rs:33`. This is being fixed as part of the C ladder, not by suppressing
+> the lint.
+
 ## Status
 
 - [ ] **Phase 0** — specs, repo foundations, envelope crate, test vectors

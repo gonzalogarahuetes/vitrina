@@ -1,0 +1,151 @@
+# Vitrina CI —
+#
+# Two jobs, deliberately separate, and they must stay that way:
+#
+#   checks — hermetic. No Docker, no network services, no live infrastructure.
+#            `pnpm test` is Docker-free on purpose; keep it that way.
+#   infra  — brings up the docker-compose stack and talks to a live SeaweedFS
+#            S3 gateway. `pnpm test:infra` belongs here and nowhere else.
+#
+# Do not fold `test:infra` into `test`, and do not merge these jobs. The value
+# of a hermetic suite is that a red `checks` means the code is wrong, never
+# that a container was slow.
+#
+# The two jobs do NOT depend on each other. They run in parallel so that a
+# failure in one still reports the other's real result.
+#
+# Action versions are pinned to commit SHAs, not tags — a tag can be moved to
+# point at different code, a SHA cannot.
+
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+env:
+  # One place to change the Node version. Matches the version in local use.
+  NODE_VERSION: 22.14.0
+  # pnpm's version comes from `packageManager` in the root package.json, which
+  # corepack reads. Do not name a pnpm version here — one source of truth.
+  COREPACK_ENABLE_DOWNLOAD_PROMPT: 0
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Job 1 — hermetic. Everything that can be checked without infrastructure.
+  # ---------------------------------------------------------------------------
+  checks:
+    name: checks (hermetic)
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # First, because it needs no toolchain and it is the cheapest way to fail.
+      # Non-negotiable #3 as a failing build rather than a line in a document.
+      # The check is scoped to crates/ and packages/ — see the script for why a
+      # tree-wide grep would match the ban itself and fail forever.
+      - name: No forbidden crypto constructions
+        run: ./scripts/check-forbidden-constructions.sh
+
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      # corepack must be enabled *after* setup-node so the pnpm shim lands in
+      # the bin directory of the Node we just pinned.
+      - name: Enable corepack
+        run: corepack enable
+
+      - name: Install JS dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: pnpm lint
+        run: pnpm lint
+
+      - name: pnpm test
+        run: pnpm test
+
+      - name: pnpm build
+        run: pnpm build
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+
+      - name: cargo fmt --check
+        run: cargo fmt --check
+
+      - name: cargo test
+        run: cargo test
+
+      # KNOWN RED, and left that way on purpose.
+      #
+      # Nothing in crates/envelope is `pub` yet, so dead_code fires on
+      # EXPECTED_MAGIC, Header, HeaderError and Header::parse. The repo owner is
+      # fixing that separately, as part of the C ladder.
+      #
+      # Do not "fix" this by adding -A dead_code, #![allow(dead_code)], or
+      # continue-on-error. `-D warnings` is the point of the step: a warning
+      # that CI tolerates is a warning nobody reads. It runs last so that every
+      # other check still reports its real result while this one is red.
+      - name: cargo clippy -- -D warnings
+        run: cargo clippy -- -D warnings
+
+      # Slots for later phases. Do not implement these ahead of their step:
+      #   C.9      — run the exported JSON vectors from spec/vectors/
+      #   C.10     — build the WASM target and run the TypeScript smoke harness
+      #   Phase 1  — assert no outbound request carries key material
+      #              (invite spec §7.3)
+      # Each is another step in this job; none requires restructuring.
+
+  # ---------------------------------------------------------------------------
+  # Job 2 — needs Docker. Verifies the store's Range and presigned-URL support,
+  # which the chunked envelope design depends on (encryption spec §3.3).
+  # ---------------------------------------------------------------------------
+  infra:
+    name: infra (docker)
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Enable corepack
+        run: corepack enable
+
+      - name: Install JS dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Start the stack
+        run: docker compose up -d
+
+      # `up -d` returns when containers have started, which says nothing about
+      # whether the bucket exists. createbucket is a one-shot seeder; poll its
+      # real exit status rather than sleeping a guessed number of seconds.
+      - name: Wait for the bucket seeder
+        run: pnpm infra:wait
+
+      - name: pnpm test:infra
+        run: pnpm test:infra
+
+      - name: Dump stack logs
+        if: failure()
+        run: docker compose logs --no-color --timestamps
+
+      - name: Tear down
+        if: always()
+        run: docker compose down -v
