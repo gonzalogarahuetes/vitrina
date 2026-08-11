@@ -21,7 +21,7 @@ enum HeaderError {
 }
 
 impl Header {
-    fn parse(bytes: &[u8]) -> Result<Header, HeaderError> {
+    pub fn parse(bytes: &[u8]) -> Result<Header, HeaderError> {
         // The whole header must always be at least 64 chars long (it will be followed by the cipher-text)
         if bytes.len() < 64 {
             return Err(HeaderError::TooShort {
