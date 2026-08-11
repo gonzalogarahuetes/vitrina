@@ -1,6 +1,6 @@
 # Vitrina — Roadmap
 
-**Status:** Draft v0.1 · 6 August 2026
+**Status:** Draft v0.1 · last updated 11 August 2026
 **Companion to:** `vitrina-project-brief.md` (canonical; this document defers to it on any conflict)
 
 Resolution decreases deliberately as phases advance. Phase 1 is specified because you are about to build it. Phase 4 is a sketch because specifying it now would be fiction. **Do not sharpen the later phases prematurely** — the point of the non-negotiables in the brief is that they let you leave the future blurry without being trapped by it.
@@ -17,7 +17,8 @@ _No application code. Roughly one to two weeks. Skipping this is the most expens
 - [ ] Sketch the API surface: routes, auth model, error shapes
 - [ ] Repository skeleton, CI, linting, test harness
 - [ ] Write the honest onboarding copy _now_, before building. If you cannot describe the guarantee truthfully in three sentences, the product is not clear yet.
-      **Exit criterion:** someone could implement the crypto layer in a language of their choice from your spec alone.
+
+**Exit criterion:** someone could implement the crypto layer in a language of their choice from your spec alone.
 
 **Delegation note:** the encryption spec is yours. It is the one artifact where a subtle error is unrecoverable, and writing it is how you come to understand your own system. Hand the CI and repo skeleton to Claude Code.
 
@@ -51,7 +52,8 @@ _The goal is a working private album you would actually send to your own mother.
 
 - [ ] Real-device testing on iOS Safari for memory limits
 - [ ] Onboarding copy stating the screenshot limitation plainly
-      **Exit criterion:** a family member who is not technical successfully views an album without needing you on the phone.
+
+**Exit criterion:** a family member who is not technical successfully views an album without needing you on the phone.
 
 **What v1 deliberately does not have:** password reset, email notifications, album editing after creation, multiple albums per recipient, any styling ambition. Add them when they hurt.
 
@@ -69,6 +71,7 @@ _Triggered by: v1 works and you want a second family using it._
 - GDPR: privacy policy, lawful basis, retention policy, erasure
 - Accessibility audit — real one, with a real elderly user
 - Storage lifecycle and retention decisions
+- **Invite sharing:** decide whether to surface per-invite device counts to the owner. Invite spec §8 — the reasoning is recorded, including why hard single-use is not obviously the right answer
 - Observability: know when uploads fail without being told
 - **Resolve the abuse question (brief §11) if there is any path to public availability.** This gates public launch, not Phase 3.
 
@@ -87,7 +90,8 @@ The encryption format already supports it if Phase 0 was done properly. What is 
 - Poster frame extraction
 - Duration and size limits
 - Genuine cost modelling — video storage and egress will dominate your bill
-  **Open question to resolve at the start of this phase, not now:** does transcoding happen on the parent's device (preserves blindness, slow, battery-hungry, browser-limited) or on a server (fast, requires breaking the blind-relay property for that step)? This is a real fork with product consequences, and deciding it early would be guessing.
+
+**Open question to resolve at the start of this phase, not now:** does transcoding happen on the parent's device (preserves blindness, slow, battery-hungry, browser-limited) or on a server (fast, requires breaking the blind-relay property for that step)? This is a real fork with product consequences, and deciding it early would be guessing.
 
 ---
 
@@ -102,7 +106,8 @@ If the brief's non-negotiables held, this is a client rewrite against an unchang
 - iOS: screenshot _detection_ → notify the parent. Worth reframing as a feature rather than a control: "María took a screenshot" is exactly the accountability a nervous parent wants
 - Push notification on new album
 - Native owner-side capture and upload
-  **Strategic note carried forward:** do not assume native replaces web. Asking a 74-year-old to install an app is the kind of friction that kills adoption, whereas "scan this QR, it opens in your browser" does not. The likely end state is web as the default viewer and native as an optional high-assurance mode — which means the web client stays a first-class citizen forever, not a legacy path.
+
+**Strategic note carried forward:** do not assume native replaces web. Asking a 74-year-old to install an app is the kind of friction that kills adoption, whereas "scan this QR, it opens in your browser" does not. The likely end state is web as the default viewer and native as an optional high-assurance mode — which means the web client stays a first-class citizen forever, not a legacy path.
 
 ---
 

@@ -167,7 +167,7 @@ A tempting simplification is to authenticate only the chunk index. It blocks the
 
 ## 6. Recipient key wrapping
 
-There are two ways a recipient obtains `K_album`. The QR path is the default because it is strictly stronger.
+There are two ways a recipient obtains `K_album`. The QR path is the default, but the two modes are **not ordered on a single axis** — see §6.5 before describing either as simply stronger.
 
 ### 6.1 QR / link recipients (default)
 
@@ -215,6 +215,16 @@ They travel together in one invite payload but are independent secrets serving d
 **The UI MUST NOT imply that revocation prevents decryption of anything already retrieved.** True cryptographic revocation requires re-encrypting the album under a new `K_album` and redistributing it to the remaining recipients. That may be worth building later; it is not what the revoke button does today.
 
 ---
+
+### 6.5 The two modes are stronger against different things
+
+Earlier drafts of this document called the QR path "strictly stronger." That is wrong, and the correction matters because it changes which mode you would reach for against which risk.
+
+**Direct mode is stronger against a stolen database.** No wrapped key exists server-side, so a full database compromise yields ciphertext and nothing that helps decrypt it (§6.1). Passphrase mode stores `wrapped`, which is offline-attackable given a weak passphrase — hence §6.3.
+
+**Passphrase mode is stronger against a forwarded invite.** Because the key is not in the invite, the client must fetch the wrapped blob from the relay and unwrap it locally. **The relay therefore participates in every unwrap**, so it can count them, rate-limit them, bind them to a device, or refuse after the first. Direct mode hands `K_album` over inside the QR with the relay never involved, which is precisely why the relay cannot gate it.
+
+Neither mode dominates. Direct mode remains the default because database theft is the threat this architecture exists to defeat, and because delivery by QR is what makes the product usable by a grandparent with no account. But if invite sharing ever becomes the concern that matters most, the mode that keeps the server in the loop is the one with a lever to pull.
 
 ## 7. Metadata
 
@@ -291,6 +301,8 @@ Recorded honestly so they are not mistaken for oversights.
 **Access patterns are visible to the relay.** The server sees which recipient fetched which object and when. This powers the "María viewed this" feature, so it is partly intentional — but it means the relay learns viewing behaviour even though it cannot see content.
 
 **The number of assets in an album is visible**, as is upload timing.
+
+**An invite can be forwarded, and nothing in v1 prevents or detects it.** A recipient who passes their QR or passphrase to someone else grants that person the same access, and the relay cannot distinguish them. Revocation removes both at once or neither. Options and their trade-offs are in `vitrina-invite-spec.md` §8; none is in v1.
 
 **Album titles and recipient labels are stored in plaintext.** §6.1 says the relay holds "a label" for each recipient, and albums carry a title the owner can read back without holding a key. This is intended, and it is also the sharpest inconsistency in the product: _"Sofía's first birthday"_ and _"María"_ are a child's name and a family member's name sitting readable in a database whose entire pitch is that it cannot read anything.
 
