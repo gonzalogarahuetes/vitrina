@@ -35,7 +35,6 @@ import type { FastifyError, FastifyReply, FastifyRequest } from "fastify";
 const STATUS = {
   VALIDATION_FAILED: 400,
   UNAUTHENTICATED: 401,
-  ALBUM_REVOKED: 403,
   NOT_FOUND: 404,
   RATE_LIMITED: 429,
   INTERNAL: 500,
@@ -51,7 +50,6 @@ export type ErrorCode = keyof typeof STATUS;
 const MESSAGES = {
   VALIDATION_FAILED: "Request failed schema validation.",
   UNAUTHENTICATED: "Missing, unknown or expired token.",
-  ALBUM_REVOKED: "This access has been revoked.",
   NOT_FOUND: "Not found.",
   RATE_LIMITED: "Too many requests.",
   INTERNAL: "An unexpected error occurred.",
@@ -79,7 +77,10 @@ export class ApiError extends Error {
     },
   ) {
     // Error.message mirrors the wire message so log lines read correctly.
-    super(MESSAGES[code], options?.cause ? { cause: options.cause } : undefined);
+    super(
+      MESSAGES[code],
+      options?.cause ? { cause: options.cause } : undefined,
+    );
     this.name = "ApiError";
     this.code = code;
     this.details = options?.details;
@@ -97,7 +98,9 @@ function body(code: ErrorCode, details?: ApiError["details"]): ErrorBody {
   // Built conditionally rather than with `details: undefined`, because
   // exactOptionalPropertyTypes distinguishes an absent key from an undefined
   // one — and so does the JSON on the wire.
-  return details ? { code, message: MESSAGES[code], details } : { code, message: MESSAGES[code] };
+  return details
+    ? { code, message: MESSAGES[code], details }
+    : { code, message: MESSAGES[code] };
 }
 
 export function errorEnvelope(
@@ -135,6 +138,9 @@ export function errorEnvelope(
  * which track-b-plan §3 assigns 404. Both are NOT_FOUND here; splitting them is
  * a code-taxonomy decision, not this module's to make.
  */
-export function notFoundEnvelope(_request: FastifyRequest, reply: FastifyReply) {
+export function notFoundEnvelope(
+  _request: FastifyRequest,
+  reply: FastifyReply,
+) {
   return reply.code(STATUS.NOT_FOUND).send(body("NOT_FOUND"));
 }

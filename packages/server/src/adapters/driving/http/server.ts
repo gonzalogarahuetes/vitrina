@@ -32,7 +32,9 @@ export type BuildServerDeps = {
  * case, so deps is an object with both. Flagged rather than silently chosen —
  * §2's line wants updating to match.
  */
-export async function buildServer(deps: BuildServerDeps): Promise<FastifyInstance> {
+export async function buildServer(
+  deps: BuildServerDeps,
+): Promise<FastifyInstance> {
   const app = fastify({
     logger: deps.logger ?? {
       /*
@@ -85,17 +87,17 @@ export async function buildServer(deps: BuildServerDeps): Promise<FastifyInstanc
   app.register(health); // unversioned, for uptime monitors — track-b-plan §3 B.6
 
   // The /v1 mount point, registered once. B.6's routes drop in here.
-  // await app.register(
-  //   async (v1) => {
-  //     v1.register(ownerAuth,  { useCases: deps.useCases })
-  //     v1.register(albums,     { useCases: deps.useCases })
-  //     v1.register(media,      { useCases: deps.useCases })
-  //     v1.register(recipients, { useCases: deps.useCases })
-  //     v1.register(delivery,   { useCases: deps.useCases })
-  //     v1.register(accessLog,  { useCases: deps.useCases })
-  //   },
-  //   { prefix: "/v1" },
-  // );
+  await app.register(
+    async (v1) => {
+      //   v1.register(ownerAuth,  { useCases: deps.useCases })
+      //   v1.register(albums,     { useCases: deps.useCases })
+      //   v1.register(media,      { useCases: deps.useCases })
+      //   v1.register(recipients, { useCases: deps.useCases })
+      //   v1.register(delivery,   { useCases: deps.useCases })
+      //   v1.register(accessLog,  { useCases: deps.useCases })
+    },
+    { prefix: "/v1" },
+  );
 
   // Both handlers, because they cover different paths: setErrorHandler does not
   // see route-not-found. See notFoundEnvelope.
