@@ -1,7 +1,7 @@
 # Vitrina — `packages/server` architecture
 
-**Status:** Settled v1 · 12 August 2026 · intended path `packages/server/ARCHITECTURE.md`
-**Companion to:** `vitrina-project-brief.md` (non-negotiable #5), `vitrina-schema.md`, the forthcoming `vitrina-api-sketch.md` (B.6)
+**Status:** Settled v1 · 12 August 2026 · moved to `spec/vitrina-server-architecture.md` on 12 August 2026, from `packages/server/ARCHITECTURE.md`
+**Companion to:** `vitrina-project-brief.md` (non-negotiable #5), `vitrina-schema.md`, `vitrina-api-sketch.md` (B.6)
 **Scope:** the internal shape of the Fastify server package. It says nothing about *which* routes exist or what they do — that is B.6. It says where the code for any route is allowed to live.
 
 ---
