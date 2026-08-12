@@ -68,7 +68,7 @@ export async function buildServer(
     credentials: false, // Authorization header only; see note below
     methods: ["GET", "POST", "DELETE"], // narrow to what the route table needs
     allowedHeaders: ["Authorization", "Content-Type", "Range"],
-    exposedHeaders: ["Content-Range", "Accept-Ranges", "Retry-After"],
+    exposedHeaders: ["Content-Range", "Accept-Ranges"],
     maxAge: 7200, // Chrome caps preflight caching at 7200s — the maximum useful value
   });
   /*

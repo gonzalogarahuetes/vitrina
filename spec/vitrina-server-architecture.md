@@ -1,6 +1,6 @@
 # Vitrina — `packages/server` architecture
 
-**Status:** Settled v1 · 12 August 2026 · moved to `spec/vitrina-server-architecture.md` on 12 August 2026, from `packages/server/ARCHITECTURE.md`
+**Status:** Settled v1 · 12 August 2026 · moved to `spec/vitrina-server-architecture.md` on 12 August 2026, from `packages/server/ARCHITECTURE.md` · reconciled against the code 12 August 2026 (§9)
 **Companion to:** `vitrina-project-brief.md` (non-negotiable #5), `vitrina-schema.md`, `vitrina-api-sketch.md` (B.6)
 **Scope:** the internal shape of the Fastify server package. It says nothing about *which* routes exist or what they do — that is B.6. It says where the code for any route is allowed to live.
 
@@ -37,7 +37,7 @@ packages/server/
 │   │   ├── access-log/
 │   │   └── shared/                   # value objects crossing aggregates (MediaId, TokenHash, timestamps)
 │   ├── application/
-│   │   ├── ports/                    # DRIVEN ports only — interfaces the core needs
+│   │   ├── ports/                    # DRIVEN ports only — interfaces the core needs (empty files today, §7)
 │   │   │   ├── owner-repository.ts
 │   │   │   ├── album-repository.ts
 │   │   │   ├── media-repository.ts
@@ -50,22 +50,28 @@ packages/server/
 │   ├── adapters/
 │   │   ├── driving/
 │   │   │   └── http/                 # Fastify is confined to this subtree, and only this subtree
-│   │   │       ├── server.ts         # buildServer(useCases): FastifyInstance
+│   │   │       ├── server.ts         # buildServer({config, useCases}): Promise<FastifyInstance>
 │   │   │       ├── routes/
-│   │   │       │   └── health.ts     # the only Phase 0 route
-│   │   │       ├── schemas/          # per-route JSON Schema — the #27 audit surface
+│   │   │       │   └── health.ts     # the only Phase 0 route, and unversioned
+│   │   │       ├── schemas/          # per-route JSON Schema — the audit surface brief §12 rests on
 │   │   │       ├── dto/              # wire ⇄ domain mapping; DTOs live here, never in domain/
 │   │   │       ├── auth/             # owner-token vs recipient-token, kept as two things
-│   │   │       └── error-envelope.ts # one shape; setErrorHandler choke point (#15 / #26)
+│   │   │       └── error-envelope.ts # one shape; setErrorHandler + setNotFoundHandler choke point (#15)
 │   │   └── driven/
 │   │       ├── postgres/             # one repository implementation per port
 │   │       ├── object-store/         # S3 / SeaweedFS behind object-store.ts
 │   │       └── hashing/              # token hasher
 │   ├── composition-root.ts           # the ONLY file importing both a port and its concrete adapter
+│   ├── config.ts                     # env read and validated once, at boot — not at import time
 │   └── index.ts                      # read config → build adapters → build use cases → buildServer → listen
 ├── migrations/                       # exists: 001_initial_schema.sql
-└── test/
+├── eslint.config.js                  # the dependency rule as a failing build — §6
+└── test/                             # hermetic: app.inject(), no Docker, no network
 ```
+
+`config.ts` sits beside `index.ts` rather than under `domain/`, `application/` or `adapters/`, because it belongs to none of them — it is bootstrap. It exports a function rather than a populated object, which is not cosmetic: a module-level parse runs on import, and then every test that so much as imports the HTTP adapter needs the environment set. Failing fast on a missing origin is right; doing it before `main()` has been entered is not.
+
+`buildServer` takes `{ config, useCases }` rather than `useCases` alone because the allowlisted CORS origin is configuration, not a use case. It takes the narrowest slice it can — the client origin only. Host and port belong to `index.ts`, which does the listening; an adapter that cannot see them cannot come to depend on them. It returns a `Promise` because `@fastify/cors` must be registered with `await` **before** any route: the plugin installs an `onRequest` hook, and hooks apply only to routes registered after them. That ordering is load-bearing and easy to lose in a tidy-up.
 
 ## 3. Layer responsibilities
 
@@ -93,17 +99,34 @@ Recorded with reasoning because the reasoning is the part that stops each being 
 
 ## 5. The composition root
 
-`composition-root.ts` is the only file that may name a concrete adapter. It constructs the adapters, injects them into the use-case factories, and hands the finished use cases to `buildServer`. Everything above it depends on interfaces; nothing above it can name a vendor. `buildServer` receives use cases, never repositories — so the web app, and any future native client, is one caller of the API rather than its owner.
+`composition-root.ts` is the only file that may name a concrete adapter. It constructs the adapters, injects them into the use-case factories, and hands the finished use cases to `buildServer`. Everything above it depends on interfaces; nothing above it can name a vendor. `buildServer` receives use cases and configuration, never repositories — so the web app, and any future native client, is one caller of the API rather than its owner.
 
 In Phase 0 the root wires exactly one route — `health` — through this path. It is deliberately over-built for one route: the shape is the point, not the current contents.
 
 ## 6. Enforcement
 
-The dependency rule is not advisory. Add an ESLint boundary rule (`no-restricted-imports`, or `eslint-plugin-boundaries`) that fails the build when anything under `domain/` or `application/` imports from `adapters/`, `fastify`, `pg`, or the aws-sdk. This is the same move as the `crypto_secretstream` gate in CI: a rule that can become a failing build should. The moment the boundary can fail CI it stops depending on anyone's memory.
+The dependency rule is not advisory. **It exists as a failing build** in `packages/server/eslint.config.js`, and runs in CI's hermetic `checks` job via `pnpm lint`. This is the same move as the `crypto_secretstream` gate: a rule that can become a failing build should. The moment the boundary can fail CI it stops depending on anyone's memory.
+
+`no-restricted-imports`, scoped per layer with flat config's `files`, so each layer is told only what it may not reach for:
+
+- `src/domain/**` may not import `**/adapters/**` or `**/application/**`, nor name a vendor.
+- `src/application/**` may not import `**/adapters/**`, nor name a vendor.
+- The vendor list is `fastify`, `@fastify/*`, `pg`, `pg-*`, `aws-sdk`, `@aws-sdk/*`. Both aws-sdk spellings are listed because v2 and v3 differ; `pg-*` catches the driver's sub-packages.
+
+Two things about that file are not preference and should not be tidied:
+
+- **It uses `@babel/eslint-parser`, not `@typescript-eslint/parser`.** typescript-eslint 8.67 refuses to load against TypeScript 7.0 — support for >= 7.1 is still open upstream. Babel parses TS syntax without consulting the compiler, so the boundary rule is insulated from that churn. The trade is that type-aware rules are unavailable here, which is irrelevant to a rule that reads import specifiers only; `tsc --noEmit` covers types. Revisit when typescript-eslint catches up.
+- **It deliberately does not spell out the identifier `scripts/check-forbidden-constructions.sh` greps for.** That script scans `crates/` and `packages/`, so naming the banned construction inside `packages/` would fail CI unconditionally. The ban is written down in `spec/` and `CLAUDE.md`, which are outside the search, and that is the only reason it can be written down at all.
+
+The rule was verified by deliberately violating it and reverting, per the discipline track-b-plan §3 B.3 applies to the crypto gate: "Test that deliberately, then revert it."
 
 ## 7. What Phase 0 puts in this skeleton
 
-Per phase-0-plan §10 and track-b-plan §4: the structure, the ports as interfaces, the composition root, and a single `health` route. Nothing else. `routes/`, `auth/`, and `dto/` exist as empty directories that B.6's decisions drop into later — the skeleton is where those decisions will have obvious homes, not where they get made. No route implementations beyond health, and no authentication implementation, live here yet.
+Per phase-0-plan §10 and track-b-plan §4: the structure, the ports, the composition root, and a single `health` route. Nothing else. `auth/`, `dto/`, `driven/*` and every directory under `domain/` exist as empty directories that B.6's decisions drop into later — the skeleton is where those decisions will have obvious homes, not where they get made. No route implementations beyond health, and no authentication implementation, live here yet.
+
+**The eight port files exist and are empty**, which is a deviation from "the ports as interfaces" above and is deliberate rather than unfinished. Writing them means settling repository query shapes and `ObjectStore.getRange`'s signature — application design that belongs to the API surface B.6 has not yet specified. An interface invented ahead of its use case is a guess that later routes have to argue with. The file paths are the commitment; the signatures are not Phase 0's.
+
+Note that git does not track empty directories, so none of these appear in a diff. They exist on disk and are the reason a new route has an obvious home.
 
 ## 8. Load-bearing names
 
@@ -112,4 +135,17 @@ A few directory names are enforcing a non-negotiable rather than expressing tast
 - `media/`, never `photos/` — non-negotiable #8, carried into the tree.
 - `hashing/` is token hashing (SHA-256) only. There is no envelope crypto on the server; the relay never decrypts. Keep it visibly distinct from Argon2id, which the schema notes is not interchangeable with it.
 - `object-store.ts` is a port, not a client. The vendor name lives only in `adapters/driven/object-store/`.
-- `error-envelope.ts` is a single module for a reason: #15 / #26 — one error shape, wired through `setErrorHandler`, so no route hand-rolls an error that echoes request content.
+- `error-envelope.ts` is a single module for a reason: non-negotiable #15 — one error shape, so no route hand-rolls an error that echoes request content. It is wired through **both** `setErrorHandler` and `setNotFoundHandler`, and both are required: Fastify routes route-not-found through the second, not the first, so without it an unknown path returns Fastify's own body — which names the requested path and is a second error shape. See `vitrina-api-sketch.md` §1.2.
+- `schemas/` is an audit surface, not boilerplate. Brief §12 chose Fastify partly because per-route JSON Schema makes "no endpoint accepts key material" checkable "by a test that walks the route table". That test only works if every route has an entry, which is why the most trivial route in the system gets one.
+
+## 9. Reconciled with the code, 12 August 2026
+
+§0 says that if this document and the code disagree, that is a bug in one of them. This section records the pass that closed the gaps rather than leaving the reader to find them: `buildServer`'s signature (§2), `config.ts` (§2), the ESLint rule moving from "add one" to "here it is" (§6), and the ports being empty files (§7). The api-sketch's own "deviations to be reconciled" list is what prompted it.
+
+Two dangling references were removed. §2 and §8 cited non-negotiables **#26** and **#27**; brief §6 contains fifteen, and `git log -S` shows both numbers were introduced with this document, so neither ever resolved to anything. The rules they were reaching for are real and are now cited properly — #15 for the one-error-shape choke point, and brief §12's Fastify/JSON-Schema argument for `schemas/`. **If #26 and #27 were shorthand for something else, that intent is lost and worth restating.**
+
+### One thing this document does not yet answer
+
+**OPEN: where the error-code union lives.** §4 decision 5 says `packages/shared` carries "wire-format types genuinely shared with the SvelteKit client (the invite payload, response shapes)". The `ErrorCode` union is a response shape, and `vitrina-api-sketch.md` §1.3 makes it a client contract — the client maps `code` to Spanish or Catalan. It currently lives in `adapters/driving/http/error-envelope.ts`, reachable by no other package.
+
+Three candidate answers, and this document should not pick one on its own: move the union to `packages/shared` and import it in both; keep it server-side and duplicate the list in the client; or generate the client's copy. The first is the obvious reading of §4 decision 5, and the last two both admit a way for the two halves to drift. Whoever adds the second error code has to decide, and PR 2 of B.6 is the natural place — the union is a wire contract before it is an internal type.

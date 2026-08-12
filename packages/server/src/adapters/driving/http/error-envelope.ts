@@ -36,7 +36,6 @@ const STATUS = {
   VALIDATION_FAILED: 400,
   UNAUTHENTICATED: 401,
   NOT_FOUND: 404,
-  RATE_LIMITED: 429,
   INTERNAL: 500,
 } as const satisfies Record<string, number>;
 
@@ -51,7 +50,6 @@ const MESSAGES = {
   VALIDATION_FAILED: "Request failed schema validation.",
   UNAUTHENTICATED: "Missing, unknown or expired token.",
   NOT_FOUND: "Not found.",
-  RATE_LIMITED: "Too many requests.",
   INTERNAL: "An unexpected error occurred.",
 } as const satisfies Record<ErrorCode, string>;
 
