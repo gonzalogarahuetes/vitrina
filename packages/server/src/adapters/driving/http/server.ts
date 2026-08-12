@@ -16,10 +16,10 @@ export async function buildServer(): Promise<FastifyInstance> {
     methods: ["GET", "POST", "DELETE"], // narrow to what the route table needs
     allowedHeaders: ["Authorization", "Content-Type", "Range"],
     exposedHeaders: ["Content-Range", "Accept-Ranges", "Retry-After"],
-    maxAge: 7200,
+    maxAge: 7200, //Chrome caps preflight caching at exactly 7200s, so that's the maximum useful value
   });
 
-  app.register(health); // unversioned, for uptime monitors
+  await app.register(health); // unversioned, for uptime monitors
   //   app.register(
   //     async (v1) => {
   // v1.register(ownerAuth,   { useCases })

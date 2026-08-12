@@ -1,3 +1,5 @@
+import type { FastifyError, FastifyReply, FastifyRequest } from "fastify";
+
 export class ErrorEnvelope extends Error {
   constructor(
     message: string,
@@ -16,11 +18,15 @@ const STATUS: Record<string, number> = {
   RATE_LIMITED: 429,
 };
 
-export function errorEnvelope(error: any, request: any, reply: any) {
+export function errorEnvelope(
+  error: FastifyError,
+  request: FastifyRequest,
+  reply: FastifyReply,
+) {
   if (error instanceof ErrorEnvelope) {
     return reply
       .code(STATUS[error.code] ?? 400)
-      .send({ code: error.code, message: error.message }); // message is static English, #25
+      .send({ code: error.code, message: error.message, details: error.cause }); // message is static English, #25
   }
   if (error.validation) {
     // Fastify schema failure
