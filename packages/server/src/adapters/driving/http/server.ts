@@ -86,6 +86,11 @@ export async function buildServer(
 
   app.register(health); // unversioned, for uptime monitors — track-b-plan §3 B.6
 
+  // Both handlers, because they cover different paths: setErrorHandler does not
+  // They must be before the `register` method or the v1 endpoints get Fastify's default error
+  app.setErrorHandler(errorEnvelope);
+  app.setNotFoundHandler(notFoundEnvelope);
+
   // The /v1 mount point, registered once. B.6's routes drop in here.
   await app.register(
     async (v1) => {
@@ -98,11 +103,6 @@ export async function buildServer(
     },
     { prefix: "/v1" },
   );
-
-  // Both handlers, because they cover different paths: setErrorHandler does not
-  // see route-not-found. See notFoundEnvelope.
-  app.setErrorHandler(errorEnvelope);
-  app.setNotFoundHandler(notFoundEnvelope);
 
   return app;
 }
