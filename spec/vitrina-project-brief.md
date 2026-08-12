@@ -106,6 +106,7 @@ These exist because they are cheap now and expensive or impossible later. Any im
 12. **Filenames never leave the device in plaintext.** `IMG_20260612_bathtime.jpg` leaks. Randomise or encrypt.
 13. **Thumbnails are generated client-side and encrypted** like any other asset. A plaintext thumbnail defeats the entire design.
 14. **Never transmit full resolution.** Downscale to a viewing size (long edge ~1600 px) before encryption. What a recipient can capture is then a screen-quality render, not the original. This is the strongest anti-copying lever available on the web and the one most often skipped.
+15. **No error response ever echoes request content.** A validation error that helpfully returns the offending value is how key material reaches a response body and then a log. This is the "no endpoint accepts key material" rule pointed outward, and it is easy to violate with a well-meaning error handler.
 
 ## 7. Why the encryption format cannot be fixed later
 
@@ -145,7 +146,9 @@ State this accurately in the UI. "Revoked" must not imply "they can no longer de
 
 Owners hold account auth tokens. Recipients hold a long-lived invite access token and have no account at all (encryption spec §6.4, invite spec §1.1). These are different mechanisms, and a single shared token table would invite treating them as one — which is the easiest way to leak album access. Recipient tokens live hashed on the `recipients` row and are revoked by setting `revoked_at`; there is no separate recipient token table.
 
-The "short-lived" property that a session table would provide for recipients is instead delivered by short-lived signed URLs for chunk fetches (§10). Confirm the expiry deliberately in the API sketch — it _is_ the revocation latency.
+**Recipient tokens carry no expiry**, only `revoked_at`, and that asymmetry with `owner_tokens` is deliberate. An owner can always log in again; a recipient has no account, no password and no email, so an expired token would mean permanent lockout whose only recovery is the parent minting a new invite. Invite spec §3 deliberately values the opposite property — a printed QR with no expiry beyond revocation is how a grandparent is given access at a family lunch with no account and no app install. If expiry ever arrives it should be **per-invite and opt-in** (Phase 2's invite-sharing item, or Phase 5 time-limited albums), never a global default.
+
+Since §10.1 settles v1 on proxying, revocation is checked per request and there is no URL lifetime to outlive it. The revocation latency question that a signed-URL design would have raised does not exist in v1.
 
 ### 9.2 What is deliberately not stored
 
