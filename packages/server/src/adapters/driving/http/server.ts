@@ -1,15 +1,26 @@
-import fastify from "fastify";
+import fastify, { type FastifyInstance } from "fastify";
+import { errorEnvelope } from "./error-envelope.js";
+import health from "./routes/health.js";
 
-const server = fastify();
+export function buildServer(): FastifyInstance {
+  const app = fastify({
+    logger: true,
+    /* bodyLimit, etc. */
+  });
 
-server.get("/ping", async (request, reply) => {
-  return "pong\n";
-});
+  app.register(health); // unversioned, for uptime monitors
+  //   app.register(
+  //     async (v1) => {
+  // v1.register(ownerAuth,   { useCases })
+  // v1.register(albums,      { useCases })
+  // v1.register(media,       { useCases })
+  // v1.register(recipients,  { useCases })
+  // v1.register(delivery,    { useCases })
+  // v1.register(accessLog,   { useCases })
+  // },
+  // { prefix: "/v1" },
+  //   );
 
-server.listen({ port: 8080 }, (err, address) => {
-  if (err) {
-    console.error(err);
-    process.exit(1);
-  }
-  console.log(`Server listening at ${address}`);
-});
+  app.setErrorHandler(errorEnvelope); // one shape, #15/#26
+  return app;
+}

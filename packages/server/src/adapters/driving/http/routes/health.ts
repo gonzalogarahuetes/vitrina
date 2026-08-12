@@ -1,15 +1,5 @@
-import Fastify from "fastify";
+import { type FastifyInstance } from "fastify";
 
-const options = {
-  schema: {
-    response: {
-      200: {
-        type: "number",
-      },
-    },
-  },
-};
-
-Fastify.get("/health", options, (request, reply) => {
-  reply.send(200);
-});
+export default async function health(fastify: FastifyInstance) {
+  fastify.get("/health", async () => ({ status: "ok" }));
+}
