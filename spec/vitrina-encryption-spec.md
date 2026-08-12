@@ -212,7 +212,18 @@ Because the server stores `wrapped`, anyone with database access can mount an of
 - Generate from a wordlist of at least 7,776 words
 - Minimum 5 words → ≥ 64 bits of entropy
 - The user MUST NOT be permitted to supply their own
-- Words SHOULD come from a Spanish or Catalan wordlist for this audience — a grandparent reading a passphrase aloud over the phone will transcribe words in their own language far more reliably than English ones. This is a correctness concern, not a localisation nicety.
+- Words MUST come from a wordlist in the **recipient's** language, selected per invite by the owner (brief §15.2) — a grandparent reading a passphrase aloud over the phone transcribes their own language reliably and a foreign one badly. This is a correctness concern, not a localisation nicety.
+
+**Wordlist construction is constrained beyond word count.** A list MUST contain no homophones and no pairs of words differing only by a diacritic, because the normalisation below collapses both. EFF's English long list has these properties by construction; a scraped frequency list does not. A language without a list meeting this bar MUST NOT be offered for passphrases, even if the UI is translated into it.
+
+**Normalisation is normative and identical on both sides.** The generator and the entry path MUST apply the same transformation before the string reaches Argon2id:
+
+1. Unicode NFKD
+2. Remove all combining marks
+3. Lowercase
+4. Collapse runs of whitespace to a single `U+0020`, and trim
+
+So `Café  Roble` and `cafe roble` derive the same KEK. **A mismatch here is not a usability bug — it is an unwrappable blob**, discovered as an opaque AEAD failure with no diagnostic. This belongs in the C.8 test vectors: at least one vector whose passphrase contains diacritics, mixed case and irregular spacing, asserting it unwraps identically to its normalised form.
 
 ### 6.4 The access token is a separate secret from the key
 
