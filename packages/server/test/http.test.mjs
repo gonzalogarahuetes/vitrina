@@ -78,6 +78,75 @@ describe("error envelope", () => {
   });
 });
 
+/*
+ * The regression test for the handler-ordering bug.
+ *
+ * `await app.register(fn, {prefix:"/v1"})` loads that plugin immediately, and
+ * the child context snapshots the parent's error handler at creation. If
+ * setErrorHandler runs *after* it, a throwing /v1 route returns Fastify's own
+ * body — {"statusCode":500,"error":"Internal Server Error","message":"<thrown
+ * Error.message>"} — a second error shape carrying internal exception text.
+ * That is non-negotiable #15, and nothing revealed it while /v1 held no routes.
+ *
+ * WHY THIS GOES THROUGH deps.v1Plugins AND MUST NOT BE "SIMPLIFIED" TO A ROUTE
+ * REGISTERED OUT HERE: a route added to the returned instance is created after
+ * buildServer's setErrorHandler has already run, so it inherits the envelope in
+ * BOTH orderings. Measured — the outside-registered version of this test passes
+ * against the buggy code. It would look like coverage and be worth nothing.
+ *
+ * Its own app: a throwing route has no business in the shared fixture.
+ */
+describe("error envelope reaches versioned routes", () => {
+  // Distinctive, so "did internal detail reach the wire" is a real assertion
+  // rather than a shape check that happens to pass.
+  const THROWN = "internal-detail-that-must-not-leak";
+
+  let v1App;
+
+  before(async () => {
+    v1App = await buildServer({
+      config: { clientOrigin: CLIENT_ORIGIN },
+      useCases: {},
+      logger: false,
+      v1Plugins: [
+        async (scope) => {
+          scope.get("/boom", async () => {
+            throw new Error(THROWN);
+          });
+        },
+      ],
+    });
+    await v1App.ready();
+  });
+
+  after(async () => {
+    await v1App.close();
+  });
+
+  it("a throwing /v1 route returns exactly {code, message}", async () => {
+    const res = await v1App.inject({ method: "GET", url: "/v1/boom" });
+    const body = res.json();
+
+    assert.equal(res.statusCode, 500);
+    assert.deepEqual(Object.keys(body).sort(), ["code", "message"]);
+    assert.equal(body.code, "INTERNAL");
+    // Fastify's default shape has these; the envelope must not.
+    assert.equal(body.error, undefined);
+    assert.equal(body.statusCode, undefined);
+  });
+
+  it("does not leak the thrown exception's message", async () => {
+    const res = await v1App.inject({ method: "GET", url: "/v1/boom" });
+
+    assert.ok(
+      !res.body.includes(THROWN),
+      `500 body echoed internal exception text: ${res.body}`,
+    );
+    // The constant from the code -> message table, never the thrown string.
+    assert.equal(res.json().message, "An unexpected error occurred.");
+  });
+});
+
 describe("CORS", () => {
   it("echoes exactly the allowlisted origin, never a wildcard", async () => {
     const res = await app.inject({

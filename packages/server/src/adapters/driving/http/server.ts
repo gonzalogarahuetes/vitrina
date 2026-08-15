@@ -1,5 +1,6 @@
 import fastify, {
   type FastifyInstance,
+  type FastifyPluginAsync,
   type FastifyServerOptions,
 } from "fastify";
 import cors from "@fastify/cors";
@@ -24,6 +25,18 @@ export type BuildServerDeps = {
    * `false` in tests so eight assertions do not emit eighty lines of pino JSON.
    */
   readonly logger?: FastifyServerOptions["logger"];
+  /**
+   * Extra plugins registered *inside* the real `/v1` context. Production passes
+   * nothing; B.6's routes will replace the commented-out block below.
+   *
+   * This exists so a test can put a route in the same encapsulated context
+   * B.6's routes will occupy, and that is not a convenience. A route registered
+   * from outside `buildServer` is created after `setErrorHandler` has run, so it
+   * inherits the envelope no matter what order this function uses internally —
+   * a test written that way passes against the very bug it is meant to catch.
+   * Verified both ways before this seam was added.
+   */
+  readonly v1Plugins?: readonly FastifyPluginAsync[];
 };
 
 /*
@@ -86,8 +99,19 @@ export async function buildServer(
 
   app.register(health); // unversioned, for uptime monitors — track-b-plan §3 B.6
 
-  // Both handlers, because they cover different paths: setErrorHandler does not
-  // They must be before the `register` method or the v1 endpoints get Fastify's default error
+  /*
+   * BOTH HANDLERS MUST PRECEDE EVERY `await app.register(...)` BELOW. This is
+   * ordering, not style, and reordering it reintroduces a silent #15 leak.
+   *
+   * `await`ing a register forces that plugin to load immediately, and the child
+   * context it creates snapshots the parent's error handler at creation time. A
+   * root `setErrorHandler` called afterwards never reaches it, so a throwing
+   * route inside `/v1` returns Fastify's own body.
+   *
+   * `setNotFoundHandler` is NOT
+   * order-sensitive — Fastify applies it globally at ready time either way. Only
+   * `setErrorHandler` is. They stay together anyway so the pair cannot drift.
+   */
   app.setErrorHandler(errorEnvelope);
   app.setNotFoundHandler(notFoundEnvelope);
 
@@ -100,6 +124,9 @@ export async function buildServer(
       //   v1.register(recipients, { useCases: deps.useCases })
       //   v1.register(delivery,   { useCases: deps.useCases })
       //   v1.register(accessLog,  { useCases: deps.useCases })
+      for (const plugin of deps.v1Plugins ?? []) {
+        await v1.register(plugin);
+      }
     },
     { prefix: "/v1" },
   );

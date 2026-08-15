@@ -34,7 +34,7 @@ This is the most important sentence in this document, because it sets the design
 
 - No image is ever written to the recipient's filesystem, camera roll, or downloads folder
 - Therefore nothing enters their cloud backup
-- There is no file object to forward
+- There is no file object to forward. **The invitation is a different matter — see below**
 - All location and camera metadata is stripped before anything leaves the parent's device
 - The relay server stores only ciphertext it cannot decrypt
 - Access is revocable
@@ -47,7 +47,9 @@ This is the most important sentence in this document, because it sets the design
 - That a technically sophisticated recipient cannot extract what is displayed
 - That the images are "un-copyable" or "DRM-protected"
 
-**This is a product rule, not just an ethical one.** Overclaiming invites a betrayal-of-trust incident the first time a user discovers a screenshot, and in the EU it is a marketing claim we cannot substantiate. Onboarding copy must state the limit plainly and frame the value correctly: _nothing lands on their device, nothing syncs to a cloud, nothing forwards with a tap, and you can revoke it._
+**This is a product rule, not just an ethical one.** Overclaiming invites a betrayal-of-trust incident the first time a user discovers a screenshot, and in the EU it is a marketing claim we cannot substantiate. Onboarding copy must state the limit plainly and frame the value correctly: _nothing lands on their device, nothing syncs to a cloud, no photo forwards with a tap, and you can revoke it._
+
+**"No photo forwards with a tap" is exact, and the earlier wording "nothing forwards with a tap" was an overclaim.** The invitation itself forwards with a tap, and possession of it is possession of the whole album until an owner revokes. That is recorded as a known problem in §11 and it constrains B.7: copy may promise that the images do not travel, and must not imply that access cannot.
 
 ## 4. Architecture: blind relay
 
@@ -91,7 +93,7 @@ These exist because they are cheap now and expensive or impossible later. Any im
 
 4. **libsodium everywhere** — WASM in the browser, native bindings in Swift and Kotlin. Not Web Crypto: it is browser-only and lacks Argon2id.
 5. **A real HTTP API boundary.** Access-control and key-wrapping logic must live in a layer the web framework merely _calls_, never inside page-rendering routes. The web app is one client of the API, not the API's owner.
-6. **Token-based auth, not cookie-session auth.** A cookie may carry the token in the browser; the server contract assumes a stateless, untrusted client.
+6. **Token-based auth, not cookie-session auth.** The server contract assumes a stateless, untrusted client. This clause originally allowed a cookie to carry the token in the browser. That allowance is now narrowed: **the transport is `Authorization: Bearer` and cookies are not used**, because a cookie confines you to a single origin or else requires `SameSite=None`, CORS `credentials`, and CSRF protection that a bearer header does not. Since brief §11 keeps separate client and API origins available as a bundle-integrity mitigation, the bearer header is the choice that keeps both options open.
 7. **A structured invite payload** — relay URL, album ID, key material as a defined serializable object. It renders into a URL fragment, a QR code, or an iOS universal link. Do not let "a link with a fragment" become the abstraction.
 
 ### Forward compatibility
@@ -123,7 +125,7 @@ Format decisions in §6 items 1–3 are effectively permanent. Everything else i
 - **AAD per chunk:** `asset_id ‖ chunk_index ‖ total_chunks`. Without this an attacker can reorder, truncate, or splice chunks between assets. Easy to omit, and the failure is silent.
 - **Key derivation (passphrase recipients):** Argon2id → key-encryption key → wraps the album content key. Server stores the wrapped blob, salt, and parameters; never the passphrase.
 - **Passphrases must be system-generated, high entropy** (4–5 words, diceware-style). Because the server holds the wrapped key, a user-chosen weak passphrase is offline-brute-forceable. Do not let users pick their own.
-- **QR recipients:** key material lives only in the QR. Never on the server in any form. This is the stronger path and should be the default.
+- **QR recipients:** key material lives only in the QR. Never on the server in any form. This is the default — but **not because it is stronger in every respect.** It is stronger against a stolen database and weaker against a forwarded or captured invite, since the QR carries `K_album` while a passphrase invite does not. The full asymmetry is in encryption spec §6.5, and the default is chosen for the threat this architecture exists to defeat rather than for a general ordering.
 
 ### Revocation is server-enforced, not cryptographic
 
@@ -228,7 +230,23 @@ These are real and will need answers. Recorded here so they are not discovered l
 
 **GDPR.** Operating this for anyone beyond yourself makes you a data controller processing images of minors in the EU. Privacy policy, lawful basis, retention, right to erasure. Phase 2 at the latest.
 
-**How does an owner retain `K_album`?** The invite spec says precisely how a recipient obtains an album key. Nothing says how the _owner_ keeps it. An owner needs `K_album` every time they add photos to an existing album or mint a new invite, so a memory-only key means losing your own album on a page refresh. The options are a password-derived master key, device-local storage (lost when the device changes), or a server-stored blob wrapped under a password-derived key — which reintroduces the offline-attack surface that encryption spec §6.3 exists to manage, this time against the owner's own password. This blocks Phase 1, interacts with the owner account model in §12, and is coupled to whether album titles can be encrypted (encryption spec §10). **Not a Phase 0 blocker; decide it before the upload flow is built.**
+**The invitation is a forwardable bearer credential for a whole album.** The images do not become forwardable files — that promise holds. But the invite link does forward with a tap, and whoever holds it holds album access permanently until the owner revokes. Forwarding it into a forty-person family group is exactly the accident §2 exists to defeat, and the friction layer in §10 defends the photographs while nothing defends the link.
+
+Three consequences. The recipient-facing UI MUST say plainly that the invite is like a house key (invite spec §3). B.7's copy must not imply access cannot be passed on. And the mitigation options — device-bound redemption, per-invite device counts — are recorded in invite spec §8 with the reasoning for why hard single-use is not obviously right; none is in v1. Note that passphrase mode is materially better here, because the link alone is not enough (encryption spec §6.5).
+
+**Recipients will become owners, and the two roles must not look separate to the user.** Many recipients will create their own account. The auth _mechanisms_ stay separate — an account token and an invite bearer token have different lifetimes and revocation semantics, and §9.1's warning about one shared token table stands. But the _identity_ separation must not reach the UI: someone logged in who still needs a bookmark to see their granddaughter's album is a bad product. Expect "my albums" and "shared with me".
+
+Permissions are not the difficulty. Authorisation is per album and derived from the relationship — `albums.owner_id` gives owner rights, a `recipients` row gives view rights, and one person holding both to different albums is unremarkable. The schema cost is a nullable FK from `recipients` to `owners`, which is additive with no format change.
+
+**The difficulty is the entry below wearing a different hat**, and that reframing matters: `K_album` retention is not only an owner-convenience question, it is the gate on "shared with me" existing at all.
+
+**How does an owner retain `K_album`?** The invite spec says precisely how a recipient obtains an album key. Nothing says how the _owner_ keeps it. An owner needs `K_album` every time they add photos to an existing album or mint a new invite, so a memory-only key means losing your own album on a page refresh. This blocks Phase 1, interacts with the owner account model in §12, and is coupled to whether album titles can be encrypted (encryption spec §10). **Not a Phase 0 blocker; decide it before the upload flow is built.**
+
+The three candidate answers, and note that they are no longer equally weighted now that the same mechanism would serve claimed albums:
+
+- **Device-local storage** (IndexedDB). Nothing reaches the relay, so encryption spec §6.1 holds exactly. Lost when the device changes. Also the cheap answer for claiming.
+- **Password-derived master key.** No stored blob, but every album key must be derivable from the password, which constrains the key hierarchy.
+- **Server-stored blob wrapped under a password-derived key.** Works across devices and buys "shared with me" as well — at a real cost. It reintroduces the offline attack §6.3 exists to manage, this time against a **human-chosen** password, which is precisely the secret §6.3 forbids for passphrases on exactly that reasoning. Applied to a claimed album it also silently voids §6.1 for that album, and **the person accepting the risk is not the person taking it** — the owner chose direct mode, the recipient's claim changes the exposure, and the owner is never told. If this is ever built, claiming must be a per-album permission the owner grants, with visibility to the owner when it happens (invite spec §8.5's philosophy).
 
 **Storage economics and retention.** Encrypted blobs accumulate. Who pays, and do albums expire?
 

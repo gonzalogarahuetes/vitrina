@@ -175,6 +175,8 @@ There are two ways a recipient obtains `K_album`. The QR path is the default, bu
 
 If the server database is stolen in its entirety, the attacker has ciphertext and nothing that helps decrypt it. This is the property worth protecting.
 
+**Any future feature that causes a wrapped `K_album` to be stored for a direct-mode album voids this property for that album**, and MUST be treated as a change to the album's security posture rather than as a convenience. The specific candidate is a recipient "saving" a shared album into their own account (brief §11): wrapping `K_album` under a key derived from that recipient's account password reintroduces the offline attack §6.3 exists to manage, against a human-chosen secret that §6.3 forbids for exactly this reason. The owner chose direct mode; a recipient must not be able to undo that choice silently.
+
 ### 6.2 Passphrase recipients
 
 For when a QR cannot be delivered — read aloud over the phone, written on a card.
@@ -244,7 +246,11 @@ Earlier drafts of this document called the QR path "strictly stronger." That is 
 
 **Direct mode is stronger against a stolen database.** No wrapped key exists server-side, so a full database compromise yields ciphertext and nothing that helps decrypt it (§6.1). Passphrase mode stores `wrapped`, which is offline-attackable given a weak passphrase — hence §6.3.
 
-**Passphrase mode is stronger against a forwarded invite.** Because the key is not in the invite, the client must fetch the wrapped blob from the relay and unwrap it locally. **The relay therefore participates in every unwrap**, so it can count them, rate-limit them, bind them to a device, or refuse after the first. Direct mode hands `K_album` over inside the QR with the relay never involved, which is precisely why the relay cannot gate it.
+**Passphrase mode is stronger against a forwarded or captured invite**, for two reasons, and the first needs nothing built.
+
+**The link alone is insufficient.** `key` is absent from the payload (invite spec §4), so someone who forwards, photographs or steals the link holds ciphertext they cannot decrypt — the passphrase travelled by a separate channel. Direct mode hands over everything in one artifact: whoever photographs the QR has both secrets, permanently, and no server behaviour retracts the key half.
+
+**And the relay participates in every unwrap**, because the client must fetch the wrapped blob to derive `K_album`. That gives the relay a lever it does not have in direct mode — it could count unwraps, rate-limit them, bind them to a device, or refuse after the first. None of that is in v1; the point is that the mode leaves it possible.
 
 Neither mode dominates. Direct mode remains the default because database theft is the threat this architecture exists to defeat, and because delivery by QR is what makes the product usable by a grandparent with no account. But if invite sharing ever becomes the concern that matters most, the mode that keeps the server in the loop is the one with a lever to pull.
 
