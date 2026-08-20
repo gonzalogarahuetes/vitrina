@@ -27,13 +27,19 @@ import type {
 import type { ErrorCode, ErrorBody } from "@vitrina/shared";
 
 /*
- * code → HTTP status. `satisfies` rather than an annotation, so that
- * `ErrorCode` below is the union of these exact keys instead of `string`.
+ * code → HTTP status.
  *
- * That is what removes the `?? 400` fallback: an unregistered code is now a
- * compile error at the throw site, not a response that quietly carries the
- * wrong status. A code added here without a MESSAGES entry also fails to
- * compile.
+ * `ErrorCode` is imported rather than declared here: api-sketch §1.4 and
+ * architecture §4 decision 5 put it in `@vitrina/shared`, because it is a wire
+ * contract before it is an internal type — §1.3 has the client mapping `code` to
+ * Spanish or Catalan, which it cannot do against a union it cannot import.
+ *
+ * `satisfies Record<ErrorCode, number>` rather than an annotation, so this table
+ * is checked to be TOTAL over that union and still keyed by literals. That is
+ * what removes the `?? 400` fallback: an unregistered code is a compile error at
+ * the throw site, not a response that quietly carries the wrong status. A code
+ * added to the union without an entry here — or here without a MESSAGES entry —
+ * also fails to compile, in `pnpm build` on both packages.
  */
 
 const STATUS = {
@@ -67,13 +73,35 @@ const MESSAGES = {
   INTERNAL: "An unexpected error occurred.",
 } as const satisfies Record<ErrorCode, string>;
 
-// A 4xx arriving with no mapping falls to INTERNAL, which is wrong and is meant to be.
+/*
+ * status → code: api-sketch §1.2's hand-written inverse of the table above,
+ * needed because `code → status` is a function and not a bijection.
+ *
+ * A 4xx arriving with no mapping falls to INTERNAL, which is wrong and is meant
+ * to be: it is the signal that the union is short a code. Do not add a
+ * fallback — that is the `?? 400` §1.1 removed, in a new place.
+ *
+ * The reply status is always `STATUS[code]` and never the number keyed here, so
+ * a wrong row produces a self-consistent response to the wrong condition rather
+ * than a status and a code that disagree.
+ */
 const FRAMEWORK_4XX: Readonly<Record<number, ErrorCode>> = {
   400: "VALIDATION_FAILED", // FST_ERR_CTP_{INVALID,EMPTY}_JSON_BODY
   401: "UNAUTHENTICATED", // never INVALID_CREDENTIALS — §1.2
   413: "PAYLOAD_TOO_LARGE", // FST_ERR_CTP_BODY_TOO_LARGE
   415: "UNSUPPORTED_MEDIA_TYPE", // FST_ERR_CTP_INVALID_MEDIA_TYPE
-  429: "RATE_LIMITED", // It may be inert. 429 won't come from Fastify core; it comes from the limiter
+  /*
+   * PROVISION FOR §7.6, not something the framework emits. Fastify core raises
+   * no 429; only a limiter does, and none is installed. It is registered ahead
+   * of use on §1.1's rule — "a code registered late is a 500 in the meantime" —
+   * and it is the one row the framework-4xx test cannot reach, so it stays
+   * unasserted until that route exists.
+   *
+   * Verify then rather than assume now: a limiter that builds its own reply, as
+   * @fastify/rate-limit does via errorResponseBuilder, never reaches this
+   * handler, and this row would be inert while looking live.
+   */
+  429: "RATE_LIMITED",
 };
 
 /**
@@ -160,6 +188,24 @@ type ValidationLogEntry = {
  * keyword cannot route anything through this branch — and on `typeof === "string"`,
  * so a non-string under that key is dropped rather than serialised.
  *
+ * THE WHITELIST IS KEYWORD-SPECIFIC, NOT CATEGORY-SPECIFIC, AND THAT IS THE
+ * WHOLE OF ITS SAFETY. It is not "params is fine for builtin keywords", and
+ * generalising it to that — the obvious tidy-up, one condition shorter — leaks.
+ *
+ * `additionalProperties` is the counter-example, and it is one keyword over. Its
+ * `params` carries `additionalProperty`: the same shape as `missingProperty`, a
+ * bare string under `params`, on a builtin keyword — but the name in it is
+ * CLIENT-CHOSEN, not schema-declared. A client that POSTs `{"S3CRET": 1}` puts
+ * its own string there, and any rule phrased per-category hands it to the log.
+ *
+ * It cannot fire today: api-sketch §1.2 records that Fastify's default
+ * `removeAdditional: true` strips an unexpected key rather than erroring, so no
+ * client-chosen key name reaches an error object at all. That is the same kind
+ * of guarantee as `verbose: true` being off — a default, one line from changing,
+ * which is exactly why the gate is written per keyword instead of per category.
+ * Adding a keyword here means arguing that keyword's `params` names something we
+ * wrote, one keyword at a time.
+ *
  * DEVIATION, owed to the document: §1.2 and §7.5 both say "never `params`".
  * Decided 20 August 2026 to allow this one key; both sections need the exception
  * recorded, or the code contradicts the spec.
@@ -233,14 +279,36 @@ export function errorEnvelope(
       : FRAMEWORK_4XX[error.statusCode];
 
   if (framework) {
-    // The client's fault, not the server's: warn, not error. Fastify's code goes
-    // to the log, where knowing *which* CTP error fired is what makes a client
-    // bug diagnosable — and the wire stays constant.
+    /*
+     * The client's fault, not the server's: warn, not error. Fastify's code goes
+     * to the log, where knowing *which* CTP error fired is what makes a client
+     * bug diagnosable — and the wire stays constant.
+     *
+     * `{err: error}` and not a projection, unlike the branch above, because a
+     * CTP error is *about* a content type or a byte count rather than about a
+     * submitted value: there is nothing request-shaped in it to project away.
+     * Where that stops holding is a plugin-raised 4xx whose message quotes the
+     * request — the reason the 429 row is marked as unasserted provision.
+     */
     request.log.warn({ err: error }, "framework rejected request");
     return reply.code(STATUS[framework]).send(body(framework));
   }
 
-  // Anything unrecognised is opaque outward and complete inward.
+  /*
+   * Anything unrecognised is opaque outward and COMPLETE INWARD, and the whole
+   * error object is deliberate here.
+   *
+   * api-sketch §1.2 binds the projection to the validation path only: "an
+   * unrecognised error is logged whole because a stack is the entire diagnostic
+   * value" of one. Applying projectValidation here — the consistent-looking
+   * tidy-up — would trade a leak that was measured for blind 500s, and there is
+   * nothing to project from anyway: an unrecognised error has no `validation`.
+   *
+   * The residual risk is a throw site that interpolated a request value into a
+   * message, which §7.5 assigns to the throw site rather than to this handler,
+   * and which is why that row scopes its test to the validation and success
+   * paths and not to this one.
+   */
   request.log.error(error);
   return reply.code(500).send(body("INTERNAL"));
 }

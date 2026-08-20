@@ -91,10 +91,16 @@ implementation, and its HTTP status comes from one table:
 
 **"Registered by" means "the PR whose prose puts this code in the union" — not
 "present in the union today."** Both columns are statements about *this document's*
-scope; neither says anything about the implementation. Six of the ten rows are
-specified here and absent from the code, three of them rows this table attributes
-to PR 1, and **§6.2 is the only place that records which codes actually exist.**
-Read a `PR 1` in this column as "PR 1 owes it", never as "PR 1 shipped it".
+scope; neither says anything about the implementation. Read a `PR 1` in this
+column as "PR 1 owes it", never as "PR 1 shipped it" — a distinction that matters
+again the moment PRs 3–5 add a row.
+
+**All ten rows exist in the union as of 20 August 2026**, in
+`packages/shared/src/index.ts` (§1.4), each with a `code → status` and a
+`code → message` entry. An earlier version of this paragraph said six of the ten
+were absent from the code and that §6.2 was the only place recording which codes
+actually exist; both statements were true when written and are now false. §6.1
+records the enforcement, §6.2 what remains owed.
 
 **Registered ≠ reachable, and the two columns are separated on purpose.** A code
 belongs in the union as soon as some layer can produce the condition it names,
@@ -192,13 +198,44 @@ happens to emit today:
 - **Inward: the log gets a projection built by us, never the error object.**
   `instancePath`, `keyword` and `schemaPath` from each entry of `error.validation`
   — field paths and rule names, which the `details` bullet above already treats as
-  safe even on the wire. **Never `message`, never `params`, never `{err}`, never
-  the body.** The cost is real and accepted: you read the schema alongside a field
-  path instead of an English sentence.
+  safe even on the wire. **Never `message`, never `data`, never `{err}`, never the
+  body.** The cost is real and accepted: you read the schema alongside a field
+  path instead of an English sentence. Implemented as `projectValidation` in
+  `error-envelope.ts`, built as a whitelist rather than a filter, so a field a
+  future AJV attaches is absent by default rather than present by default.
 
-**This binds the validation path only.** The `INTERNAL` path stays complete
-inward, by the bullet above: an unrecognised error is logged whole because a stack
-is the entire diagnostic value of a `500`. A request value reaching a log through
+- **One key of `params` is allowed: `missingProperty`, on `keyword === "required"`
+  only.** Added 20 August 2026; this bullet previously said "never `params`" flatly
+  and the rule was applied for one commit before the gap below was noticed. For a
+  `required` failure AJV puts the field name only in `params.missingProperty` and
+  in `message`: `instancePath` is the parent object, usually `""`, and `schemaPath`
+  is `#/required`. Under the flat rule a missing-field failure logged
+  `{instancePath: "", keyword: "required", schemaPath: "#/required"}` and named no
+  field at all — worse than the cost this section accepts, which trades an English
+  sentence for a field path and here left no field path either. The name is
+  declared by our own schema, the same safety class as `instancePath`.
+
+  **The exception is keyword-specific, and that is the whole of its safety. It is
+  not "`params` is safe on builtin keywords".** `additionalProperties` is the
+  counter-example and it is one keyword over: its `params` carries
+  `additionalProperty`, the same shape — a bare string under `params`, on a
+  builtin keyword — holding a **client-chosen** key name rather than a
+  schema-declared one. `{"S3CRET": 1}` puts a client's string there. It cannot
+  fire while Fastify's default `removeAdditional: true` strips unexpected keys
+  instead of erroring, which is a default one line from changing, exactly like
+  `verbose: true`. So the gate is written per keyword: adding one means arguing
+  that keyword's `params` names something *we* wrote, one keyword at a time.
+
+**This binds the validation path only, and the `INTERNAL` path is asserted to be
+untouched by it** — `error-logging.test.mjs`, because the way to break that rule
+is to "finish" this one. An unrecognised error is logged whole: `request.log.error(error)`,
+a stack, and no projection.
+
+Note one thing this document previously overclaimed: "whole" is the stack, **not
+the cause chain.** Measured 20 August 2026 — pino's default `err` serialiser emits
+`{type, message, stack}` and drops `error.cause` entirely, so a chained cause is
+lost today. §6.2 carries it, with `pino.stdSerializers.errWithCause` as the fix.
+A stack is the entire diagnostic value of a `500`. A request value reaching a log through
 *that* path means someone interpolated one into a throw — which the first bullet in
 this section neutralises for the **wire** and cannot neutralise for the **log**.
 That asymmetry is worth naming rather than papering over: it is a throw-site
@@ -211,8 +248,10 @@ the system to carry a shared secret, and a validation failure on it is the one
 place a body value and a log line meet. §6.2 owes the test, and because the rule
 above is global rather than route-specific, that test asserts a property of *every*
 route rather than of `/login` — no route author has to know their body is
-sensitive. The code does not do this yet: `error-envelope.ts` currently logs
-`{ err: error }`, which is safe under today's AJV and not safe by construction.
+sensitive. **The projection half of that is done** (20 August 2026):
+`error-envelope.ts` no longer logs `{ err: error }` on the validation path. What
+§6.2 still owes is the route-level assertion, which needs PR 2's `/login` to have
+a body worth POSTing a secret into.
 
 **`setNotFoundHandler` is required, not optional.** Fastify routes
 route-not-found through `setNotFoundHandler`, not `setErrorHandler`. Without it,
@@ -249,8 +288,17 @@ describes had to go rather than being merely documented.
 framework 4xx the route table can actually produce (an oversized body, an
 unparseable `Content-Type`, a malformed JSON body) and asserting the response
 code is the registered one. That test is what makes a missing union entry fail in
-CI rather than in production. It is owed and not yet written; §6 records it as
-such.
+CI rather than in production.
+
+**Written 20 August 2026**: `packages/server/test/framework-4xx.test.mjs`, 19
+cases against a body-accepting route registered through `v1Plugins`. It adds two
+triggers this paragraph did not list — a body with **no** `Content-Type` (also
+`415`) and an **empty** body sent as `application/json` (also `400`) — and derives
+its oversized payload from `app.initialConfig.bodyLimit` rather than hardcoding
+1 MiB, so it tracks the limit PR 3's upload route will change. Verified against
+the pre-mapping implementation: all five triggers returned `500 INTERNAL`, which
+is what the test was written to fail on. `429` is the one registered status it
+cannot reach, because nothing raises one — see §7.6.
 
 ### 1.3 Human-readable end-user copy lives in the client
 
@@ -269,9 +317,9 @@ which is what makes both properties checkable by reading one table.
 
 ### 1.4 Where the `ErrorCode` union lives
 
-`vitrina-server-architecture.md` §9 leaves this open and assigns it to "whoever adds the
+`vitrina-server-architecture.md` §9 left this open and assigned it to "whoever adds the
 second error code", naming PR 2 as the natural place. PR 2 adds five. **Decided
-here:**
+here, implemented 20 August 2026, and recorded at source in architecture §9:**
 
 - **`packages/shared` owns the `ErrorCode` union and the `ErrorBody` wire type.**
   §1.3 makes `code` a client contract — the client maps it to Spanish or Catalan
@@ -290,7 +338,14 @@ here:**
 The two rejected candidates — duplicating the list in the client, or generating
 the client's copy — both admit a way for the two halves to drift, and the failure
 they produce is a client with no copy for a code the server can already return.
-**This needs recording in architecture §9**, whose OPEN item this closes.
+
+**One consequence that had to be enforced, not just decided.** Moving the union
+out of `error-envelope.ts` put a wire type one import away from every file in the
+server, and architecture §4 decision 5 only reads as a rule about the *other*
+direction — a domain entity leaking into `shared`. The boundary rule now restricts
+`@vitrina/shared` from `src/domain/**` and `src/application/**` (architecture §6),
+so decision 5 fails `pnpm lint` in both directions. Verified by violating it
+deliberately in each layer, then reverting, per the discipline that rule carries.
 
 ---
 
@@ -579,6 +634,12 @@ which are only written down. **This table grows with every PR** and is the reaso
 | `maxAge` claims only what it claims | Comment in `server.ts` reads "the maximum Chrome honours", not "the maximum useful value". Prose, but the wrong version is what invites someone to raise it |
 | `/health` unversioned | Test: `/v1/health` is 404. **Note what this does not prove:** it passes whether the `/v1` mount exists or not |
 | `Authorization` and `Cookie` headers never appear in logs | `redact: ["req.headers.authorization", "req.headers.cookie"]`. **This row used to claim "key material never in logs", which is more than two redacted headers deliver** — see §6.2 |
+| All ten codes of §1.1 exist, each with a status and a message | `packages/shared/src/index.ts` holds the union; `STATUS` and `MESSAGES` in `error-envelope.ts` are `satisfies Record<ErrorCode, …>`, so a code missing from either does not compile |
+| No framework 4xx collapses to `INTERNAL` (§1.2) | `test/framework-4xx.test.mjs`, 19 cases: oversized body → 413, unmatched and absent `Content-Type` → 415, malformed and empty JSON → 400, plus a sweep asserting no case answers `INTERNAL` or a non-4xx. The reply status is `STATUS[code]`, never the number keyed in the inverse table, so a wrong row cannot produce a status and a code that disagree |
+| An unmapped 4xx is a loud `INTERNAL`, not a quiet 400 | No fallback in the inverse table; verified by probe — a `410` returns `INTERNAL`, a `503` returns `INTERNAL`, and a method mismatch is a `404` rather than an unmapped `405` (§1.1) |
+| A validation failure logs a projection, not the error (§1.2) | `projectValidation` in `error-envelope.ts`, plus `test/error-logging.test.mjs`: a wired half against real AJV, and a by-construction half feeding `data`, an interpolated `message` and a hostile `params` that a `verbose: true` or custom-keyword configuration would produce. Every case asserts the entry's keys against a whitelist, so widening the projection fails here. Measured against the previous `{ err: error }`: 7 of 8 cases fail |
+| The `INTERNAL` path stays complete inward (§1.2) | Same file: asserts the `500` log line carries the thrown message and a stack while the wire stays `{code:"INTERNAL"}`. It exists because the way to break this rule is to "finish" the projection above |
+| `ErrorCode` is a client-importable contract (§1.4) | Declared in `packages/shared`, imported by the adapter. Architecture §4 decision 5 enforced in both directions: `eslint.config.js` restricts `@vitrina/shared` from `src/domain/**` and `src/application/**` |
 | Imports point inward only (vitrina-server-architecture.md §1) | `eslint.config.js` boundary rule; fails `pnpm lint` |
 | No sequential-only streaming construction | `scripts/check-forbidden-constructions.sh` |
 
@@ -591,16 +652,23 @@ Each row names the assertion, not just the gap, so that writing it is mechanical
 
 | Rule | What is owed |
 | ---- | ------------ |
-| §1.1 the six codes the union lacks | The union has **four** — `VALIDATION_FAILED`, `UNAUTHENTICATED`, `NOT_FOUND`, `INTERNAL`. §1.1 specifies **ten**. Owed: `INVALID_CREDENTIALS`, `ACCESS_REVOKED`, `CONFLICT` (PR 2's by §1.1's column) and `PAYLOAD_TOO_LARGE`, `UNSUPPORTED_MEDIA_TYPE`, `RATE_LIMITED` (PR 1's, and owed since PR 1). A `code → status` entry **and** a `code → message` entry each, or it does not compile. **An earlier version of this row called all six "the five codes PR 2 registers"**, which both miscounted and contradicted §1.1's attribution — the sort of drift the split columns exist to prevent |
-| §1.2 no framework error reaches `INTERNAL` | A test driving every framework 4xx the route table can produce — oversized body → `413`, unmatched `Content-Type` → `415`, malformed JSON → `400` — and asserting the registered code, never `INTERNAL`. Until the codes above exist this test cannot pass, which is the point |
-| §1.2 a validation failure logs a value-free projection | `error-envelope.ts` logs `{ err: error }` — safe under today's AJV defaults (§1.2's verified table) and not safe by construction. Owed: replace it with a projection of `instancePath`, `keyword` and `schemaPath` only. **This row and the `/login` row below are one change**, not two: applying either alone leaves the document contradicting itself |
-| §1.4 the union lives in `packages/shared` | `ErrorCode` and `ErrorBody` are still in `error-envelope.ts`, reachable by no other package |
+| §1.2 the cause chain reaches the log | The `INTERNAL` path logs the error whole, but pino's default `err` serialiser emits `{type, message, stack}` and **drops `error.cause`** — measured 20 August 2026. So a `cause` passed to `ApiError` is diagnostic value the document promises and the log does not carry. Owed: `pino.stdSerializers.errWithCause`, or an explicit `serializers.err`. **Decide alongside the row below** — they are the same question asked at two levels |
+| §1.2 an `ApiError` logs nothing at all | The `ApiError` branch returns without logging, so a `409 CONFLICT` carrying `cause: <pg unique violation>` leaves no trace on the server — verified by probe. That is right for a `404` and wrong for a conflict or a revoked recipient. Owed: a decision about which codes warrant a line and at what level, then the line. Not a leak — the projection rule already covers what such a line may carry |
+| §1.2 the `429` row is unasserted provision | The status → code table maps `429 → RATE_LIMITED` ahead of any code that can raise one, on §1.1's "a code registered late is a `500` in the meantime". `framework-4xx.test.mjs` cannot exercise it. Owed with §7.6: assert it against the real limiter, and check first whether that limiter builds its own reply — `@fastify/rate-limit`'s `errorResponseBuilder` never reaches `setErrorHandler`, which would make this row inert while looking live |
 | §2 the `/v1` mount exists | A test that fails when the mount is removed *and* is not about error handling: register a probe route through `v1Plugins`, assert it answers at `/v1/<path>` **and** 404s at `/<path>`. The second half is what makes it about the prefix |
 | §4.1 no key material in any parameter | **Prose only.** The route-table walk brief §12 promises. PR 2 gives it its first real subject: §7.7 accepts wrap material and must accept no passphrase |
 | §4.2 no delete before storage objects | **Prose only.** Needs the delete use case, PR 3 |
 | §7.2 no token in a query string | A test walking the route table asserting no route declares a `token`, `access_token` or `key` query parameter |
-| §7.5 no request body reaches a log, on any route | The redaction list covers two *headers*. PR 2 introduces the first route whose **body** carries a shared secret. Nothing today logs a body — pino's default serialisers log method and URL — but nothing stops it either. Owed: a test that POSTs a distinctive secret to `/login`, captures the log stream, and asserts the secret is absent from every line. **Scoped to the validation and success paths, not `INTERNAL`** (§1.2): a secret reaching a log through a `500` means someone interpolated a request value into a throw, which is a throw-site bug the handler cannot police. Because §1.2's projection rule is global, this test states a property of every route, and the paired row above is what makes it pass |
+| §7.5 no request body reaches a log, on any route | The redaction list covers two *headers*. PR 2 introduces the first route whose **body** carries a shared secret. Nothing today logs a body — pino's default serialisers log method and URL — but nothing stops it either. Owed: a test that POSTs a distinctive secret to `/login`, captures the log stream, and asserts the secret is absent from every line. **Scoped to the validation and success paths, not `INTERNAL`** (§1.2): a secret reaching a log through a `500` means someone interpolated a request value into a throw, which is a throw-site bug the handler cannot police. Because §1.2's projection rule is global, this test states a property of every route. **Its paired row is discharged** — the projection landed 20 August 2026 (§6.1), so this row is now a single change rather than half of one, and what it waits on is the route |
 | §7.6 the `/login` limiter | Not built. Note it is in-process state: correct on one instance, silently broken on two (PR 5 states this as a general property; it is true from the moment this limiter exists) |
+
+**Four rows were deleted here, 20 August 2026**, on the same principle as the
+deletion below — a discharged owed row is errata, and a reader who finds one
+assumes the gap is still open. They moved to §6.1: §1.1's six missing codes,
+§1.2's framework-4xx test, §1.2's validation projection, and §1.4's home for the
+union. The three rows now at the top of this table are what that work uncovered
+rather than what it left undone, which is the more useful thing for this table to
+carry.
 
 **A subsection was deleted here.** PR 1 carried a "Deviations from
 vitrina-server-architecture.md, to be reconciled" list — `buildServer`'s signature, the
@@ -859,14 +927,18 @@ rule.** Whatever brief §12 decides the caller presents, it is a shared secret, 
 `/login` is the first route in the system whose *body* holds one — the redaction
 list in §6.1 covers two headers and nothing else. §1.2 settles the mechanism, and
 settles it **globally rather than for this route**: a validation failure logs a
-projection of `instancePath`, `keyword` and `schemaPath`, never the error object,
-never `message`, never `params`. Route-local suppression was rejected for the usual
-reason — it would require a route author to know their body is sensitive, and
-forgetting the flag would be silent. Note that today's implementation is *safe but
-not safe by construction*: §1.2's verified table shows AJV does not echo values,
-and one option (`verbose: true`) would make it do so. §6.2 carries both halves as a
-single owed change, because a half-applied version reads as the contradiction it is
-fixing.
+projection of `instancePath`, `keyword` and `schemaPath` — plus
+`params.missingProperty` on `required` alone, per §1.2's keyword-specific
+exception — and never the error object, never `message`, never `data`. Route-local
+suppression was rejected for the usual reason: it would require a route author to
+know their body is sensitive, and forgetting the flag would be silent.
+
+**The mechanism is in place as of 20 August 2026**, and it is now safe *by
+construction* rather than safe under today's AJV: the payload is built from a
+whitelist, so `verbose: true` or a custom keyword changes nothing about what
+reaches a log line. What this row still owes is its own half — the test that POSTs
+a real secret to this route and reads every line of the stream — and that needs
+the route.
 
 **`POST /v1/logout`** — owner scheme. **No body**, and `204` on success.
 

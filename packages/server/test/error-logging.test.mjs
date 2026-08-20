@@ -1,9 +1,14 @@
 /*
- * The validation log is a projection, not the error object — api-sketch §1.2's
- * inward half, and §6.2's owed row.
+ * What reaches the log, per path — api-sketch §1.2's inward half, and §6.2's
+ * owed row.
  *
- * Two halves, because they prove different things and only one of them can be
- * written against real AJV:
+ * §1.2 sets two rules, not one: the validation path logs a projection, and the
+ * INTERNAL path logs the error whole. They are tested together because the way
+ * to break the second is to "finish" the first, and a file covering only the
+ * projection would not notice.
+ *
+ * The projection has two halves, because they prove different things and only
+ * one of them can be written against real AJV:
  *
  *   1. WIRED — a real schema'd route, a real AJV failure, the real log stream.
  *      Proves the projection is what actually reaches pino.
@@ -288,5 +293,70 @@ describe("a validation failure logs a projection, not the error (by construction
     assert.equal(logged.validation.length, 2);
     logged.validation.forEach(assertProjected);
     assert.ok(!raw.includes(SUBMITTED), raw);
+  });
+});
+
+/*
+ * The other half of §1.2, and the branch the projection must NOT have reached:
+ * "an unrecognised error is logged whole because a stack is the entire
+ * diagnostic value" of one. Projecting here too would look like consistency and
+ * would trade a leak that was measured for blind 500s.
+ *
+ * Measured while writing this, and asserted as it is rather than as the document
+ * describes it: pino's default `err` serialiser emits `{type, message, stack}`
+ * and DROPS `error.cause`. §1.2 calls the inward side the stack and the cause
+ * chain; the cause chain is not in the log line. Reported rather than encoded —
+ * `pino.stdSerializers.errWithCause` is the fix if that claim is meant to hold.
+ */
+describe("the INTERNAL path stays complete inward", () => {
+  const THROWN = "internal-detail-that-must-not-leak";
+
+  let app;
+  let lines;
+
+  before(async () => {
+    lines = [];
+    app = await buildServer({
+      config: { clientOrigin: CLIENT_ORIGIN },
+      useCases: {},
+      logger: {
+        level: "warn",
+        stream: {
+          write(line) {
+            lines.push(JSON.parse(line));
+          },
+        },
+      },
+      v1Plugins: [
+        async (scope) => {
+          scope.get("/boom", async () => {
+            throw new Error(THROWN);
+          });
+        },
+      ],
+    });
+    await app.ready();
+  });
+
+  after(async () => {
+    await app.close();
+  });
+
+  it("logs the whole error, stack included, while the wire stays constant", async () => {
+    const res = await app.inject({ method: "GET", url: "/v1/boom" });
+
+    assert.equal(res.statusCode, 500);
+    assert.ok(!res.body.includes(THROWN), `the wire leaked: ${res.body}`);
+
+    const [line, ...rest] = lines;
+    assert.equal(rest.length, 0);
+    assert.equal(line.level, 50); // error, not warn: this one is the server's fault
+
+    // The assertion that fails if someone "consistently" projects this branch.
+    assert.equal(line.err.message, THROWN);
+    assert.ok(
+      String(line.err.stack).includes(THROWN),
+      "the stack is the entire diagnostic value of an unrecognised error",
+    );
   });
 });
