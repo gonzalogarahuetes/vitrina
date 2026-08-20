@@ -73,6 +73,15 @@ const MESSAGES = {
   INTERNAL: "An unexpected error occurred.",
 } as const satisfies Record<ErrorCode, string>;
 
+// A 4xx arriving with no mapping falls to INTERNAL, which is wrong and is meant to be.
+const FRAMEWORK_4XX: Readonly<Record<number, ErrorCode>> = {
+  400: "VALIDATION_FAILED", // FST_ERR_CTP_{INVALID,EMPTY}_JSON_BODY
+  401: "UNAUTHENTICATED", // never INVALID_CREDENTIALS — §1.2
+  413: "PAYLOAD_TOO_LARGE", // FST_ERR_CTP_BODY_TOO_LARGE
+  415: "UNSUPPORTED_MEDIA_TYPE", // FST_ERR_CTP_INVALID_MEDIA_TYPE
+  429: "RATE_LIMITED", // It may be inert. 429 won't come from Fastify core; it comes from the limiter
+};
+
 /**
  * The throwable. Carries a `code` and nothing that can leak.
  *
@@ -139,6 +148,19 @@ export function errorEnvelope(
      */
     request.log.warn({ err: error }, "schema validation failed");
     return reply.code(400).send(body("VALIDATION_FAILED"));
+  }
+
+  const framework =
+    error.statusCode === undefined
+      ? undefined
+      : FRAMEWORK_4XX[error.statusCode];
+
+  if (framework) {
+    // The client's fault, not the server's: warn, not error. Fastify's code goes
+    // to the log, where knowing *which* CTP error fired is what makes a client
+    // bug diagnosable — and the wire stays constant.
+    request.log.warn({ err: error }, "framework rejected request");
+    return reply.code(STATUS[framework]).send(body(framework));
   }
 
   // Anything unrecognised is opaque outward and complete inward.
