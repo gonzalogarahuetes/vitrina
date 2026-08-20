@@ -19,6 +19,7 @@
  */
 
 import type { FastifyError, FastifyReply, FastifyRequest } from "fastify";
+import type { ErrorCode, ErrorBody } from "@vitrina/shared";
 
 /*
  * code → HTTP status. `satisfies` rather than an annotation, so that
@@ -29,18 +30,6 @@ import type { FastifyError, FastifyReply, FastifyRequest } from "fastify";
  * wrong status. A code added here without a MESSAGES entry also fails to
  * compile.
  */
-
-export type ErrorCode =
-  | "VALIDATION_FAILED"
-  | "UNAUTHENTICATED"
-  | "INVALID_CREDENTIALS"
-  | "ACCESS_REVOKED"
-  | "NOT_FOUND"
-  | "CONFLICT"
-  | "PAYLOAD_TOO_LARGE"
-  | "UNSUPPORTED_MEDIA_TYPE"
-  | "RATE_LIMITED"
-  | "INTERNAL";
 
 const STATUS = {
   VALIDATION_FAILED: 400,
@@ -113,13 +102,6 @@ export class ApiError extends Error {
     this.details = options?.details;
   }
 }
-
-/** The wire shape. One envelope, every error, no exceptions. */
-export type ErrorBody = {
-  code: ErrorCode;
-  message: string;
-  details?: Readonly<Record<string, string>>;
-};
 
 function body(code: ErrorCode, details?: ApiError["details"]): ErrorBody {
   // Built conditionally rather than with `details: undefined`, because
