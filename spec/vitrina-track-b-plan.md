@@ -154,6 +154,8 @@ Must convey: nothing lands on their device, nothing syncs to a cloud, nothing fo
 
 **Done when:** three sentences exist and you'd be comfortable putting them in front of a data protection officer _and_ your own mother.
 
+_Write them in one language now. Translation is Phase 1, and brief §15.3 gates each language on a fluent speaker confirming the guarantee and its limit both survive — a machine-translated guarantee is how §3 gets violated silently._
+
 _If you can't do it in three sentences, the product isn't clear yet, and that's the finding — not a reason to write four._
 
 ### B.8 — Record decisions · _yours, 10 minutes_

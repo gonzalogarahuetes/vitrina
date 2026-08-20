@@ -175,6 +175,8 @@ There are two ways a recipient obtains `K_album`. The QR path is the default, bu
 
 If the server database is stolen in its entirety, the attacker has ciphertext and nothing that helps decrypt it. This is the property worth protecting.
 
+**Any future feature that causes a wrapped `K_album` to be stored for a direct-mode album voids this property for that album**, and MUST be treated as a change to the album's security posture rather than as a convenience. The specific candidate is a recipient "saving" a shared album into their own account (brief §11): wrapping `K_album` under a key derived from that recipient's account password reintroduces the offline attack §6.3 exists to manage, against a human-chosen secret that §6.3 forbids for exactly this reason. The owner chose direct mode; a recipient must not be able to undo that choice silently.
+
 ### 6.2 Passphrase recipients
 
 For when a QR cannot be delivered — read aloud over the phone, written on a card.
@@ -187,6 +189,8 @@ wrapped = XChaCha20-Poly1305(
               msg   = K_album,
               aad   = "vitrina-wrap-v1" ‖ recipient_id)
 ```
+
+**The AAD's byte form is normative.** `"vitrina-wrap-v1"` is the 15 ASCII bytes, with no null terminator and no length prefix. `recipient_id` is the **16 raw UUID bytes**, never its 36-character text form and never any other encoding. The AAD is therefore exactly 31 bytes. This is the same convention §2 uses for `asset_id` in the envelope header, and it is stated here because §2's rule is written about §2's own domain-separation strings and does not reach this one. A disagreement between two implementations here is an opaque AEAD failure at unwrap time with no diagnostic — see §9.1.
 
 The server stores `salt`, the Argon2id parameters, `wrap_nonce`, and `wrapped`. It never sees the passphrase or `KEK`.
 
@@ -212,7 +216,18 @@ Because the server stores `wrapped`, anyone with database access can mount an of
 - Generate from a wordlist of at least 7,776 words
 - Minimum 5 words → ≥ 64 bits of entropy
 - The user MUST NOT be permitted to supply their own
-- Words SHOULD come from a Spanish or Catalan wordlist for this audience — a grandparent reading a passphrase aloud over the phone will transcribe words in their own language far more reliably than English ones. This is a correctness concern, not a localisation nicety.
+- Words MUST come from a wordlist in the **recipient's** language, selected per invite by the owner (brief §15.2) — a grandparent reading a passphrase aloud over the phone transcribes their own language reliably and a foreign one badly. This is a correctness concern, not a localisation nicety.
+
+**Wordlist construction is constrained beyond word count.** A list MUST contain no homophones and no pairs of words differing only by a diacritic, because the normalisation below collapses both. EFF's English long list has these properties by construction; a scraped frequency list does not. A language without a list meeting this bar MUST NOT be offered for passphrases, even if the UI is translated into it.
+
+**Normalisation is normative and identical on both sides.** The generator and the entry path MUST apply the same transformation before the string reaches Argon2id:
+
+1. Unicode NFKD
+2. Remove all combining marks
+3. Lowercase
+4. Collapse runs of whitespace to a single `U+0020`, and trim
+
+So `Café  Roble` and `cafe roble` derive the same KEK. **A mismatch here is not a usability bug — it is an unwrappable blob**, discovered as an opaque AEAD failure with no diagnostic. This belongs in the C.8 test vectors: at least one vector whose passphrase contains diacritics, mixed case and irregular spacing, asserting it unwraps identically to its normalised form.
 
 ### 6.4 The access token is a separate secret from the key
 
@@ -233,7 +248,11 @@ Earlier drafts of this document called the QR path "strictly stronger." That is 
 
 **Direct mode is stronger against a stolen database.** No wrapped key exists server-side, so a full database compromise yields ciphertext and nothing that helps decrypt it (§6.1). Passphrase mode stores `wrapped`, which is offline-attackable given a weak passphrase — hence §6.3.
 
-**Passphrase mode is stronger against a forwarded invite.** Because the key is not in the invite, the client must fetch the wrapped blob from the relay and unwrap it locally. **The relay therefore participates in every unwrap**, so it can count them, rate-limit them, bind them to a device, or refuse after the first. Direct mode hands `K_album` over inside the QR with the relay never involved, which is precisely why the relay cannot gate it.
+**Passphrase mode is stronger against a forwarded or captured invite**, for two reasons, and the first needs nothing built.
+
+**The link alone is insufficient.** `key` is absent from the payload (invite spec §4), so someone who forwards, photographs or steals the link holds ciphertext they cannot decrypt — the passphrase travelled by a separate channel. Direct mode hands over everything in one artifact: whoever photographs the QR has both secrets, permanently, and no server behaviour retracts the key half.
+
+**And the relay participates in every unwrap**, because the client must fetch the wrapped blob to derive `K_album`. That gives the relay a lever it does not have in direct mode — it could count unwraps, rate-limit them, bind them to a device, or refuse after the first. None of that is in v1; the point is that the mode leaves it possible.
 
 Neither mode dominates. Direct mode remains the default because database theft is the threat this architecture exists to defeat, and because delivery by QR is what makes the product usable by a grandparent with no account. But if invite sharing ever becomes the concern that matters most, the mode that keeps the server in the loop is the one with a lever to pull.
 
@@ -282,6 +301,8 @@ In no case may a reader attempt best-effort parsing or partial recovery.
 
 The reference Rust implementation MUST ship known-answer test vectors as JSON in `spec/vectors/`, and every other implementation MUST pass them unchanged. This is the mechanism — the only mechanism — that keeps the browser, iOS, and Android implementations from silently diverging.
 
+**`spec/vectors/` is not scoped to the envelope format.** It carries two classes: envelope conformance (the ten categories below) and the protocol-level byte agreements in §9.1. Both belong in one file because the mechanism is what matters, not which document defines the value — and a second vectors directory for the same purpose is precisely the duplication this project keeps engineering against. CI MUST run every vector against every implementation, not only against the Rust crate.
+
 Each vector supplies hex-encoded `K_album`, `asset_id`, `base_nonce`, `chunk_size`, and plaintext, and the expected full envelope bytes.
 
 Required coverage:
@@ -300,6 +321,31 @@ Required coverage:
 The negative cases matter as much as the positive ones. An implementation that accepts reordered chunks will pass every positive test and be broken.
 
 Implementations SHOULD additionally carry a property test asserting round-trip identity for random plaintext lengths from 1 byte to several times `chunk_size`, and SHOULD cross-check §1 primitive outputs against libsodium directly.
+
+### 9.1 The rule this section generalises
+
+**Any value that two implementations must compute identically needs a known-answer vector, not a prose description.** Prose says what should happen; a vector says whether it did. Where the two disagree the failure is usually total and silent — an authentication tag that will not verify, a blob that will not unwrap, an invite that never works — with no diagnostic pointing at the cause.
+
+Four instances have already been found by review rather than by test, which is why this is now a rule rather than an observation:
+
+| Value                                           | How it fails                                                                                                        |
+| ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| Argon2id salt length                            | RustCrypto accepts 8–64 bytes, libsodium requires exactly 16 — passes every Rust test, rejected in the browser      |
+| Passphrase normalisation (§6.3)                 | Generator and entry path must transform identically; a mismatch is an unwrappable blob                              |
+| `cipher` byte rejection (§8)                    | Reader behaviour on an unknown value was undefined                                                                  |
+| Token hashing (`vitrina-schema.md` §6)          | SHA-256 over raw bytes versus over the base64url string; every invite fails identically                             |
+| base64url canonicality (`vitrina-schema.md` §6) | Four 43-character strings decode to the same 32 bytes; "43 chars decoding to 32 bytes" does not pin a unique string |
+| Wrap AAD composition (§6.2)                     | `recipient_id` as 16 raw bytes versus 36-character text; opaque AEAD failure at unwrap                              |
+
+Only two of these are envelope concerns. The rest are protocol-adjacent and belong in `spec/vectors/` regardless, per the scope note above.
+
+**Required protocol vectors**, in addition to §9's ten envelope categories:
+
+1. A token in both forms — 32 raw bytes and its canonical 43-character base64url — with the expected SHA-256 of the raw bytes
+2. A non-canonical 43-character spelling of that same token, asserted to be **rejected** rather than accepted
+3. A passphrase containing diacritics, mixed case and irregular whitespace, with its normalised form and the expected KEK under a fixed salt and parameters
+4. A `recipient_id` with the expected 31-byte AAD, hex-encoded
+5. An Argon2id wrap using a 16-byte salt, asserted to succeed, and one using a 32-byte salt, asserted to be rejected before it reaches the KDF
 
 ---
 
