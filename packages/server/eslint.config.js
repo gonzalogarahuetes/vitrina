@@ -55,6 +55,29 @@ const OUTWARD_MESSAGE =
   "Imports point inward only: adapters -> application -> domain (vitrina-server-architecture.md §1). " +
   "This import points outward.";
 
+/*
+ * `@vitrina/shared` holds wire-format types — architecture §4 decision 5: "DTOs
+ * and JSON Schemas are adapter concerns, in driving/http, never in domain/".
+ *
+ * Without this, the §1.4 move of `ErrorCode` out of `error-envelope.ts` enforced
+ * decision 5 in one direction only. A domain entity leaking into `shared/` is
+ * caught by review; a wire type reaching `domain/` was caught by nothing, and it
+ * is the direction that actually happens — `ErrorBody` is now one import away
+ * from any file in the tree.
+ *
+ * Applied to `application/` as well as `domain/`, on this file's own stated
+ * principle: "easier to loosen a rule that fired wrongly than to notice a
+ * boundary that quietly stopped existing." Inert today — the only importer is
+ * `adapters/driving/http/error-envelope.ts`, which is where decision 5 puts it.
+ * If a use case ever has a genuine reason to name a wire type, that is a
+ * decision worth making out loud, and deleting a line here is how it is made.
+ */
+const WIRE_TYPES = ["@vitrina/shared", "@vitrina/shared/*"];
+
+const WIRE_MESSAGE =
+  "@vitrina/shared carries wire-format types; DTOs are adapter concerns, never domain/ " +
+  "(vitrina-server-architecture.md §4 decision 5). Define the shape this layer needs in its own terms.";
+
 export default [
   {
     ignores: ["dist/**", "node_modules/**"],
@@ -89,6 +112,7 @@ export default [
               group: ["**/adapters/**", "**/application/**"],
               message: OUTWARD_MESSAGE,
             },
+            { group: WIRE_TYPES, message: WIRE_MESSAGE },
           ],
         },
       ],
@@ -104,6 +128,7 @@ export default [
           patterns: [
             { group: FORBIDDEN_VENDORS, message: VENDOR_MESSAGE },
             { group: ["**/adapters/**"], message: OUTWARD_MESSAGE },
+            { group: WIRE_TYPES, message: WIRE_MESSAGE },
           ],
         },
       ],

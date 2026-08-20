@@ -109,8 +109,9 @@ The dependency rule is not advisory. **It exists as a failing build** in `packag
 
 `no-restricted-imports`, scoped per layer with flat config's `files`, so each layer is told only what it may not reach for:
 
-- `src/domain/**` may not import `**/adapters/**` or `**/application/**`, nor name a vendor.
-- `src/application/**` may not import `**/adapters/**`, nor name a vendor.
+- `src/domain/**` may not import `**/adapters/**` or `**/application/**`, nor name a vendor, nor name `@vitrina/shared`.
+- `src/application/**` may not import `**/adapters/**`, nor name a vendor, nor name `@vitrina/shared`.
+- `@vitrina/shared` is restricted because it carries wire-format types, and §4 decision 5 makes DTOs an adapter concern. Applied to `application/` as well as `domain/` on the config's own principle — easier to loosen a rule that fired wrongly than to notice a boundary that quietly stopped existing. If a use case ever has a genuine reason to name a wire type, deleting a line is how that decision gets made out loud.
 - The vendor list is `fastify`, `@fastify/*`, `pg`, `pg-*`, `aws-sdk`, `@aws-sdk/*`. Both aws-sdk spellings are listed because v2 and v3 differ; `pg-*` catches the driver's sub-packages.
 
 Two things about that file are not preference and should not be tidied:
@@ -144,8 +145,10 @@ A few directory names are enforcing a non-negotiable rather than expressing tast
 
 Two dangling references were removed. §2 and §8 cited non-negotiables **#26** and **#27**; brief §6 contains fifteen, and `git log -S` shows both numbers were introduced with this document, so neither ever resolved to anything. The rules they were reaching for are real and are now cited properly — #15 for the one-error-shape choke point, and brief §12's Fastify/JSON-Schema argument for `schemas/`. **If #26 and #27 were shorthand for something else, that intent is lost and worth restating.**
 
-### One thing this document does not yet answer
+### Where the error-code union lives — settled 20 August 2026
 
-**OPEN: where the error-code union lives.** §4 decision 5 says `packages/shared` carries "wire-format types genuinely shared with the SvelteKit client (the invite payload, response shapes)". The `ErrorCode` union is a response shape, and `vitrina-api-sketch.md` §1.3 makes it a client contract — the client maps `code` to Spanish or Catalan. It currently lives in `adapters/driving/http/error-envelope.ts`, reachable by no other package.
+**`packages/shared`.** `ErrorCode` and `ErrorBody` are declared in `packages/shared/src/index.ts` and imported by `adapters/driving/http/error-envelope.ts`, which is the first of the three candidates this section previously left open: the obvious reading of §4 decision 5, and the only one that does not admit a way for the client's copy and the server's to drift.
 
-Three candidate answers, and this document should not pick one on its own: move the union to `packages/shared` and import it in both; keep it server-side and duplicate the list in the client; or generate the client's copy. The first is the obvious reading of §4 decision 5, and the last two both admit a way for the two halves to drift. Whoever adds the second error code has to decide, and PR 2 of B.6 is the natural place — the union is a wire contract before it is an internal type.
+Recorded here rather than only in `vitrina-api-sketch.md` §1.4, because §9's own lesson was that errata living in the wrong document is worse than no errata — a reader who finds an OPEN question assumes it is still open.
+
+**Decision 5 is now enforced in both directions, which it was not the day the union moved.** The boundary rule (§6) restricts `@vitrina/shared` from `src/domain/**` and `src/application/**`. A domain entity leaking into `shared/` is caught by review; a *wire type reaching `domain/`* was caught by nothing, and it is the direction that actually happens once `ErrorBody` is one import away from every file in the tree. Inert today — the only importer is the adapter where decision 5 puts it — and deliberately so: the rule is provision, not a response to a violation.

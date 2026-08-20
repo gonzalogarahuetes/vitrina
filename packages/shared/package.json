@@ -1,13 +1,15 @@
 {
-  "name": "shared",
-  "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "name": "@vitrina/shared",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "license": "UNLICENSED",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts"
+    }
+  },
   "scripts": {
     "test": "echo \"shared: no tests yet\""
-  },
-  "keywords": [],
-  "author": "",
-  "license": "UNLICENSED",
-  "type": "module"
+  }
 }
