@@ -28,18 +28,32 @@ import type { FastifyError, FastifyReply, FastifyRequest } from "fastify";
  * compile error at the throw site, not a response that quietly carries the
  * wrong status. A code added here without a MESSAGES entry also fails to
  * compile.
- *
- * The 401/403/404 semantics these codes imply are B.6's to settle, not this
- * module's — see the note on NOT_FOUND below.
  */
+
+export type ErrorCode =
+  | "VALIDATION_FAILED"
+  | "UNAUTHENTICATED"
+  | "INVALID_CREDENTIALS"
+  | "ACCESS_REVOKED"
+  | "NOT_FOUND"
+  | "CONFLICT"
+  | "PAYLOAD_TOO_LARGE"
+  | "UNSUPPORTED_MEDIA_TYPE"
+  | "RATE_LIMITED"
+  | "INTERNAL";
+
 const STATUS = {
   VALIDATION_FAILED: 400,
   UNAUTHENTICATED: 401,
+  INVALID_CREDENTIALS: 401,
+  ACCESS_REVOKED: 403,
   NOT_FOUND: 404,
+  CONFLICT: 409,
+  PAYLOAD_TOO_LARGE: 413,
+  UNSUPPORTED_MEDIA_TYPE: 415,
+  RATE_LIMITED: 429,
   INTERNAL: 500,
-} as const satisfies Record<string, number>;
-
-export type ErrorCode = keyof typeof STATUS;
+} as const satisfies Record<ErrorCode, number>;
 
 /*
  * Static, developer-facing English. Every string here is a constant: no
@@ -49,7 +63,13 @@ export type ErrorCode = keyof typeof STATUS;
 const MESSAGES = {
   VALIDATION_FAILED: "Request failed schema validation.",
   UNAUTHENTICATED: "Missing, unknown or expired token.",
+  INVALID_CREDENTIALS: "Invalid credentials for logging in.",
+  ACCESS_REVOKED: "Recipient access has been revoked.",
   NOT_FOUND: "Not found.",
+  CONFLICT: "Conflict, duplicated value.",
+  PAYLOAD_TOO_LARGE: "Body limit of the request exceeded.",
+  UNSUPPORTED_MEDIA_TYPE: "Content type not supported.",
+  RATE_LIMITED: "Rate limited.",
   INTERNAL: "An unexpected error occurred.",
 } as const satisfies Record<ErrorCode, string>;
 
