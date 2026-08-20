@@ -89,6 +89,13 @@ implementation, and its HTTP status comes from one table:
 | `RATE_LIMITED` | 429 | PR 1 | PR 2 — the `/login` limiter (§7.6) |
 | `INTERNAL` | 500 | PR 1 | PR 1 |
 
+**"Registered by" means "the PR whose prose puts this code in the union" — not
+"present in the union today."** Both columns are statements about *this document's*
+scope; neither says anything about the implementation. Six of the ten rows are
+specified here and absent from the code, three of them rows this table attributes
+to PR 1, and **§6.2 is the only place that records which codes actually exist.**
+Read a `PR 1` in this column as "PR 1 owes it", never as "PR 1 shipped it".
+
 **Registered ≠ reachable, and the two columns are separated on purpose.** A code
 belongs in the union as soon as some layer can produce the condition it names,
 which for the framework 4xx (`413`, `415`) is the moment a route accepts a body —
@@ -142,18 +149,70 @@ The rule is enforced **structurally**, not by review:
   exception.** There is no code path from an `Error`'s own message to the response
   body. Someone who interpolates a request value into a throw cannot get it onto
   the wire.
-- **Fastify's validation message is discarded entirely.** Fastify says
-  `body/key must be string` — naming the field *and quoting its value*. The whole
-  error is replaced with the constant `VALIDATION_FAILED` message; the detail
-  goes to the log, where it is useful and not outward-facing.
+- **Fastify's validation message is discarded entirely**, and **what reaches the
+  log is a value-free projection, not the error.** Both halves are stated below,
+  because an earlier version of this bullet got the reason right and the fact
+  wrong, and the corrected fact does not weaken the rule.
 - **Unrecognised errors are opaque outward and complete inward.** `500` responses
-  carry `{code:"INTERNAL"}` and its constant message. The full error goes to
-  `request.log.error`.
+  carry `{code:"INTERNAL"}` and its constant message. The full error — stack,
+  `cause` chain and all — goes to `request.log.error`. **This path is deliberately
+  not sanitised** (see the note below).
 - **`details` may carry field *names*, never field *values*.** It is typed
   `Record<string, string>` and is for machine-readable context the client needs
   in order to act. Putting the offending input in it is exactly #15.
 - **`cause` is logged and never serialised.** An `ApiError` may chain an
   underlying error for diagnosis; that chain does not reach the response.
+
+#### What a validation failure logs, and the claim that had to be corrected
+
+**Correction of fact.** Earlier drafts of this section, and the comment in
+`error-envelope.ts`, said Fastify's validation message names the offending field
+*and quotes its value*. **It does not** — verified against `fastify@5.11.3` with
+Fastify's default AJV configuration:
+
+| Submitted | `message` | `params` |
+| --------- | --------- | -------- |
+| `{"email":"S3CRET"}` against `format: email` | `body/email must match format "email"` | `{"format":"email"}` |
+| `{"kind":"S3CRET"}` against an `enum` | `body/kind must be equal to one of the allowed values` | `{"allowedValues":["a","b"]}` |
+| `{"n":999}` against `maximum: 5` | `body/n must be <= 5` | `{"comparison":"<=","limit":5}` |
+
+`instancePath` is a field name, `params` carries **schema-side** values only, and
+Fastify's default `removeAdditional: true` strips an unexpected key rather than
+erroring, so not even a client-chosen *key name* reaches the error. The value
+never appears.
+
+**The rule does not weaken, and the reason it does not is the point.** AJV's
+`verbose: true` attaches the offending value to every error object as `data`. A
+custom keyword, a changed message template, or a dependency bump can put the value
+back, and nothing in CI would notice. So both rules stand independent of what AJV
+happens to emit today:
+
+- **Outward: the whole error is replaced** by the constant `VALIDATION_FAILED`
+  message. Unchanged, and never contingent on a library default.
+- **Inward: the log gets a projection built by us, never the error object.**
+  `instancePath`, `keyword` and `schemaPath` from each entry of `error.validation`
+  — field paths and rule names, which the `details` bullet above already treats as
+  safe even on the wire. **Never `message`, never `params`, never `{err}`, never
+  the body.** The cost is real and accepted: you read the schema alongside a field
+  path instead of an English sentence.
+
+**This binds the validation path only.** The `INTERNAL` path stays complete
+inward, by the bullet above: an unrecognised error is logged whole because a stack
+is the entire diagnostic value of a `500`. A request value reaching a log through
+*that* path means someone interpolated one into a throw — which the first bullet in
+this section neutralises for the **wire** and cannot neutralise for the **log**.
+That asymmetry is worth naming rather than papering over: it is a throw-site
+discipline, not something the handler can police, and sanitising the `INTERNAL`
+path would trade the only real diagnostic a `500` has for a guarantee the handler
+still could not make.
+
+**§7.5 is where this stops being hygiene.** `POST /login`'s body is the first in
+the system to carry a shared secret, and a validation failure on it is the one
+place a body value and a log line meet. §6.2 owes the test, and because the rule
+above is global rather than route-specific, that test asserts a property of *every*
+route rather than of `/login` — no route author has to know their body is
+sensitive. The code does not do this yet: `error-envelope.ts` currently logs
+`{ err: error }`, which is safe under today's AJV and not safe by construction.
 
 **`setNotFoundHandler` is required, not optional.** Fastify routes
 route-not-found through `setNotFoundHandler`, not `setErrorHandler`. Without it,
@@ -169,7 +228,7 @@ they are two classes, not one:
 
 | What arrives | Maps to | Why |
 | ------------ | ------- | --- |
-| `error.validation` is present | `VALIDATION_FAILED` / 400, **constant** message | Fastify's own text names the field *and can quote its value* on `format` and `enum` failures. That is #15, so the whole error is dropped and logged instead |
+| `error.validation` is present | `VALIDATION_FAILED` / 400, **constant** message | Fastify's own text names the field, and one AJV option away (`verbose: true`) carries the value too. Rather than depend on that, the whole error is dropped outward and projected to field-path-plus-keyword inward — see above |
 | A `FastifyError` carrying a 4xx `statusCode` and no `validation` | the code registered for **that status** | `413` from `bodyLimit` → `PAYLOAD_TOO_LARGE`; `415` from an unsupported media type → `UNSUPPORTED_MEDIA_TYPE`; a framework `400` (malformed JSON body) → `VALIDATION_FAILED`; a framework `401`, if one ever arrives, → `UNAUTHENTICATED`, never `INVALID_CREDENTIALS` |
 | Anything else, including a 5xx `FastifyError` | `INTERNAL` / 500 | Opaque outward, complete inward |
 
@@ -216,8 +275,9 @@ here:**
 
 - **`packages/shared` owns the `ErrorCode` union and the `ErrorBody` wire type.**
   §1.3 makes `code` a client contract — the client maps it to Spanish or Catalan
-  copy — and architecture §4 decision 5 puts "wire-format types genuinely shared
-  with the SvelteKit client" in `shared`. A closed union the client must exhaust
+  copy — and architecture §4's decision that DTOs and JSON Schemas are adapter
+  concerns puts "wire-format types genuinely shared with the SvelteKit client" in
+  `shared`. A closed union the client must exhaust
   is that, exactly.
 - **The server keeps `code → status` and `code → message`**, both still keyed by
   the shared union via `satisfies Record<ErrorCode, …>`, so §1.1's compile-time
@@ -531,14 +591,15 @@ Each row names the assertion, not just the gap, so that writing it is mechanical
 
 | Rule | What is owed |
 | ---- | ------------ |
-| §1.1 the five codes PR 2 registers | `INVALID_CREDENTIALS`, `ACCESS_REVOKED`, `CONFLICT`, `PAYLOAD_TOO_LARGE`, `UNSUPPORTED_MEDIA_TYPE` are in this document and not in the union. `RATE_LIMITED` is in this document's table and also missing from the code |
+| §1.1 the six codes the union lacks | The union has **four** — `VALIDATION_FAILED`, `UNAUTHENTICATED`, `NOT_FOUND`, `INTERNAL`. §1.1 specifies **ten**. Owed: `INVALID_CREDENTIALS`, `ACCESS_REVOKED`, `CONFLICT` (PR 2's by §1.1's column) and `PAYLOAD_TOO_LARGE`, `UNSUPPORTED_MEDIA_TYPE`, `RATE_LIMITED` (PR 1's, and owed since PR 1). A `code → status` entry **and** a `code → message` entry each, or it does not compile. **An earlier version of this row called all six "the five codes PR 2 registers"**, which both miscounted and contradicted §1.1's attribution — the sort of drift the split columns exist to prevent |
 | §1.2 no framework error reaches `INTERNAL` | A test driving every framework 4xx the route table can produce — oversized body → `413`, unmatched `Content-Type` → `415`, malformed JSON → `400` — and asserting the registered code, never `INTERNAL`. Until the codes above exist this test cannot pass, which is the point |
+| §1.2 a validation failure logs a value-free projection | `error-envelope.ts` logs `{ err: error }` — safe under today's AJV defaults (§1.2's verified table) and not safe by construction. Owed: replace it with a projection of `instancePath`, `keyword` and `schemaPath` only. **This row and the `/login` row below are one change**, not two: applying either alone leaves the document contradicting itself |
 | §1.4 the union lives in `packages/shared` | `ErrorCode` and `ErrorBody` are still in `error-envelope.ts`, reachable by no other package |
 | §2 the `/v1` mount exists | A test that fails when the mount is removed *and* is not about error handling: register a probe route through `v1Plugins`, assert it answers at `/v1/<path>` **and** 404s at `/<path>`. The second half is what makes it about the prefix |
 | §4.1 no key material in any parameter | **Prose only.** The route-table walk brief §12 promises. PR 2 gives it its first real subject: §7.7 accepts wrap material and must accept no passphrase |
 | §4.2 no delete before storage objects | **Prose only.** Needs the delete use case, PR 3 |
 | §7.2 no token in a query string | A test walking the route table asserting no route declares a `token`, `access_token` or `key` query parameter |
-| §7.5 a `/login` body never reaches a log | The redaction list covers two *headers*. PR 2 introduces the first route whose **body** carries a shared secret. Nothing today logs a body — pino's default serialisers log method and URL — but nothing stops it either, and `request.log.warn({err})` on a validation failure (§1.2) logs a Fastify error that can quote a body value. Owed: a test that POSTs a distinctive secret to `/login`, captures the log stream, and asserts the secret is absent |
+| §7.5 no request body reaches a log, on any route | The redaction list covers two *headers*. PR 2 introduces the first route whose **body** carries a shared secret. Nothing today logs a body — pino's default serialisers log method and URL — but nothing stops it either. Owed: a test that POSTs a distinctive secret to `/login`, captures the log stream, and asserts the secret is absent from every line. **Scoped to the validation and success paths, not `INTERNAL`** (§1.2): a secret reaching a log through a `500` means someone interpolated a request value into a throw, which is a throw-site bug the handler cannot police. Because §1.2's projection rule is global, this test states a property of every route, and the paired row above is what makes it pass |
 | §7.6 the `/login` limiter | Not built. Note it is in-process state: correct on one instance, silently broken on two (PR 5 states this as a general property; it is true from the moment this limiter exists) |
 
 **A subsection was deleted here.** PR 1 carried a "Deviations from
@@ -614,18 +675,38 @@ the only place a token is read from. The one place a token-shaped value appears 
 a request body is §7.7's `token_hash`, which is a hash and not a credential.
 
 **The base64url form is transport only.** The server decodes strictly, then
-hashes the 32 raw bytes — schema §6, whose four rules apply verbatim to both
-schemes: exactly 43 characters, base64url alphabet, no padding, decoding to
-exactly 32 bytes, **re-encoded and required to equal the input**. A malformed
-token is rejected at the boundary with `401`, before any lookup, because a value
-that is not a well-formed token cannot be one.
+hashes the 32 raw bytes. **Schema §6's canonical-form rules** apply verbatim to
+both schemes: exactly 43 characters, the base64url alphabet, no padding, decoding
+to exactly 32 bytes, and **re-encoded and required to equal the input**. A
+malformed token is rejected at the boundary with `401`, before any lookup, because
+a value that is not a well-formed token cannot be one.
 
 **Lookup is by hash, never by comparison.** The presented token is hashed and the
 hash is looked up on a `UNIQUE` index; no code path compares two token strings or
-two hashes byte by byte, so there is no comparison to time. Schema §6 rule 4
-forbids comparing token strings anywhere else too — not as a cache key, not for
-log deduplication, not for rate limiting (§7.6 keys on the hash for exactly this
-reason).
+two hashes byte by byte, so there is no comparison to time. **Schema §6's rule
+against comparing token strings** applies everywhere else too — not as a cache
+key, not for log deduplication, not for rate limiting (§7.6 keys on the hash for
+exactly this reason).
+
+**Neither citation above carries a number, deliberately.** An earlier version said
+"schema §6, whose *four* rules apply" and then listed five clauses — miscounting
+its own enumeration — and three lines later cited "schema §6 **rule 4**" for the
+comparison rule. The ordinal happens to resolve correctly today, which is the
+problem rather than the reassurance: it is correct by coincidence of numbering,
+and schema §6 gaining a rule breaks it silently into a citation that reads as
+authoritative and points at something else. That is the failure architecture §9
+had to clean up as non-negotiables #26 and #27 — a reference resolving to nothing,
+or worse, to the wrong thing. **A citation names the rule it means; only the
+section gets a number.** "§6's rule against comparing token strings" survives a
+renumber and is checkable by reading; "rule 4" is neither. Same reasoning as
+carrying a section *title* alongside its number in the database comments.
+
+**This applies to citations that cross a document boundary.** References into a
+numbered list *inside this document* — §7.3's steps, cited in §7.5 and §7.7 — are a
+different case: the list and its citation move in one diff, so a renumber cannot
+land half-applied. They stay as they are. The rule was applied once more on sight,
+to §1.4's "architecture §4 decision 5", which also resolved correctly and also did
+so by coincidence of numbering.
 
 ### 7.3 `401`, `403`, `404` — and the order the checks run in
 
@@ -705,8 +786,31 @@ POST /v1/logout
 POST /v1/logout/all
 ```
 
+**Three routes, and deliberately no fourth.** **There is no refresh endpoint.**
+`/login` issues, `/logout` revokes, and every request re-checks `expires_at` and
+`revoked_at` (§7.3, step 2); a session ends by lapsing or by being revoked, and it
+is renewed by logging in again. A refresh route would be the natural way to make
+the two-week window shorter without adding friction — which is exactly why its
+absence is written down rather than left to be inferred from a list of three
+routes. Adding one is a decision about §5.1, not a convenience: it lengthens the
+period in which a stolen token remains useful, and it is the first thing that
+would make the window's provisional value (below) feel settled without anyone
+having settled it.
+
 **`POST /v1/login`** — no authentication. Response `Cache-Control: no-store`,
 because the body carries a credential.
+
+**That `no-store` extends brief §10; it does not restate it.** §10 requires the
+header on *ciphertext* responses, and §10.1 sets it as object metadata at upload
+time precisely so that no code path can forget it. A `/login` response is neither
+ciphertext nor an object, so nothing in §10 reaches it — this is §10's *reasoning*
+applied to a second kind of body that must not be cached, a bearer token rather
+than an encrypted photograph. Two consequences worth stating. It is set by the
+handler, so unlike §10.1's object metadata it **can** be forgotten, which is the
+same failure shape §10.1 records for the signed-URL override and §1.1 for the
+`?? 400` fallback. And the trigger is the *content of the response*, not the route:
+`/login`'s `200` is the only response in PR 2 that carries a credential, and PR 4's
+wrapped-blob route will need the same extension for the same reason.
 
 - **Request body: OPEN, and only this.** Brief §12 has not settled the owner
   account model — email plus password, or invite code plus password — so the
@@ -749,6 +853,20 @@ the early return is the natural implementation and it is a timing oracle for
 account enumeration. Same family as §7.3's cross-album `404`, and it fails the
 same way — look up, check, return a different answer for each. The dummy hash must
 use the same parameters as a real one, or the timing signal survives.
+
+**The request body never reaches a log, and this is the route that forces the
+rule.** Whatever brief §12 decides the caller presents, it is a shared secret, and
+`/login` is the first route in the system whose *body* holds one — the redaction
+list in §6.1 covers two headers and nothing else. §1.2 settles the mechanism, and
+settles it **globally rather than for this route**: a validation failure logs a
+projection of `instancePath`, `keyword` and `schemaPath`, never the error object,
+never `message`, never `params`. Route-local suppression was rejected for the usual
+reason — it would require a route author to know their body is sensitive, and
+forgetting the flag would be silent. Note that today's implementation is *safe but
+not safe by construction*: §1.2's verified table shows AJV does not echo values,
+and one option (`verbose: true`) would make it do so. §6.2 carries both halves as a
+single owed change, because a half-applied version reads as the contradiction it is
+fixing.
 
 **`POST /v1/logout`** — owner scheme. **No body**, and `204` on success.
 
@@ -850,6 +968,41 @@ not a style problem: it is a blob that cannot be unwrapped, discovered at unwrap
 time with no diagnostic. Rejecting at the boundary turns an opaque AEAD failure
 into a `400`.
 
+**Every binary field on this route decodes by schema §6's rules, not just
+`token_hash`.** `wrapped`, `wrap_nonce`, `kdf_salt` and `token_hash` all get the
+full discipline — the exact character count for that field's length, the base64url
+alphabet (`-` and `_`, never `+` and `/`), no padding, an exact decoded byte count,
+and **the re-encode check**: encode the decoded bytes again and require the result
+to equal the input. Only the lengths differ; the rules do not. An earlier version
+of this section guaranteed *length* for all four and canonical form for
+`token_hash` alone, which left three fields with a weaker guarantee for no stated
+reason.
+
+**One field is worse than `token_hash`, which is the argument for making the rule
+uniform rather than per-field.** Schema §6 derives the re-encode check from
+base64url's spare trailing bits, and those depend on whether the byte length
+divides by three:
+
+| Field | Bytes | Chars | Spare bits | Distinct spellings of the same bytes |
+| ----- | ----- | ----- | ---------- | ------------------------------------ |
+| `wrapped` | 48 | 64 | 0 | 1 |
+| `wrap_nonce` | 24 | 32 | 0 | 1 |
+| `token_hash` | 32 | 43 | 2 | **4** |
+| `kdf_salt` | 16 | 22 | 4 | **16** |
+
+So the field carrying the *most* non-canonical spellings is `kdf_salt`, not
+`token_hash` — sixteen strings that decode to one salt — while `wrapped` and
+`wrap_nonce` have none at all, their lengths being multiples of three. Deciding
+this field by field means getting that ordering right and re-deriving it whenever a
+length changes. One decoder applied to all four is cheaper than the analysis, and
+it is the same argument schema §6 makes for hashing `owner_tokens` by the recipient
+rule: one rule for both is cheaper than two.
+
+As with `token_hash`, this is a **canonical-form guard, not a security control**:
+two spellings of one `kdf_salt` decode to identical bytes and would derive an
+identical KEK, so the check buys a single stored representation rather than
+integrity. No standard encoder ever fails it.
+
 **This route accepts wrap material and no key material.** `wrapped` is a blob
 encrypted under a KEK the server never sees; the passphrase and the KEK must never
 appear in any field, and no field may be added later that carries them (§4.1). This
@@ -911,6 +1064,33 @@ caller's, returning `404` otherwise (§7.3). The nested alternative
 (`/albums/{album_id}/recipients/{recipient_id}/revoke`) reads more consistently and
 adds a pair that can disagree, needing a rule for the mismatch. Flat, with the
 scope check in one place, was chosen for that reason.
+
+**Why create is nested and revoke is flat — the asymmetry is forced, not a style
+slip.** The two routes look inconsistent side by side and the inconsistency is
+worth one paragraph, because the obvious tidy-up in either direction is wrong:
+
+| | Create (§7.7) | Revoke |
+| --- | --- | --- |
+| Path | `/v1/albums/{album_id}/recipients` | `/v1/recipients/{recipient_id}/revoke` |
+| Does a `recipients` row exist yet? | **No** | Yes |
+| Where the album comes from | the caller states it | derived from the row |
+
+**At create time there is no recipient row, so the album cannot be derived from
+anything** — the client mints `id` (it is inside the wrap AAD), but a not-yet-stored
+id joins to nothing, so the album is necessarily an *input*. **At revoke time the
+row exists and determines its album**, so asking for the album again would add a
+second value that can contradict the first and require a rule for the mismatch.
+One route must be told which album; the other must not be asked. Each takes the
+album from the only place available to it.
+
+That leaves only *where* create's album id goes — path or body — and the path wins
+on §7.3's ordering. Scope is resolved at step 3, before the handler and before the
+status is chosen; a path parameter is available to that check identically on every
+route, whereas a body field is available only after body parsing and schema
+validation, which means a scope check running after two failure modes that answer
+`400`. **Nesting create also makes it structurally impossible to create a recipient
+without naming an album**, which a body field leaves as a required-field assertion
+instead. Neither shape should be "made consistent" with the other later.
 
 **What revocation does and does not do** must not be restated loosely in any
 client copy: it stops the server serving ciphertext to that token, from the next
