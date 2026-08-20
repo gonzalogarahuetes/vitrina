@@ -18,7 +18,12 @@
  * message to the response body.
  */
 
-import type { FastifyError, FastifyReply, FastifyRequest } from "fastify";
+import type {
+  FastifyError,
+  FastifyReply,
+  FastifyRequest,
+  FastifySchemaValidationError,
+} from "fastify";
 import type { ErrorCode, ErrorBody } from "@vitrina/shared";
 
 /*
@@ -103,6 +108,84 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * What a validation failure is allowed to contribute to a log line.
+ *
+ * A path into a schema we wrote, the name of a rule we wrote, and — for
+ * `required` only — the name of the field the schema declares. Nothing here can
+ * hold a submitted value, whatever AJV is configured to emit.
+ */
+type ValidationLogEntry = {
+  readonly instancePath: string;
+  readonly keyword: string;
+  readonly schemaPath: string;
+  readonly missingProperty?: string;
+};
+
+/**
+ * The value-free projection of `error.validation`, for the log.
+ *
+ * A WHITELIST, NOT A FILTER, and that is the whole point. These fields are safe
+ * by *what they are*: schema-side names, authored here. Everything else on an
+ * AJV error is safe only by what AJV currently chooses to emit, and every way
+ * that changes is one line of configuration no test would catch:
+ *
+ *   - `verbose: true` attaches the submitted value to every error as `data`.
+ *   - a custom keyword may put anything into `params`.
+ *   - a changed message template, or a dependency bump, can put the value back
+ *     into `message`.
+ *
+ * None of those goes red in CI. The log simply starts containing passphrases,
+ * and it is an incident rather than a test that says so — the same shape as the
+ * forgotten `no-store` header and the `?? 400` fallback: works, plausible,
+ * wrong. Building the payload here rather than filtering the error means a
+ * field added upstream is absent by default instead of present by default.
+ *
+ * `params` is excluded even though api-sketch §1.2 verifies it carries
+ * schema-side values only today (`{format: "email"}`, `{allowedValues: [...]}`).
+ * It echoes the schema, not the request, so it is safe now — and it adds nothing
+ * `keyword` and `schemaPath` do not already give. Keeping it would mean
+ * re-auditing this projection every time someone writes a custom keyword.
+ *
+ * ONE EXCEPTION — `params.missingProperty`. For a `required` failure AJV puts
+ * the field name only there and in `message`: `instancePath` is the parent
+ * object, usually `""`, and `schemaPath` is `#/required`. Without it a
+ * missing-field failure logs nothing that identifies the field, which is worse
+ * than the cost §1.2 accepts — that section trades an English sentence for a
+ * field path, and here there would be no field path either. The name is
+ * declared by our own schema, the same safety class as `instancePath`.
+ *
+ * Gated on `keyword === "required"` rather than on the key being present,
+ * because `required` is an AJV builtin that cannot be redefined — so a custom
+ * keyword cannot route anything through this branch — and on `typeof === "string"`,
+ * so a non-string under that key is dropped rather than serialised.
+ *
+ * DEVIATION, owed to the document: §1.2 and §7.5 both say "never `params`".
+ * Decided 20 August 2026 to allow this one key; both sections need the exception
+ * recorded, or the code contradicts the spec.
+ */
+function projectValidation(
+  validation: readonly FastifySchemaValidationError[],
+): ValidationLogEntry[] {
+  return validation.map((entry) => {
+    const projected = {
+      instancePath: entry.instancePath,
+      keyword: entry.keyword,
+      schemaPath: entry.schemaPath,
+    };
+
+    const missing =
+      entry.keyword === "required" ? entry.params["missingProperty"] : undefined;
+
+    // Conditional rather than `missingProperty: undefined`, for the reason
+    // `body` below is conditional: exactOptionalPropertyTypes distinguishes an
+    // absent key from an undefined one, and so does the serialised log line.
+    return typeof missing === "string"
+      ? { ...projected, missingProperty: missing }
+      : projected;
+  });
+}
+
 function body(code: ErrorCode, details?: ApiError["details"]): ErrorBody {
   // Built conditionally rather than with `details: undefined`, because
   // exactOptionalPropertyTypes distinguishes an absent key from an undefined
@@ -123,13 +206,25 @@ export function errorEnvelope(
 
   if (error.validation) {
     /*
-     * Fastify's own validation message names the offending field *and quotes
-     * its value* — "body/key must be string". That is #15, so the whole of
-     * Fastify's error is dropped and replaced with a constant. The detail goes
-     * to the log instead, where it is useful and not on the wire.
+     * Both directions are by construction, and neither depends on what AJV
+     * emits.
+     *
+     * OUTWARD: Fastify's message names the offending field and the rule —
+     * "body/email must match format \"email\"". §1.2 verifies it does not quote
+     * the value, and that is exactly why it is dropped anyway: `verbose: true`
+     * is one line away from putting the value in it, so the whole error is
+     * replaced by the constant `VALIDATION_FAILED` rather than trusted.
+     *
+     * INWARD: a payload we build, never the error object. `{err: error}` handed
+     * pino whatever AJV had attached; this hands it three named fields. See
+     * projectValidation for why `params` is excluded and `missingProperty` is
+     * the one exception.
      */
-    request.log.warn({ err: error }, "schema validation failed");
-    return reply.code(400).send(body("VALIDATION_FAILED"));
+    request.log.warn(
+      { validation: projectValidation(error.validation) },
+      "schema validation failed",
+    );
+    return reply.code(STATUS.VALIDATION_FAILED).send(body("VALIDATION_FAILED"));
   }
 
   const framework =
