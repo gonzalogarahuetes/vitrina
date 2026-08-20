@@ -22,7 +22,7 @@ Reasoning lives in brief §9.1 (why two auth mechanisms), §9.2 (what is deliber
 | Timestamps            | `timestamptz` always, never `timestamp`                                                                                        |
 | ID generation         | Server-assigned (`gen_random_uuid()`) **except** `media.id` and `recipients.id`, which are client-supplied with **no default** |
 | Enumerations          | `text` plus a `CHECK`, not native Postgres `ENUM` — a provisional schema needs values that are cheap to change                 |
-| Token hashes          | SHA-256 of a 32-byte random token, stored `bytea` (32 bytes)                                                                   |
+| Token hashes          | **SHA-256 over the 32 raw token bytes**, never over any textual encoding of them. Stored `bytea` (32 bytes). See §6            |
 | Password / passphrase | Argon2id, never SHA-256                                                                                                        |
 | Deletion              | `ON DELETE CASCADE` on every foreign key — see §5, and the constraint it does _not_ satisfy                                    |
 
@@ -283,3 +283,22 @@ This is a **B.6 requirement**: the API sketch must state that no endpoint delete
 **`owners` shape**, pending brief §12's account model.
 
 **Whether `albums.title` and `recipients.label` stay plaintext**, pending brief §11's owner-key question. The two are coupled and must be decided together (encryption spec §10).
+
+## 6. Token hashing — the canonical form
+
+Two implementations compute this hash independently and must agree byte for byte: the client hashes at recipient-create time (so the plaintext token never reaches the relay), and the server hashes the presented bearer token on every request. A disagreement makes every invite in the system fail identically, with no diagnostic.
+
+**The rule:**
+
+1. The canonical input is the **32 raw token bytes**. Never the base64url string, never hex, never any other encoding.
+2. `Authorization: Bearer` carries the **base64url form** — it is what sits in the invite fragment, and headers are text. The server therefore decodes, then hashes.
+3. **Decoding is strict, and the encoding must be canonical.** Exactly 43 characters, the base64url alphabet (`-` and `_`, not `+` and `/`), no padding, decoding to exactly 32 bytes — and then **re-encode and require the result to equal the input.** Anything else is rejected at the boundary rather than hashed.
+
+   The re-encoding check is not pedantry. 43 base64url characters carry 258 bits and a token is 256, so the two spare bits in the final character mean **four distinct 43-character strings decode to the same 32 bytes.** "43 characters decoding to 32 bytes" therefore does not identify a unique string. Any standard encoder given 32 bytes emits the canonical spelling with those bits zero, so no legitimate token ever fails this check.
+
+4. **The base64url form is transport only.** Because the hash is taken over decoded bytes, all four spellings would authenticate identically even without rule 3 — which is why rule 3 is a guard rather than a security control. Never compare token strings: not as a cache key, not for log deduplication, not for rate limiting. #10 keys the limiter on the hash for exactly this reason.
+5. The server cannot validate that a stored hash corresponds to a well-formed token, and must not try — any 32 random bytes is a valid token, so there is nothing to check.
+
+**This requires a conformance vector**, not just this prose: one known token, in both its raw-byte and base64url forms, with its expected SHA-256. Both implementations run it. See encryption spec §9 — the same mechanism, applied outside the envelope.
+
+`owner_tokens.token_hash` follows the same rule. Only the server hashes it today, so the cross-implementation risk is lower, but one rule for both is cheaper than two.

@@ -80,21 +80,34 @@ export async function buildServer(
     origin: deps.config.clientOrigin, // exact string from config — never true, never "*"
     credentials: false, // Authorization header only; see note below
     methods: ["GET", "POST", "DELETE"], // narrow to what the route table needs
+    /*
+     * Authorization is listed EXPLICITLY and not by wildcard: the Fetch standard
+     * makes it a non-wildcard header, so `Access-Control-Allow-Headers: *` does
+     * not cover it. Consequence, recorded in api-sketch §3.1 rather than left
+     * for someone to rediscover: every authenticated cross-origin request
+     * preflights — because of bearer auth, not because of Range.
+     */
     allowedHeaders: ["Authorization", "Content-Type", "Range"],
-    exposedHeaders: ["Content-Range", "Accept-Ranges"],
-    maxAge: 7200, // Chrome caps preflight caching at 7200s — the maximum useful value
+    exposedHeaders: ["Content-Range", "Accept-Ranges", "Retry-After"],
+    maxAge: 7200, // the maximum Chrome honours — NOT a claim about other browsers
   });
   /*
-   * `credentials: false` is a decision B.6 should record, not a default. Brief
-   * §6 #6 allows that "a cookie may carry the token in the browser"; this says
-   * it will not, and that the token travels in an Authorization header. That is
-   * the better reading — it keeps the server stateless as #6 requires and
-   * sidesteps CSRF entirely — but PR 2's auth mechanics inherit it, and flipping
-   * it later means also dropping the wildcard-free origin (already the case) and
-   * revisiting SameSite. `Range` is in allowedHeaders and `Content-Range` /
-   * `Accept-Ranges` in exposedHeaders because without them the PR 4 chunk-fetch
-   * route cannot work cross-origin at all: the browser would hide exactly the
-   * headers the client needs to compute the next range (encryption spec §3.3).
+   * `credentials: false` is a decision, not a default — api-sketch §3.2. Brief
+   * §6 #6 has since been narrowed to say the same thing: the transport is
+   * `Authorization: Bearer` and cookies are not used, because separate origins
+   * are the deployment and a cookie would need SameSite=None, CORS credentials
+   * and CSRF protection that a bearer header does not.
+   *
+   * `Content-Range` / `Accept-Ranges` are exposed because PR 5's chunk-fetch
+   * route cannot work cross-origin without them: the browser would hide exactly
+   * the headers the client needs to compute the next range (encryption spec
+   * §3.3). `Retry-After` is exposed because a client that cannot read it cannot
+   * back off for the interval the server chose, and PR 2's /login limiter
+   * (api-sketch §7.6) is the first thing here that can answer 429.
+   *
+   * Note `maxAge` is not a promise: WebKit's cap is materially lower than
+   * Chrome's, and the real figure belongs to phase-0-plan §8's V.2 on a real iOS
+   * device rather than to a number copied out of documentation.
    */
 
   app.register(health); // unversioned, for uptime monitors — track-b-plan §3 B.6

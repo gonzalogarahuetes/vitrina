@@ -171,13 +171,18 @@ describe("CORS", () => {
   });
 
   /*
-   * Range is not a CORS-safelisted request header, and Content-Range /
-   * Accept-Ranges are not safelisted response headers. Without these three the
-   * PR 4 chunk-fetch route cannot work cross-origin: the browser would hide the
-   * headers the client needs to compute the next chunk's byte range (encryption
-   * spec §3.3).
+   * Content-Range, Accept-Ranges and Retry-After are none of them safelisted
+   * RESPONSE headers, so without exposedHeaders the browser hides them from the
+   * client entirely — and PR 5's chunk-fetch route cannot then compute the next
+   * chunk's byte range (encryption spec §3.3), nor can a client back off for the
+   * interval a 429 asked for (api-sketch §7.6).
+   *
+   * Range itself IS safelisted for single byte ranges — the forms PR 5 accepts.
+   * It is asserted here anyway because it is listed explicitly rather than left
+   * to that subtlety. Authorization is the header that actually forces every
+   * authenticated cross-origin request to preflight (api-sketch §3.1).
    */
-  it("permits Range and exposes the range response headers", async () => {
+  it("permits Range and exposes the range and retry response headers", async () => {
     const res = await app.inject({
       method: "OPTIONS",
       url: "/health",
@@ -192,10 +197,13 @@ describe("CORS", () => {
 
     const allowed = String(res.headers["access-control-allow-headers"]).toLowerCase();
     assert.ok(allowed.includes("range"), `Range not allowed: ${allowed}`);
+    // Non-wildcard per the Fetch standard: `*` would not cover it.
+    assert.ok(allowed.includes("authorization"), `Authorization not allowed: ${allowed}`);
 
     const exposed = String(res.headers["access-control-expose-headers"]).toLowerCase();
     assert.ok(exposed.includes("content-range"), `Content-Range not exposed: ${exposed}`);
     assert.ok(exposed.includes("accept-ranges"), `Accept-Ranges not exposed: ${exposed}`);
+    assert.ok(exposed.includes("retry-after"), `Retry-After not exposed: ${exposed}`);
   });
 
   it("caches the preflight, so every ranged GET is not preceded by an OPTIONS", async () => {
