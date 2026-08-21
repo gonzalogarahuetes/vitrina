@@ -14,8 +14,8 @@ what it does, and the authentication model that every route's contract assumes.
 
 | PR | Covers | Status |
 | -- | ------ | ------ |
-| 1  | Error envelope, `/v1`, CORS, the two standing constraints, open questions | **§1–§6** |
-| 2  | Both auth schemes and the full credential lifecycle of each — `/login`, `/logout`, recipients create and revoke | **§7** |
+| 1  | Error envelope, `/v1`, CORS, the three standing constraints, open questions | **§1–§6** |
+| 2  | Both auth schemes and the full credential lifecycle of each — `/signup`, `/login/params`, `/login`, `/logout`, recipients create and revoke | **§7** |
 | 3  | Owner flow — albums, album details, album encrypted metadata, media create/status, upload | not written |
 | 4  | The passphrase key-material route — the only route that returns key-adjacent material | not written |
 | 5  | Ciphertext delivery, `Range` handling, the access log, rate limiting | not written |
@@ -46,8 +46,17 @@ route must do and, from §7 onward, which routes exist.
 from it without asking you a question." For PR 1's scope that bar is met — the
 error handler, CORS setup and route registration exist and are tested. For PR 2
 the bar is met on paper: §7 fixes paths, bodies, status codes and error codes for
-five routes, and §6 records exactly which of its rules are code and which are
+**seven** routes, and §6 records exactly which of its rules are code and which are
 still owed. It is not met for PRs 3–5, and deliberately so.
+
+**Amended 21 August 2026.** Brief §11 and §12 closed the two decisions PR 2 was
+written around, so this revision closes §5.1 and §5.2, decouples §5.3 from them,
+fills §7.5's labelled request-body gap, and adds the two credential routes that
+decision implies — `POST /v1/signup` and `POST /v1/login/params`. Per the rule
+above nothing was renumbered: both routes joined §7.5, which is now the owner
+credential lifecycle rather than owner sessions alone. **Implementing them needs
+`owners` columns and the `owner_keys` table, which land in a Phase 1 migration**
+— `001_initial_schema.sql` has applied and contains neither.
 
 ---
 
@@ -59,13 +68,34 @@ still owed. It is not met for PRs 3–5, and deliberately so.
 {
   "code": "ACCESS_REVOKED",       // stable, machine-readable, the client's contract
   "message": "Access has been revoked.", // developer-facing English
-  "details": { "field": "kind" }          // optional; field *names* only, never values
+  "details": { "fields": ["kind"] }       // optional; field *names* only, never values
 }
 ```
 
 `details` is shown for shape only. **No code PR 2 registers ever carries it** —
 §7.3 explains why the auth routes in particular are the wrong place for a
 machine-readable hint.
+
+**`details` is typed `{ fields: string[] }`. Decided 21 August 2026** — an
+amendment, because PR 1 shipped without settling it and it therefore had no
+owner, the one state the open-items list exists to prevent.
+
+The constraint that decides the shape is #15: it must distinguish a field **name**
+from a field **value**. `Record<string, string>` — what the type was — fails
+structurally, because `{"field": "kind"}` and `{"kind": "<what they sent>"}` are
+the same shape and only intent separates them. **A list of names has nowhere to
+put a value**, so the type refuses the echo rather than a reviewer catching it;
+`tsc` rejects `details: { kind: "..." }` at the throw site. Same reasoning as
+§1.2's log projection being a whitelist rather than a filter, and the same safety
+class: a name is safe because *our schema declared it*.
+
+Two limits, stated rather than implied. A value can still be *placed in the
+list* — the type forecloses the shape that made echoing natural, not a throw site
+determined to lie, and `http.test.mjs` asserts that as the property rather than
+overclaiming. And `fields` is the only member: a future code needing context that
+is genuinely not a field name gets a sibling key with its own #15 argument, never
+a widening of this one. It lives on `ErrorDetails` in `packages/shared` (§1.4),
+because a client that must render it has to import it.
 
 Implemented at `packages/server/src/adapters/driving/http/error-envelope.ts`, as
 a single module wired through `setErrorHandler` **and** `setNotFoundHandler`.
@@ -83,7 +113,7 @@ implementation, and its HTTP status comes from one table:
 | `INVALID_CREDENTIALS` | 401 | PR 2 | PR 2 — `POST /login` only (§7.5) |
 | `ACCESS_REVOKED` | 403 | PR 2 | PR 3 — a revoked **recipient** on their own album (§7.3) |
 | `NOT_FOUND` | 404 | PR 1 | PR 1 — unknown route; PR 2 adds out-of-scope album and recipient |
-| `CONFLICT` | 409 | PR 2 | PR 2 — duplicate `id` or `token_hash` on recipient create (§7.7) |
+| `CONFLICT` | 409 | PR 2 | PR 2 — duplicate `id` or `token_hash` on recipient create (§7.7); also a duplicate address on `POST /signup` (§7.5) |
 | `PAYLOAD_TOO_LARGE` | 413 | PR 1 | PR 2 — `bodyLimit` on the first route with a body; PR 3's upload route depends on it |
 | `UNSUPPORTED_MEDIA_TYPE` | 415 | PR 1 | PR 2 — `POST /login` with a `Content-Type` no body parser matches |
 | `RATE_LIMITED` | 429 | PR 1 | PR 2 — the `/login` limiter (§7.6) |
@@ -231,10 +261,6 @@ untouched by it** — `error-logging.test.mjs`, because the way to break that ru
 is to "finish" this one. An unrecognised error is logged whole: `request.log.error(error)`,
 a stack, and no projection.
 
-Note one thing this document previously overclaimed: "whole" is the stack, **not
-the cause chain.** Measured 20 August 2026 — pino's default `err` serialiser emits
-`{type, message, stack}` and drops `error.cause` entirely, so a chained cause is
-lost today. §6.2 carries it, with `pino.stdSerializers.errWithCause` as the fix.
 A stack is the entire diagnostic value of a `500`. A request value reaching a log through
 *that* path means someone interpolated one into a throw — which the first bullet in
 this section neutralises for the **wire** and cannot neutralise for the **log**.
@@ -300,6 +326,94 @@ the pre-mapping implementation: all five triggers returned `500 INTERNAL`, which
 is what the test was written to fail on. `429` is the one registered status it
 cannot reach, because nothing raises one — see §7.6.
 
+#### What the log does with a cause — and a measurement this document got wrong
+
+**Correction, 21 August 2026.** A note in this section read: "pino's default
+`err` serialiser emits `{type, message, stack}` and drops `error.cause`
+entirely, so a chained cause is lost today." **That is false, and the version it
+was measured against is the version installed.** Re-measured on pino 10.3.1 /
+pino-std-serializers 7.1.0, whose own source comments "We append cause messages
+and stacks to `_err`, therefore skipping causes here": the default **flattens**
+the chain. Every cause message is joined into `err.message` with `": "`, and
+every cause stack is appended to `err.stack` under `caused by:`. There is no
+`err.cause` key, which is what the earlier measurement saw and read as absence.
+
+The chain was in the log all along, unstructured. Two consequences, and the
+second is the one that matters:
+
+- **`errWithCause` is adopted anyway** — `pino.stdSerializers.errWithCause`,
+  wired as `LOG_POLICY` in `server.ts`. But for **structure, not presence**:
+  `err.cause` becomes a nested object, each link keeping its own `message` and
+  `stack`, queryable by field instead of by substring. The cost, since it is
+  real: `err.message` is now the top-level message alone, so anything reading it
+  for the underlying reason must walk `err.cause`, and a log query written
+  against the flattened form stops matching.
+- **The #15 exposure is not new and was never hypothetical.** If the chain has
+  been reaching the log flattened since the first `cause` was passed, then a
+  driver error chained verbatim has been putting its quoted request values in
+  the log all along. `errWithCause` moves where the value sits — `err.cause.message`
+  rather than `err.message` — and changes nothing about whether it is there.
+
+**So the rule: chain a message you wrote, not a driver error verbatim.** This is
+a #15 guard, not a style note. Postgres spells a unique violation
+`duplicate key value violates unique constraint "owners_email_key" Key (email)=(someone@example.com) already exists.`
+— a submitted value, quoted by the driver, reaching the log with no throw site
+having interpolated anything. Wrap it:
+
+```ts
+throw new ApiError("CONFLICT", {
+  cause: new Error(`owners.email already taken (pg ${pgError.code})`),
+});
+```
+
+The driver's `code` and constraint name are both safe to name, because they
+describe the schema rather than the request. They belong **in the message you
+write**, not in a nested `cause`: both serialisers drop a non-`Error` cause
+silently, so `cause: pgError.code` reads as diagnostics and reaches no log line
+at all.
+
+It sits with the paragraph above as throw-site discipline rather than a handler
+guarantee, for the same reason: the handler cannot inspect a message and know
+whether a value in it was submitted or authored. §6.2 carries what that costs in
+enforceability. The rule is written on `ApiError`'s `cause` doc comment as well
+as here, because whoever chains a `pg` error will be reading the constructor and
+not this document.
+
+#### An `ApiError` is logged when it carries a cause, and not otherwise
+
+**Decided 21 August 2026**, closing a §6.2 row. The `ApiError` branch used to
+return without logging at all, so a `409 CONFLICT` carrying a unique violation
+left no trace on the server.
+
+- **A cause means a line: `warn`, with `{err: error}`.** A cause is the signal
+  that something happened which the server had to interpret — a constraint
+  violation behind a `CONFLICT`, a storage failure behind a `NOT_FOUND`.
+- **No cause means silence.** A `404` with nothing underneath it is not an
+  event: the route answered the question it was asked. A line per missing album
+  is noise, and noise is what trains people to stop reading the log.
+- **`warn` and not `error`**, matching the framework-4xx branch: an `ApiError`
+  is a condition this server recognised and answered correctly. `error` stays
+  reserved for the branch where it did not.
+- Handing pino `{err: error}` here is safe on the envelope's own terms —
+  `ApiError`'s message is `MESSAGES[code]`, a constant. Everything below it in
+  the chain is the throw site's responsibility, per the rule above.
+
+**One case the cause-based rule does not cover, and it is deliberate:**
+`new ApiError("INTERNAL")` with no cause answers `500` and logs nothing. Adding
+a second condition on status would be the handler doing a throw site's job. The
+rule instead is: **do not throw `INTERNAL` as an `ApiError`** — let an
+unrecognised error fall through to the branch that logs a stack.
+
+**The log policy belongs to the adapter, not to `buildServer`'s caller.**
+`redact` and `serializers` are merged over whatever logger a caller passes, and
+`false` is the only thing passed through untouched. Before this, a
+caller-supplied logger replaced the options object wholesale, so every test that
+captured a log stream ran with no redaction and no serialisers — harmless in
+production, which passes no logger, but it meant no test could prove either rule
+held. It also meant a test asserting the cause chain would have been asserting
+its own configuration: the same failure mode `v1Plugins` exists to avoid, where a
+test passes against the very bug it is meant to catch.
+
 ### 1.3 Human-readable end-user copy lives in the client
 
 Per brief §15.1: no route reads `Accept-Language`, and **no response contains
@@ -321,7 +435,8 @@ which is what makes both properties checkable by reading one table.
 second error code", naming PR 2 as the natural place. PR 2 adds five. **Decided
 here, implemented 20 August 2026, and recorded at source in architecture §9:**
 
-- **`packages/shared` owns the `ErrorCode` union and the `ErrorBody` wire type.**
+- **`packages/shared` owns the `ErrorCode` union, the `ErrorBody` wire type and
+  `ErrorDetails` (§1.1).**
   §1.3 makes `code` a client contract — the client maps it to Spanish or Catalan
   copy — and architecture §4's decision that DTOs and JSON Schemas are adapter
   concerns puts "wire-format types genuinely shared with the SvelteKit client" in
@@ -356,7 +471,7 @@ route file never writes the prefix itself; it is applied by a single
 `app.register(routes, { prefix: "/v1" })` in the HTTP adapter.
 
 **That mount point exists in code** — `server.ts` registers an empty `/v1`
-context, and PR 2's five routes are the first to register inside it. Until they
+context, and PR 2's seven routes are the first to register inside it. Until they
 do, the only thing living there is the test seam described in §6, which is why
 §6's row for the prefix is honest about what is and is not asserted.
 
@@ -476,8 +591,10 @@ that is not true.
 
 ## 4. Standing constraints
 
-Two rules that hold for every endpoint in every later PR. They are written here
-so that a future route can be checked against them.
+Three rules that hold for every endpoint in every later PR. They are written here
+so that a future route can be checked against them. **§4.3 was added 21 August
+2026**, when brief §12's account model turned a `/login` property into one
+spanning two routes.
 
 ### 4.1 No endpoint accepts key material in any parameter, header, or body
 
@@ -494,16 +611,19 @@ from the crypto side: key material must never reach the relay "in any form, by a
 path. This includes error reports, crash dumps, telemetry, analytics, and log
 lines."
 
-**AMBIGUITY, needs recording in the brief.** The B.6 checklist cites the inward
-rule as **non-negotiable #16**, and it is not there: brief §6 numbers exactly
-fifteen, and #15 itself describes the inward rule without giving it a number
-("the 'no endpoint accepts key material' rule pointed outward"). So the inward
-half of a symmetric pair is the only one that cannot be cited. Citing "#16" today
-would be another dangling reference of the kind architecture §9 had to clean up
-(#26 and #27, which never resolved to anything). **Proposed:** add the inward rule
-to brief §6 as **#16**, worded as the constraint in this section, and then this
-section cites #15 and #16 as the pair. Until that edit lands, the citations here
-are #15 plus encryption spec §2.2.
+**That ambiguity is resolved and the note recording it is deleted.** It read:
+the inward rule is cited as non-negotiable #16 and brief §6 numbers only fifteen,
+so the inward half of a symmetric pair is the one half that cannot be cited;
+proposed adding it as #16. **The edit landed** — brief §6 now numbers seventeen,
+with **#16** the inward rule worded as this constraint and **#17** the
+default-must-never-be-silently-absent rule this document leans on twice (§1.2's
+unmapped 4xx, §7.5's decoy secret). So cite **#15 and #16 as the pair**, and drop
+the "encryption spec §2.2 in the meantime" workaround.
+
+Kept as one paragraph rather than removed outright because the resolution is the
+useful part: a dangling citation was found by writing prose that needed it, which
+is the same way architecture §9's #26 and #27 were found. Left as a live
+AMBIGUITY, a reader would go looking for a gap that is closed.
 
 What the server legitimately holds for passphrase recipients is the *wrapped*
 blob and its parameters — `wrapped`, `wrap_nonce`, `kdf_salt` and the three
@@ -512,12 +632,24 @@ store nothing at all (encryption spec §6.1).
 
 **The checkable form of this constraint** is brief §12's reason for choosing
 Fastify: per-route JSON Schema makes it "auditable by a test that walks the route
-table". **PR 2 is the first PR that gives that test something to walk**, and the
-first that tests it against a route which legitimately accepts wrap material:
-§7.7's create-recipient body carries `wrapped`, `wrap_nonce`, `kdf_salt` and the
-three Argon2id integers, and must accept no passphrase and no KEK. A route that
-accepts the wrapped blob is exactly where the difference between "wrapped blob"
-and "key material" stops being a definition and becomes a schema.
+table". **PR 2 is the first PR that gives that test something to walk**, and it
+gives it **two** routes that legitimately accept wrap material — a count that
+changed on 21 August 2026 and matters, because a walk demonstrated on one route
+is a walk nobody has generalised:
+
+- **§7.7's create-recipient** carries `wrapped`, `wrap_nonce`, `kdf_salt` and the
+  three Argon2id integers, and must accept no passphrase and no KEK.
+- **§7.5's `POST /signup`** carries `wrapped_master`, `wrap_nonce`, a salt and
+  parameters, and must accept neither the password nor `K_master`. **This is the
+  higher-consequence body in the system** — it wraps the key every album in the
+  account hangs off — so the audit should be written against it and merely
+  confirmed on the other.
+
+A route that accepts a wrapped blob is exactly where the difference between
+"wrapped blob" and "key material" stops being a definition and becomes a schema.
+Brief §6 #16 now states that distinction in the same words: a wrapped blob is
+ciphertext and may be posted; the key that wrapped it and the secret that key was
+derived from may never be.
 
 **Note the boundary this constraint does not cover.** Invite spec §2.1 puts
 `token` and `key` in the URL **fragment** precisely because fragments are never
@@ -549,52 +681,155 @@ by enumerating the whole bucket.
 erasure. Note that revoking a recipient deletes nothing — it sets `revoked_at` —
 so this constraint concerns album and owner deletion only.
 
+### 4.3 No credential route reveals whether an account exists
+
+**CONSTRAINT, added 21 August 2026.** It is stated here, once, because it spans
+routes and is **one rule rather than a property each route happens to have**. An
+earlier draft carried it only inside `POST /login`; brief §12's account model adds
+`POST /login/params`, and a rule written per route would have been restated,
+drifted, and then disagreed with itself.
+
+**No credential route may reveal whether an account exists — not by status, not
+by `code`, not by response shape, and not by timing.** Two routes are in scope
+today (§7.5):
+
+- **`POST /login`** — a wrong secret and an unknown address return the same
+  status, the same `code` (`INVALID_CREDENTIALS`), the same body, and as close to
+  the same timing as can be managed. **Which means running the verification
+  against a dummy value when the account is absent**, rather than returning
+  early: the early return is the natural implementation and it is a timing oracle.
+  The dummy must use the same parameters as a real one, or the timing signal
+  survives the mitigation.
+- **`POST /login/params`** — always `200`, with deterministic decoy values for an
+  unknown address, and the lookup runs unconditionally with substitution on miss.
+  Branching before the query is the same oracle in a different place.
+
+This is the same family as §7.3's cross-album `404`, and it fails the same way:
+look up, check, return a different answer for each. **Check-then-diverge is the
+shape to watch for** in all three.
+
+**`POST /signup` is explicitly outside this constraint and cannot be brought
+inside it in v1.** Registration must reject a duplicate address, and with no email
+sending there is no way to answer identically and deliver the difference out of
+band. So the guarantee is *credential-route indistinguishability*, not
+account-existence secrecy — an attacker cannot learn which addresses hold
+accounts by attacking the login path, and can still learn it by attempting to
+register one.
+
+That limit is **brief §11**'s to carry, because it constrains owner-facing copy
+and any privacy claim about what the relay reveals, and whoever writes such a
+claim is reading the brief. Encryption spec §10 carries it too, as an envelope
+limitation. Recorded here only as the boundary of this constraint — a reader who
+finds two routes covered and a third unmentioned would reasonably assume the
+third was an oversight.
+
+**Why a standing constraint rather than a route property.** §4's other two
+entries are here for the same reason: they are obeyed by routes that do not exist
+yet. PR 3's owner flow adds no credential route, but Phase 2's recovery-key
+insert (encryption spec §6.6.1) plausibly does, and it inherits this without
+anyone re-deriving it.
+
 ---
 
 ## 5. Open questions — not answered here
 
-Three decisions are open. **Nothing in this document resolves, assumes, or
-designs around any of them**, and nothing in PR 1's implementation depends on a
-particular answer.
+**One decision is open — §5.3.** §5.1 and §5.2 closed on 20 August 2026 and are
+kept below as closed records rather than deleted, because §7 was written around
+them and a reader tracing why a route looks the way it does needs the decision,
+not its absence. **Nothing in PR 1's implementation depends on any of the three.**
 
-### 5.1 How does an owner retain `K_album`? (brief §11)
+### 5.1 How does an owner retain `K_album`? — CLOSED (brief §11)
 
-An owner needs `K_album` every time they add photos to an existing album or mint
-a new invite, so a memory-only key means losing your own album on a page refresh.
-The candidates — a password-derived master key, device-local storage, or a
-server-stored blob wrapped under a password-derived key — differ in whether they
-reintroduce the offline-attack surface encryption spec §6.3 exists to manage,
-this time against the owner's own password.
+**Decided 20 August 2026: a server-stored `K_master`, wrapped, with no recovery
+in v1.** The question was live because an owner needs `K_album` every time they
+add photos to an existing album or mint a new invite, so a memory-only key means
+losing your own album on a page refresh.
 
-**Blocks Phase 1. Not a Phase 0 blocker.** Decide before the upload flow is
-built. Coupled to §5.2 and §5.3.
+Two of the three candidates were ruled out rather than merely outranked.
+**Device-local storage** breaks the ordinary case of a parent with a phone and a
+laptop. **A password-derived master key** — `K_album = KDF(K_master, album_id)` —
+contradicts encryption spec §2, where `K_album` is 32 random bytes, and forecloses
+permanently: a derived key can never be re-wrapped, so no password change, no
+recovery key and no rotation are possible afterwards.
 
-### 5.2 The owner account model (brief §12)
+**What the API inherits from it**, which is why this section is kept:
 
-Email required, or invite-only/self-hosted? `owners` currently carries only `id`
-and `created_at`, so there is nothing to authenticate against (schema §3). Both
-candidate models need a password column; neither is implied by the migration.
+- **Wrap, never derive.** `K_album` stays random and is *wrapped* under
+  `K_master`. This is what makes §7.5's `/signup` body a wrapped blob rather than
+  anything derived, and it is why §4.1's audit has a second subject.
+- **N wrappings, not one column.** An `owner_keys` table holds several wrappings
+  of the same `K_master`, one per credential. Phase 2 adds a recovery key by
+  `INSERT` rather than by migration. The **per-row KDF parameters** that table
+  exists to carry are what force `POST /login/params` to exist at all (§7.5): a
+  global constant would have removed the round trip and the property with it.
+- **The login proof and the key-encryption key are independently derived from
+  the password**, and **the password never leaves the device.** Together these fix
+  what `POST /login` receives — a derived proof, never a password. Encryption spec
+  §6.6 owns the derivation and still owes conformance vectors per §9.1 before
+  Phase 1.
 
-**Blocks `POST /login`'s request body, and nothing else.** An earlier version of
-this line said it blocks PR 2 outright, which is why PR 2 went unwritten longer
-than it needed to. What §12 decides is *what a caller presents* — an email and a
-password, or an invite code and a password. Every other property of that route is
-independent of the answer and is settled in §7.5: the response shape, the two-week
-window, the indistinguishability requirement, the rate limit, the status codes,
-and the fact that whatever the body carries is a shared secret that must not be
-logged. §7.5 therefore carries a **labelled gap** for the request body — a parked
-§12 decision, not an unfinished sentence.
+**Accepted cost, and no route may soften it:** forgetting the password loses every
+album. Email restores *login*, which the server owns; it cannot restore *keys*,
+which the server was never allowed to hold.
 
-**The owner password's Argon2id parameters ride with this hole**, and must not be
-filled in by default. Brief §9.3 says an owner password needs Argon2id and stops
-there. The one Argon2id number written down anywhere in this project is the
-passphrase wrap's 64 MiB (encryption spec §6.2), chosen for a **mobile WASM heap**
-on a low-end Android phone — the opposite constraint from a server hashing under
-concurrency, where the same figure is a per-request allocation an unauthenticated
-caller can trigger (§7.6). Inheriting it would be choosing a server parameter
-from a client benchmark. Decide it with §12, and note that §7.6's rate-limit
-argument is deliberately written so that it holds whatever the number turns out
-to be.
+### 5.2 The owner account model — CLOSED (brief §12)
+
+**Decided 20 August 2026: email and password.** Email is a memorable username,
+not a recovery channel. **§7.5's labelled request-body gap closes with it**, and
+so does this hole — with one part carved out below that is genuinely still open.
+
+An earlier version of this section said §12 blocked PR 2 outright, which is why
+PR 2 went unwritten longer than it needed to; a later one narrowed it to the
+request body alone. Both are now history: §7.5 states the body.
+
+**Still open, and now owned rather than parked: the owner password's Argon2id
+parameters.** Brief §12 closed the model and left these explicitly open, and they
+must not be filled in by default. The one Argon2id figure written down anywhere in
+this project is the passphrase wrap's 64 MiB (encryption spec §6.2), chosen for a
+**mobile WASM heap** on a low-end Android phone. Inheriting it would be choosing a
+parameter from the opposite constraint's benchmark. They stopped being a deferred
+hole when the model closed, because `/signup` and `/login/params` both carry them
+and someone needs a number to test against.
+
+**A coupled ambiguity that needs recording in encryption spec §6.6, and is not
+this document's to resolve.** "The owner password's Argon2id parameters" is
+written as one set of numbers, and the closed design implies as many as three:
+
+1. the client's derivation of the **KEK** that unwraps `K_master`;
+2. the client's derivation of the **login proof**, independently derived from the
+   same password per §5.1;
+3. whatever the server does to **verify** that proof.
+
+§6.6 says the parameters must be chosen for "a server under concurrency", and
+§7.6 builds the rate limiter's justification on every login attempt costing "a
+full Argon2id verification". But (1) and (2) run **on the client**, sized for the
+weakest phone, and the proof arriving at the server is already a high-entropy
+32-byte value.
+
+**Schema §3 has already made the argument that decides (3), for a different
+column.** On `owner_tokens.token_hash` it says: `token_hash` is SHA-256 of a
+32-byte random token, "there is nothing to brute-force in 256 bits of entropy, and
+**Argon2id here would be pure per-request cost**". A login proof derived from
+Argon2id is the same shape — 32 high-entropy bytes — so the same reasoning says
+`owners.auth_hash` wants a fast hash too. Schema §3 also records the question as
+open in the adjacent line: "whether `auth_hash` shares a derivation with the
+key-encryption key is settled by encryption spec §6.6 and is still open."
+
+**If (3) is a fast hash, §7.6's memory-exhaustion argument does not hold** and the
+limiter is justified by credential stuffing alone. That is still a justification,
+but it is a different one, and §7.6 is written as though the first were settled.
+The reading that keeps §7.6 true — server-side Argon2id over the proof — is the
+one schema §3 argues against for an identically shaped value, which is why this is
+worth flagging rather than assuming either way.
+
+Flagged rather than resolved: it is a key-derivation question, so it belongs to
+encryption spec §6.6 and to whoever owns the cryptographic layer. **What this
+document must not do is pick one and write route text that assumes it** — §7.6
+now carries the same flag beside the argument that depends on it. Note the
+practical consequence if (3) is a fast hash: "the owner password's Argon2id
+parameters" are then **client** parameters, and §6.6's instruction to size them
+for "a server under concurrency" is sizing advice for a computation the server
+does not perform.
 
 ### 5.3 Do `albums.title` and `recipients.label` become encrypted? (encryption spec §10)
 
@@ -603,9 +838,23 @@ inconsistency in the product": _"Sofía's first birthday"_ and _"María"_ are a
 child's name and a family member's name sitting readable in a database whose
 entire pitch is that it cannot read anything.
 
-It is not simply fixed because encrypting an album title means the owner cannot
-see their own album list without holding the album key — which is §5.1.
-**The two are coupled and must be decided together.**
+**No longer blocked — newly decidable, 21 August 2026.** This section used to say
+"the two are coupled and must be decided together", the two being this and §5.1:
+encrypting an album title means the owner cannot see their own album list without
+holding the album key. **§5.1 closed, and closed in the direction that dissolves
+the coupling.** An owner unwraps `K_master` at login and can therefore decrypt
+their own titles — the objection was to a design that was ruled out. Stop
+describing this as blocked. It is a decision nobody has made yet, which is a
+different thing, and the distinction matters because "blocked" moves it off
+whoever would otherwise own it.
+
+**Deferring is not free, and that is the part worth writing down.** The relay
+cannot re-encrypt what it cannot read, so shipping plaintext titles means a
+**client-side lazy migration** later: every existing album's title re-encrypted by
+a client that holds the key, on some visit, with both shapes readable until the
+last one is converted. That cost grows with every album shipped plaintext. It does
+not make the decision urgent — it makes "decide later" a choice with a price
+rather than a free option.
 
 Brief §15.1 is careful about this and does not settle it: no localisation applies
 to either field, "and none would if they were later encrypted". If they do become
@@ -630,11 +879,15 @@ which are only written down. **This table grows with every PR** and is the reaso
 | One envelope shape, no Fastify defaults | Test: asserts exactly `code` + `message`, and that `error`/`statusCode` are absent |
 | The envelope reaches routes *inside* `/v1` | Test: a throwing route registered through `v1Plugins` returns `{code:"INTERNAL"}` and not Fastify's body. **Also the only assertion today that the `/v1` mount exists at all** — delete the mount and `/v1/boom` becomes a 404, so the test fails. That is coverage by side effect; §6.2 owes a direct one |
 | Exactly one CORS origin, never `*` | Config parsed and validated at boot; tests assert the allowlisted origin is echoed and a foreign one is not |
-| `Authorization` and `Range` permitted; `Content-Range`, `Accept-Ranges` and `Retry-After` exposed; preflight cached | Tests on the OPTIONS preflight. `Retry-After` was added in PR 2, not PR 5 — §7.6 is the first route that can answer `429` |
+| `Authorization` and `Range` permitted; `Content-Range`, `Accept-Ranges` and `Retry-After` exposed; preflight cached | Tests on the OPTIONS preflight. `Retry-After` was added in PR 2, not PR 5 — §7.6's three unauthenticated routes are the first that can answer `429` |
 | `maxAge` claims only what it claims | Comment in `server.ts` reads "the maximum Chrome honours", not "the maximum useful value". Prose, but the wrong version is what invites someone to raise it |
 | `/health` unversioned | Test: `/v1/health` is 404. **Note what this does not prove:** it passes whether the `/v1` mount exists or not |
-| `Authorization` and `Cookie` headers never appear in logs | `redact: ["req.headers.authorization", "req.headers.cookie"]`. **This row used to claim "key material never in logs", which is more than two redacted headers deliver** — see §6.2 |
+| `Authorization` and `Cookie` headers never appear in logs | `redact: ["req.headers.authorization", "req.headers.cookie"]`, in `LOG_POLICY`. **This row used to claim "key material never in logs", which is more than two redacted headers deliver** — see §6.2. Note the redaction is inert today either way: Fastify's default `req` serialiser logs method and URL and no headers at all, so this fires only once someone widens it. Kept for exactly that day |
+| The log policy is the adapter's, not the caller's (§1.2) | `loggerWithPolicy` in `server.ts` spreads `LOG_POLICY` **last** over any caller-supplied logger; `false` alone passes through. `error-logging.test.mjs` asserts a caller-supplied `serializers.err` is ignored. Without this row the two below are untestable — a test would configure the serialiser it then asserts |
+| An `ApiError` with a cause logs one `warn` line; without one, nothing (§1.2) | `error-logging.test.mjs`: a route throwing `ApiError("NOT_FOUND")` produces zero lines, one throwing `ApiError("CONFLICT", {cause})` produces exactly one at level 40. Verified by violation — logging unconditionally fails the first |
+| The cause chain reaches the log structured, not flattened (§1.2) | `serializers.err: pino.stdSerializers.errWithCause` in `LOG_POLICY`, plus assertions that `err.message` is the constant alone, `err.cause` is an object, and a second-level `err.cause.cause` is walked. Verified by violation — the default `err` serialiser fails three cases |
 | All ten codes of §1.1 exist, each with a status and a message | `packages/shared/src/index.ts` holds the union; `STATUS` and `MESSAGES` in `error-envelope.ts` are `satisfies Record<ErrorCode, …>`, so a code missing from either does not compile |
+| `details` cannot express a field *value* (§1.1) | `ErrorDetails = {fields: readonly string[]}` in `packages/shared`. The type is the enforcement: `tsc` rejects `details: {kind: "…"}` at the throw site — verified by probe. `http.test.mjs` pins the wire shape, that it gains no siblings, and that it is absent rather than `undefined` when unset. **Note what it does not claim:** a value can still be put *in the list*, and the test asserts that rather than implying otherwise |
 | No framework 4xx collapses to `INTERNAL` (§1.2) | `test/framework-4xx.test.mjs`, 19 cases: oversized body → 413, unmatched and absent `Content-Type` → 415, malformed and empty JSON → 400, plus a sweep asserting no case answers `INTERNAL` or a non-4xx. The reply status is `STATUS[code]`, never the number keyed in the inverse table, so a wrong row cannot produce a status and a code that disagree |
 | An unmapped 4xx is a loud `INTERNAL`, not a quiet 400 | No fallback in the inverse table; verified by probe — a `410` returns `INTERNAL`, a `503` returns `INTERNAL`, and a method mismatch is a `404` rather than an unmapped `405` (§1.1) |
 | A validation failure logs a projection, not the error (§1.2) | `projectValidation` in `error-envelope.ts`, plus `test/error-logging.test.mjs`: a wired half against real AJV, and a by-construction half feeding `data`, an interpolated `message` and a hostile `params` that a `verbose: true` or custom-keyword configuration would produce. Every case asserts the entry's keys against a whitelist, so widening the projection fails here. Measured against the previous `{ err: error }`: 7 of 8 cases fail |
@@ -652,23 +905,32 @@ Each row names the assertion, not just the gap, so that writing it is mechanical
 
 | Rule | What is owed |
 | ---- | ------------ |
-| §1.2 the cause chain reaches the log | The `INTERNAL` path logs the error whole, but pino's default `err` serialiser emits `{type, message, stack}` and **drops `error.cause`** — measured 20 August 2026. So a `cause` passed to `ApiError` is diagnostic value the document promises and the log does not carry. Owed: `pino.stdSerializers.errWithCause`, or an explicit `serializers.err`. **Decide alongside the row below** — they are the same question asked at two levels |
-| §1.2 an `ApiError` logs nothing at all | The `ApiError` branch returns without logging, so a `409 CONFLICT` carrying `cause: <pg unique violation>` leaves no trace on the server — verified by probe. That is right for a `404` and wrong for a conflict or a revoked recipient. Owed: a decision about which codes warrant a line and at what level, then the line. Not a leak — the projection rule already covers what such a line may carry |
+| §1.2 chain a message you wrote, not a driver error verbatim | **Prose only, and structurally unenforceable here** — the reason it is worth a row rather than a note. The handler cannot inspect a chained message and tell a submitted value from an authored one, so no assertion in `error-logging.test.mjs` can close this; that file instead asserts the *absence* of a guarantee, so nobody reads the `ApiError` branch as making one. The nearest thing to enforcement arrives with PR 3's repository adapter, where a real `pg` error is first available to chain: extend §7.5's per-route log test to the `CONFLICT` path and assert the submitted value is absent from every line. Until then this is review discipline, and the rule is written on `ApiError`'s `cause` doc comment because that is where someone chaining a driver error is looking |
 | §1.2 the `429` row is unasserted provision | The status → code table maps `429 → RATE_LIMITED` ahead of any code that can raise one, on §1.1's "a code registered late is a `500` in the meantime". `framework-4xx.test.mjs` cannot exercise it. Owed with §7.6: assert it against the real limiter, and check first whether that limiter builds its own reply — `@fastify/rate-limit`'s `errorResponseBuilder` never reaches `setErrorHandler`, which would make this row inert while looking live |
 | §2 the `/v1` mount exists | A test that fails when the mount is removed *and* is not about error handling: register a probe route through `v1Plugins`, assert it answers at `/v1/<path>` **and** 404s at `/<path>`. The second half is what makes it about the prefix |
-| §4.1 no key material in any parameter | **Prose only.** The route-table walk brief §12 promises. PR 2 gives it its first real subject: §7.7 accepts wrap material and must accept no passphrase |
+| §4.1 no key material in any parameter | **Prose only.** The route-table walk brief §12 promises. PR 2 gives it **two** subjects, not one: §7.7's create-recipient accepts wrap material and must accept no passphrase, and §7.5's `/signup` accepts the wrapping every album key in the account hangs off and must accept neither the password nor `K_master`. The second is the higher-consequence body in the system, so the walk should be written against it rather than demonstrated on the easier one |
+| §4.3 no credential route reveals whether an account exists | **Prose only, and two thirds of it is not assertable by shape.** The `code`/status/body halves are ordinary tests once the routes exist — `/login` answering `401 INVALID_CREDENTIALS` identically for a wrong proof and an unknown address, `/login/params` answering `200` for both. **Timing is the hard half**: a test that measures it is flaky, and one that does not measure it proves nothing about the property that matters. Owed: assert the *structure* that makes timing equal — that the dummy verification runs on the miss path and that the lookup precedes any branch — rather than asserting a duration. Signup is out of scope by §4.3 |
 | §4.2 no delete before storage objects | **Prose only.** Needs the delete use case, PR 3 |
 | §7.2 no token in a query string | A test walking the route table asserting no route declares a `token`, `access_token` or `key` query parameter |
-| §7.5 no request body reaches a log, on any route | The redaction list covers two *headers*. PR 2 introduces the first route whose **body** carries a shared secret. Nothing today logs a body — pino's default serialisers log method and URL — but nothing stops it either. Owed: a test that POSTs a distinctive secret to `/login`, captures the log stream, and asserts the secret is absent from every line. **Scoped to the validation and success paths, not `INTERNAL`** (§1.2): a secret reaching a log through a `500` means someone interpolated a request value into a throw, which is a throw-site bug the handler cannot police. Because §1.2's projection rule is global, this test states a property of every route. **Its paired row is discharged** — the projection landed 20 August 2026 (§6.1), so this row is now a single change rather than half of one, and what it waits on is the route |
-| §7.6 the `/login` limiter | Not built. Note it is in-process state: correct on one instance, silently broken on two (PR 5 states this as a general property; it is true from the moment this limiter exists) |
+| §7.5 no request body reaches a log, on any route | The redaction list covers two *headers*. PR 2 introduces the first routes whose **body** carries a shared secret. Nothing today logs a body — pino's default serialisers log method and URL — but nothing stops it either. Owed: a test that POSTs a distinctive secret to `/login`, captures the log stream, and asserts the secret is absent from every line. **`/signup` is now the better subject**, since its body carries a proof *and* wrap material, so the same test covers more per assertion. **Scoped to the validation and success paths, not `INTERNAL`** (§1.2): a secret reaching a log through a `500` means someone interpolated a request value into a throw, which is a throw-site bug the handler cannot police. Because §1.2's projection rule is global, this test states a property of every route. **Its paired row is discharged** — the projection landed 20 August 2026 (§6.1), so this row is now a single change rather than half of one, and what it waits on is the route |
+| §7.5 signup's two writes are one transaction | An owner row with no `owner_keys` row can authenticate and decrypt nothing, and no route can repair it — the relay cannot reconstruct a wrapping it never had. Owed: a test that fails the second insert and asserts the first is rolled back. **Needs the Phase 1 migration**, since neither the `owners` columns nor `owner_keys` exist yet, which is why this is a row rather than code |
+| §7.6 the limiter on the three unauthenticated routes | Not built, and now three routes rather than one — `/signup`, `/login/params`, `/login` (§7.6). Note it is in-process state: correct on one instance, silently broken on two (PR 5 states this as a general property; it is true from the moment this limiter exists). `/login/params` must be limited on §4.3's grounds even if the Argon2id-cost argument turns out not to apply (§5.2), so a limiter added "where the expensive work is" would miss it |
 
 **Four rows were deleted here, 20 August 2026**, on the same principle as the
 deletion below — a discharged owed row is errata, and a reader who finds one
 assumes the gap is still open. They moved to §6.1: §1.1's six missing codes,
 §1.2's framework-4xx test, §1.2's validation projection, and §1.4's home for the
-union. The three rows now at the top of this table are what that work uncovered
-rather than what it left undone, which is the more useful thing for this table to
-carry.
+union.
+
+**Two more were deleted, 21 August 2026** — "the cause chain reaches the log"
+and "an `ApiError` logs nothing at all". Both are now code and sit in §6.1, with
+a third row for the log-policy ownership the first one turned out to need. The
+first row also carried a **wrong measurement**, corrected in §1.2 rather than
+carried forward: pino's default serialiser flattens a cause chain, it does not
+drop it. Note what that correction did to the shape of the work — it turned a
+missing-diagnostics row into a live #15 exposure, and the row now at the top of
+this table is what replaced it. A gap discovered by disproving a row is worth
+more to this table than the row was.
 
 **A subsection was deleted here.** PR 1 carried a "Deviations from
 vitrina-server-architecture.md, to be reconciled" list — `buildServer`'s signature, the
@@ -682,8 +944,8 @@ deviations are live. Deleted rather than annotated.
 ## 7. Authentication — two schemes, and the credential lifecycle of each
 
 **PR 2.** Everything from here down is the auth model every later route's
-contract assumes. It defines five routes; the routes that *consume* recipient
-authentication begin in PR 3.
+contract assumes. It defines seven routes — five of them owner-credential routes
+in §7.5 — and the routes that *consume* recipient authentication begin in PR 3.
 
 ### 7.1 Two schemes, two tables, and no shared principal
 
@@ -788,6 +1050,14 @@ which is brief §9.1's "easiest way to leak album access" in one status code. Th
 implementation that gets this wrong is the obvious one: authenticate, load the
 album, check ownership, return `403`.
 
+**Three routes never enter this ladder at all** — `/signup`, `/login/params` and
+`/login` are unauthenticated by construction (§7.5), so there is no token to parse
+at step 1 and no scope to resolve at step 3. Worth stating because the steps below
+read as universal: applying step 1 to `/login` would answer `401 UNAUTHENTICATED`
+for a caller with no session, which is the correct code for a *missing* session
+and the wrong one for a route whose entire purpose is not having one. Their
+failure codes are in §7.5 and their enumeration property is §4.3's, not step 3's.
+
 **So scope is resolved before the status is chosen**, in this order:
 
 1. **Parse and hash the token.** Malformed, absent, or no matching row → `401
@@ -816,6 +1086,14 @@ leaks: a field name on `INVALID_CREDENTIALS` would say which half was wrong
 (§7.5), and a field name on `CONFLICT` would say which `UNIQUE` column collided
 (§7.7). `details` stays for the routes where a client must know *which* field to
 fix, and PR 2 has none.
+
+That is unchanged by §1.1 settling the *shape* as `{ fields: string[] }` on
+21 August 2026, and the two decisions are worth keeping apart: the shape says what
+`details` may contain **if** a route sends one, and this paragraph says no route
+in PR 2 sends one. **A field name is safe from #15 and still unsafe from §4.3** —
+`{fields: ["proof"]}` on `INVALID_CREDENTIALS` echoes nothing a client submitted
+and tells an attacker the address exists. The new type does not weaken this rule
+and must not be read as licence to start populating it here.
 
 **`401` responses carry `WWW-Authenticate: Bearer` with no parameters.** No
 `realm` — it would name the deployment — and no `error_description`, which is
@@ -846,24 +1124,151 @@ where entropy is guaranteed: 32 bytes from a CSPRNG, returned once in the respon
 body, stored only as SHA-256 (schema §6). The server never holds the plaintext
 after the response is written.
 
-### 7.5 Owner sessions
+**`/login` is the only route that mints one, and `POST /signup` deliberately does
+not** (§7.5). Signing up does not sign you in. Returning a token from signup is
+the obvious convenience and it would put session minting in two places — two
+`expires_at` values to keep in step, two places to audit against the window in
+§7.5, and a second route to change when that window does. The cost is one extra
+round trip on the rarest action an owner performs.
+
+Note this is about the *session* token only. `/signup` does carry key material
+into the system — the wrapping of `K_master` — but that is client-generated
+ciphertext the relay stores and cannot read, which is a different question from
+who mints a credential. §4.1 is where that distinction is enforced.
+
+### 7.5 The owner credential lifecycle — account and sessions
 
 ```
+POST /v1/signup
+POST /v1/login/params
 POST /v1/login
 POST /v1/logout
 POST /v1/logout/all
 ```
 
-**Three routes, and deliberately no fourth.** **There is no refresh endpoint.**
-`/login` issues, `/logout` revokes, and every request re-checks `expires_at` and
-`revoked_at` (§7.3, step 2); a session ends by lapsing or by being revoked, and it
-is renewed by logging in again. A refresh route would be the natural way to make
-the two-week window shorter without adding friction — which is exactly why its
-absence is written down rather than left to be inferred from a list of three
-routes. Adding one is a decision about §5.1, not a convenience: it lengthens the
+**Retitled and grown from three routes to five, 21 August 2026.** This section
+was "Owner sessions" and covered the last three. Brief §11 and §12 closed the two
+decisions that made an account impossible to specify (§5.1, §5.2), and the answer
+adds two routes ahead of `/login`: an account has to be created, and a login proof
+derived client-side needs a salt and parameters before it can be computed. They
+land here rather than in a new section because §0 fixes section numbers
+permanently, and because splitting the owner's credential lifecycle across two
+places is how the two schemes get conflated later. §7.1–§7.4 apply to all five and
+are not restated.
+
+**No refresh endpoint, and that is still deliberate.** `/login` issues, `/logout`
+revokes, and every request re-checks `expires_at` and `revoked_at` (§7.3, step 2);
+a session ends by lapsing or by being revoked, and it is renewed by logging in
+again. A refresh route would be the natural way to make the two-week window
+shorter without adding friction — which is exactly why its absence is written
+down rather than left to be inferred from a list of routes. It lengthens the
 period in which a stolen token remains useful, and it is the first thing that
 would make the window's provisional value (below) feel settled without anyone
-having settled it.
+having settled it. Note the §5.1 framing has changed: this used to read "a
+decision about §5.1", and §5.1 is closed. It is now a decision about the window
+alone, which is a smaller argument and no longer waiting on anything.
+
+---
+
+**`POST /v1/signup`** — no authentication. `201` on success.
+
+**The highest-consequence body in the system**, and the reason it is stated
+before `/login` rather than after. It accepts the wrapping that every album key
+in the account hangs off (encryption spec §6.6.2):
+
+- the address **exactly as typed, unnormalised** — see `/login/params` below for
+  why any client-side normalisation is forbidden;
+- the **login proof**, never the password;
+- the **KDF salt and parameters**, which become the first `owner_keys` row;
+- **`wrapped_master` and `wrap_nonce`.**
+
+**This is the second route that accepts wrap material**, alongside §7.7's
+create-recipient, and it is what gives §4.1's route-table audit a subject with
+real consequences. The distinction that audit must encode: **a wrapped blob is
+ciphertext and may be posted; the key that wrapped it, and the secret that
+derived that key, may never be.** Both routes carry the first and neither may
+carry the second. `K_master` and the password are both absent from this list, and
+their absence is the whole design — non-negotiable #16.
+
+- **The account row and its first `owner_keys` row are created in one
+  transaction.** An owner with no wrapping is an account that can authenticate
+  and decrypt nothing — a state no route can repair, because the relay cannot
+  reconstruct a wrapping it never had. Stated as a route property rather than
+  left to the repository, since "insert the owner, then insert the key" is the
+  natural implementation and it is a partial-failure bug that looks like success.
+- **`201`:** the owner id and `created_at`. **No token** — signup does not sign
+  you in. Logging in afterwards costs one round trip and keeps `/login` the only
+  route that mints a session (§7.4), so there is one place where `expires_at` is
+  set and one place to audit.
+- **Errors:** `400 VALIDATION_FAILED` · `409 CONFLICT` (address already
+  registered) · `413 PAYLOAD_TOO_LARGE` · `415 UNSUPPORTED_MEDIA_TYPE` ·
+  `429 RATE_LIMITED`.
+- **The `409` is exactly what §4.3 carves signup out for.** It reveals that the
+  address exists, cannot be made not to in v1, and is recorded as a limitation in
+  brief §11 rather than papered over here.
+- **Response `Cache-Control: no-store`**, on the same reasoning as `/login`
+  below: the request carried a credential-derived value, and nothing in brief §10
+  reaches a non-ciphertext response.
+
+---
+
+**`POST /v1/login/params`** — no authentication. **Always `200`.**
+
+**Why this route exists at all**, since a route whose purpose is unclear is a
+route someone will fold into `/login` as an optimisation. Deriving the login
+proof client-side requires the salt and Argon2id parameters *before* anything can
+be computed, so login is **two round trips** by construction (encryption spec
+§6.6, decided 20 August 2026).
+
+The alternative — deriving the salt from the email address to save the trip — was
+rejected, and the reason belongs here because this route is where someone will
+propose it again. Parameters live per-row on `owner_keys` precisely so they can be
+raised without invalidating existing accounts (§5.1), and the client needs them
+before deriving; **the only way to reach one round trip is to make them a global
+constant**, which forfeits the property the table exists for. And "a hash of the
+normalised address" hides a specification — Unicode local parts, IDN domains,
+case-folding that differs by language — which would have to agree byte-for-byte
+across Rust, TypeScript, Swift and Kotlin, permanently. Disagreement yields a
+different salt, a different KEK, and a `K_master` that will not unwrap: an account
+nobody can open, retroactively. Every other cross-implementation disagreement in
+this system costs an invite a parent can reissue; that one costs an album
+collection.
+
+- **Request: the address exactly as typed.** **Clients MUST NOT normalise it at
+  all** — no trimming, no `toLowerCase()`, nothing. Any client-side transformation
+  reintroduces the agreement problem in a weaker form: a client that lowercases
+  differently from the relay produces a lookup miss rather than an unopenable
+  account. Recoverable, and there is no reason to have it. Normalisation is still
+  required — the relay must normalise before looking up an address and before
+  computing a decoy — but it happens **entirely server-side and crosses no client
+  boundary**, so a relay that gets it wrong holds plaintext addresses and can
+  migrate. Four disagreeing clients cannot be repaired.
+- **`200`:** the `kdf_salt` and the three Argon2id parameters. Nothing else, and
+  nothing that varies with whether the account exists.
+- **Unknown addresses get deterministic decoys** — `HMAC(server_secret,
+  normalised_address)` truncated to 16 bytes — so repeated attempts return the
+  same salt. A varying salt is itself an oracle. **The lookup runs
+  unconditionally** and the substitution happens on miss; branching before the
+  query is a timing oracle. See §4.3.
+- **Decoy indistinguishability is conditional, and the condition is invisible
+  here.** It holds because every `owner_keys` row carries identical KDF values, so
+  a decoy has nothing to distinguish itself from. **It degrades the moment
+  parameters differ between accounts** — which is exactly what per-row storage
+  exists to enable. **This note belongs next to the code, not only in a
+  document**: whoever raises parameters for one account in Phase 2 will not be
+  reading this section.
+- **The decoy server secret is not a rotatable credential.** Rotating it moves
+  every decoy salt while real salts, being stored, stay put — so anyone who
+  recorded earlier responses learns which addresses exist by comparing across the
+  rotation. It belongs in the same operational category as the database and must
+  be backed up with it. **Absent at boot MUST be a hard error**, never
+  generate-if-missing: that is the ordinary implementation and it destroys the
+  property silently on every restart, with nothing failing while it happens. Brief
+  §6 non-negotiable #17.
+- **Rate-limited on the same IP basis as `/login`** (§7.6). An oracle that cannot
+  be distinguished but can be queried without limit is still a harvesting surface.
+- **Errors:** `400 VALIDATION_FAILED` · `413` · `415` · `429 RATE_LIMITED`. **No
+  `404`, ever** — that is the whole point of the route.
 
 **`POST /v1/login`** — no authentication. Response `Cache-Control: no-store`,
 because the body carries a credential.
@@ -880,14 +1285,23 @@ same failure shape §10.1 records for the signed-URL override and §1.1 for the
 `/login`'s `200` is the only response in PR 2 that carries a credential, and PR 4's
 wrapped-blob route will need the same extension for the same reason.
 
-- **Request body: OPEN, and only this.** Brief §12 has not settled the owner
-  account model — email plus password, or invite code plus password — so the
-  fields a caller presents are a **labelled gap** (§5.2). Whatever it carries is
-  a shared secret verified with Argon2id (brief §9.3), whose parameters are part
-  of the same hole and must not inherit the passphrase wrap's 64 MiB. **Nothing
-  else about this route varies with the answer:** the response, the window, the
-  error codes, the indistinguishability rule and the rate limit below are all
-  fixed.
+- **Request body: the address exactly as typed, and the login proof.** **The
+  labelled gap this bullet used to carry is closed** — brief §12 settled the
+  account model as email and password on 20 August 2026 (§5.2). Every other
+  property of this route was already fixed and did not move, which is what the
+  gap was labelled to make visible.
+- **The password is not in that list, and its absence is the design.** The client
+  derives the proof locally, using the salt and parameters from `/login/params`,
+  and sends only the proof (encryption spec §6.6). This is not hardening: the KEK
+  is derived from the password, so a relay that receives the password could
+  compute the KEK itself — *able* to unwrap while merely choosing not to.
+  Non-negotiable #16 forbids transmitting derived keys; transmitting the input
+  they are derived from is the same thing by another route. **The proof is still a
+  bearer-equivalent secret** and is covered by the no-body-in-logs rule below.
+- **What verifies the proof server-side is flagged, not stated** — §5.2's coupled
+  ambiguity. Whether that verification is Argon2id or a fast hash over a
+  high-entropy 32-byte value changes §7.6's justification and nothing else on this
+  route. It is a key-derivation question for encryption spec §6.6.
 - **`200`:** `{ "token": "<43 chars, base64url>", "expires_at": "2026-09-03T09:41:12Z" }`
   **and nothing else.** Without `expires_at` a client cannot warn before a
   two-week window lapses, and a parent meets expiry mid-upload rather than being
@@ -913,19 +1327,20 @@ wrapped-blob route will need the same extension for the same reason.
   different sentences in the client's language, and a client cannot tell them apart
   from the status (§1.1).
 
-**`/login` must not reveal whether an account exists.** A wrong secret and an
-unknown account return the same `code`, the same status, the same body, and as
-close to the same timing as can be managed. **Which means running the verification
-against a dummy hash when the account is absent**, rather than returning early:
-the early return is the natural implementation and it is a timing oracle for
-account enumeration. Same family as §7.3's cross-album `404`, and it fails the
-same way — look up, check, return a different answer for each. The dummy hash must
-use the same parameters as a real one, or the timing signal survives.
+**`/login` must not reveal whether an account exists — §4.3.** The rule is stated
+there rather than here, because brief §12's account model made it span two routes
+and a rule restated per route is a rule that drifts. What is specific to `/login`:
+the wrong-secret and unknown-address answers are both `401 INVALID_CREDENTIALS`
+with the same body, and the verification runs **against a dummy value when the
+account is absent** rather than returning early. `/login/params` above satisfies
+the same constraint by a different mechanism, and `POST /signup` is explicitly
+outside it.
 
 **The request body never reaches a log, and this is the route that forces the
-rule.** Whatever brief §12 decides the caller presents, it is a shared secret, and
-`/login` is the first route in the system whose *body* holds one — the redaction
-list in §6.1 covers two headers and nothing else. §1.2 settles the mechanism, and
+rule.** The proof is a shared secret, and `/login` is the first route in the
+system whose *body* holds one — the redaction list in §6.1 covers two headers and
+nothing else. `/signup`'s body now holds more (wrap material and a proof), so the
+rule has a second subject from the same amendment. §1.2 settles the mechanism, and
 settles it **globally rather than for this route**: a validation failure logs a
 projection of `instancePath`, `keyword` and `schemaPath` — plus
 `params.missingProperty` on `required` alone, per §1.2's keyword-specific
@@ -970,23 +1385,47 @@ the route.
 
 `RATE_LIMITED`/`429` with a `Retry-After` header; the client backs off silently.
 
-**The `/login` limiter is not optional hardening.** §7.5's dummy-hash mitigation
-means every attempt against an unknown account runs a **full Argon2id
-verification** — that is the point of it — and therefore an unauthenticated caller
-can force one allocation per request, at whatever the owner-password parameters
-turn out to be (§5.2). The limiter bounds a memory-exhaustion vector the product
-created deliberately. **State that, or it reads as friction and gets removed.** The
-argument holds whatever number §12 lands on, which is why it deliberately names
-none.
+**Three routes have no token to key on, not one.** `POST /signup` and
+`POST /login/params` joined `/login` in the 21 August 2026 amendment, and all
+three are unauthenticated by construction. The section keeps its title because
+`/login` is the route the reasoning was written for; the limiter covers all
+three, on the same IP basis.
+
+**The `/login` limiter is not optional hardening.** §7.5's dummy-value mitigation
+means every attempt against an unknown account runs the same verification a real
+one does — that is the point of it — and therefore an unauthenticated caller can
+force that work per request, at whatever the owner-password parameters turn out to
+be (§5.2). **State that, or it reads as friction and gets removed.** The argument
+deliberately names no number, so it holds whatever §5.2's parameters land on.
+
+> **Flagged 21 August 2026 — §5.2's coupled ambiguity lands on this paragraph.**
+> The sentence above used to say "a **full Argon2id verification**", and that is
+> only true if the *server* runs Argon2id. Under the closed design the client
+> derives the proof and the server receives a high-entropy 32-byte value, for
+> which a fast hash is sufficient. **If verification is a fast hash, the
+> memory-exhaustion argument does not hold** and this limiter is justified by
+> credential stuffing alone — still a justification, and a different one. The
+> wording has been loosened to "the same verification a real one does" so that it
+> is true either way, but **the paragraph should be rewritten once encryption spec
+> §6.6 settles which it is**, rather than left ambiguous permanently. Do not
+> resolve it here; it is a key-derivation decision.
 
 **Keyed on IP, and this is the one place that is right.** Every other limit in the
 system keys on the token hash, because a family behind one NAT shares an address
-and mobile data changes it mid-session (PR 5). `/login` has no token to key on,
-which makes it both the obvious target and the one route otherwise unlimited. The
-NAT objection is weak here: a family makes a handful of login attempts a day, and
-**10 per 15 minutes per IP** — provisional — inconveniences nobody while slowing
-credential stuffing. If you decide not to limit it, say so explicitly rather than
-leaving the gap silent.
+and mobile data changes it mid-session (PR 5). These three routes have no token to
+key on, which makes them both the obvious targets and the only routes otherwise
+unlimited. The NAT objection is weak here: a family makes a handful of login
+attempts a day, and **10 per 15 minutes per IP** — provisional — inconveniences
+nobody while slowing credential stuffing. If you decide not to limit them, say so
+explicitly rather than leaving the gap silent.
+
+**`/login/params` needs the limit for a different reason, and it is worth
+separating.** It is not protecting work — the route is a lookup and an HMAC. It is
+protecting §4.3: the decoys make existence undetectable per response, and an
+attacker who can query without limit harvests the address space anyway. A limiter
+sized only against Argon2id cost would reasonably be relaxed on this route, which
+is exactly the mistake to foreclose. **Same IP basis, same numbers, different
+justification.**
 
 **The limiter is in-process state.** Correct on one instance, silently broken on
 two. PR 5 states this as a general property of the rate limiting in this system;
@@ -994,8 +1433,8 @@ it is true from the moment *this* limiter exists, three sections earlier, so
 nobody should add Redis to Phase 0 or scale to two instances without noticing.
 
 **`Retry-After` must be in `Access-Control-Expose-Headers`** or a cross-origin
-client cannot read the interval it is being asked to wait for (§3.1). This is the
-first route in the system that can produce a `429`.
+client cannot read the interval it is being asked to wait for (§3.1). These are
+the first routes in the system that can produce a `429`.
 
 ### 7.7 The recipient credential, and creating one
 
@@ -1173,29 +1612,48 @@ immediate — the UI may say so without hedging.
 
 **Errors:** `401 UNAUTHENTICATED` · `404 NOT_FOUND`.
 
-### 7.9 The five routes, in one table
+### 7.9 The seven routes, in one table
+
+**Five rows became seven, 21 August 2026** — `/signup` and `/login/params`, per
+§7.5. `/login`'s body is no longer a gap.
 
 | Route | Scheme | Body | Success | Errors |
 | ----- | ------ | ---- | ------- | ------ |
-| `POST /v1/login` | none | **OPEN — §12** (§7.5) | `200` `{token, expires_at}`, `no-store` | 400 · 401 `INVALID_CREDENTIALS` · 413 · 415 · 429 |
+| `POST /v1/signup` | none | address as typed · proof · `kdf_salt` + params · `wrapped_master` · `wrap_nonce` (§7.5) | `201` `{id, created_at}`, `no-store` | 400 · 409 `CONFLICT` · 413 · 415 · 429 |
+| `POST /v1/login/params` | none | address as typed (§7.5) | `200` `{kdf_salt, params}` — **always**, decoys on miss | 400 · 413 · 415 · 429 |
+| `POST /v1/login` | none | address as typed · proof (§7.5) | `200` `{token, expires_at}`, `no-store` | 400 · 401 `INVALID_CREDENTIALS` · 413 · 415 · 429 |
 | `POST /v1/logout` | owner | none | `204` | 401 |
 | `POST /v1/logout/all` | owner | none | `204` | 401 |
 | `POST /v1/albums/{album_id}/recipients` | owner | §7.7 | `201` `{id, created_at}` | 400 · 401 · 404 · 409 · 413 |
 | `POST /v1/recipients/{recipient_id}/revoke` | owner | none | `200` `{revoked_at}` | 401 · 404 |
 
-All five carry the `/v1` prefix from the single mount point (§2) and none writes it
-itself. **No route here is recipient-authenticated:** PR 2 defines what a recipient
+All seven carry the `/v1` prefix from the single mount point (§2) and none writes
+it itself. **Three are unauthenticated**, all three at the top, and all three are
+rate-limited on IP (§7.6) — the only routes in the system without a token to key
+on. **No route here is recipient-authenticated:** PR 2 defines what a recipient
 credential is and how it is checked, and PR 3 is where the first route consumes
 one. `403 ACCESS_REVOKED` is therefore registered in this PR and first reachable in
 the next (§1.1).
 
+**Two rows carry wrap material** — `/signup` and create-recipient — and they are
+§4.1's audit subjects. Neither carries a passphrase, a password, or a KEK.
+
+**`/login/params` is the only route in the system that cannot answer `404`.** Not
+an omission from the errors column: §4.3 is why, and a `404` there would defeat
+the route's only purpose.
+
 ### 7.10 What PR 2 deliberately does not decide
 
-- **`POST /login`'s request body** — brief §12, labelled in §5.2 and §7.5. The
-  owner password's Argon2id parameters ride with it.
-- **Whether `recipients.label` is encrypted** — §5.3, coupled to §5.1. §7.7 accepts
-  it as plaintext today and the field's *shape* is what would change, not the
-  route's.
+- **The owner password's Argon2id parameters** — §5.2. **`POST /login`'s request
+  body is no longer on this list**: brief §12 closed the account model and §7.5
+  states the body. What remains is the parameters, and the coupled ambiguity about
+  *what verifies the proof server-side*, which §7.6 flags because its own argument
+  depends on the answer. Both are encryption spec §6.6's to settle.
+- **Whether `recipients.label` is encrypted** — §5.3. **No longer described as
+  coupled to §5.1**, which is closed and closed in the direction that dissolves
+  the coupling; it is simply undecided. §7.7 accepts the field as plaintext today
+  and the field's *shape* is what would change, not the route's. Deferring costs a
+  client-side lazy migration later, per §5.3.
 - **Whether an owner ever authenticates as a recipient of someone else's album**
   — brief §11's "recipients will become owners". The tagged union in §7.1 is chosen
   so that this is additive: a nullable FK from `recipients` to `owners` changes no

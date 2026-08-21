@@ -14,6 +14,7 @@ import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
 
 import { buildServer } from "../dist/adapters/driving/http/server.js";
+import { ApiError } from "../dist/adapters/driving/http/error-envelope.js";
 
 const CLIENT_ORIGIN = "http://localhost:5173";
 
@@ -146,6 +147,87 @@ describe("error envelope reaches versioned routes", () => {
     assert.equal(res.json().message, "An unexpected error occurred.");
   });
 });
+
+/*
+ * `details: { fields: string[] }` — api-sketch §1.1, decided 21 August 2026.
+ *
+ * No code PR 2 registers carries `details`, so nothing on the route table
+ * produces one yet and this is the only place its wire shape is pinned. Written
+ * now rather than with the first route that needs it, because the shape is the
+ * #15 argument: a list of NAMES has nowhere to put a submitted value, and
+ * `Record<string, string>` — which this replaced — put one in every value slot.
+ *
+ * The type is what actually enforces it; `tsc` rejects `details: {kind: "..."}`
+ * at the throw site. This asserts the other half, that the shape survives to
+ * the wire unflattened and picks up no siblings.
+ */
+describe("details carries field names and no values", () => {
+  const SUBMITTED = "value-the-client-sent";
+
+  let app2;
+
+  before(async () => {
+    app2 = await buildServer({
+      config: { clientOrigin: CLIENT_ORIGIN },
+      useCases: {},
+      logger: false,
+      v1Plugins: [
+        async (scope) => {
+          scope.get("/detailed", async () => {
+            throw new ApiError("VALIDATION_FAILED", {
+              details: { fields: ["kind", "captured_at"] },
+            });
+          });
+          // A throw site trying to echo a value has to smuggle it through the
+          // one slot the type leaves open — a field NAME. Asserted so the
+          // guarantee is read as "names only", not "nothing hostile possible".
+          scope.get("/smuggled", async () => {
+            throw new ApiError("VALIDATION_FAILED", {
+              details: { fields: [SUBMITTED] },
+            });
+          });
+        },
+      ],
+    });
+    await app2.ready();
+  });
+
+  after(async () => {
+    await app2.close();
+  });
+
+  it("reaches the wire as {fields: [...]} and gains no siblings", async () => {
+    const res = await app2.inject({ method: "GET", url: "/v1/detailed" });
+    const body = res.json();
+
+    assert.equal(res.statusCode, 400);
+    assert.deepEqual(Object.keys(body).sort(), ["code", "details", "message"]);
+    assert.deepEqual(Object.keys(body.details), ["fields"]);
+    assert.deepEqual(body.details.fields, ["kind", "captured_at"]);
+    // The constant from the table, unchanged by the presence of details.
+    assert.equal(body.message, "Request failed schema validation.");
+  });
+
+  it("omits details entirely when the throw site passes none", async () => {
+    const res = await app2.inject({ method: "GET", url: "/v1/absent-route-x" });
+
+    // Absent, not `details: undefined` — exactOptionalPropertyTypes
+    // distinguishes them and so does the JSON.
+    assert.deepEqual(Object.keys(res.json()).sort(), ["code", "message"]);
+  });
+
+  it("cannot express a name/value pair, which is the #15 property", async () => {
+    const res = await app2.inject({ method: "GET", url: "/v1/smuggled" });
+
+    // A value CAN be placed in the list — the type stops a pair, not a liar.
+    // What it forecloses is the shape that made echoing natural: there is no
+    // key to hang a value off, so `{field: "kind"}` and `{kind: "<value>"}`
+    // stop being the same shape with different intent.
+    assert.deepEqual(res.json().details.fields, [SUBMITTED]);
+    assert.equal(typeof res.json().details.fields[0], "string");
+  });
+});
+
 
 describe("CORS", () => {
   it("echoes exactly the allowlisted origin, never a wildcard", async () => {

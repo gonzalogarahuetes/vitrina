@@ -24,7 +24,7 @@ import type {
   FastifyRequest,
   FastifySchemaValidationError,
 } from "fastify";
-import type { ErrorCode, ErrorBody } from "@vitrina/shared";
+import type { ErrorCode, ErrorBody, ErrorDetails } from "@vitrina/shared";
 
 /*
  * code → HTTP status.
@@ -108,20 +108,49 @@ const FRAMEWORK_4XX: Readonly<Record<number, ErrorCode>> = {
  * The throwable. Carries a `code` and nothing that can leak.
  *
  * `details` is for machine-readable, non-echoing context the client needs in
- * order to act — a field *name*, never a field *value*. If you are tempted to
- * put the offending input in here, that is exactly non-negotiable #15.
+ * order to act — field *names*, never field *values*. `ErrorDetails` is
+ * `{fields: string[]}` for exactly that reason: a list of names has nowhere to
+ * put a submitted value, so #15 is enforced by the type rather than by whoever
+ * writes the throw. See its declaration in `@vitrina/shared`.
  *
- * `cause` is for chaining an underlying error. It is logged and never
- * serialised.
+ * `cause` is for chaining an underlying error. It never reaches the wire, and
+ * it is what decides whether this error is logged at all (see errorEnvelope).
+ *
+ * CHAIN A MESSAGE YOU WROTE, NOT A DRIVER ERROR VERBATIM. This is a #15 guard,
+ * not a style note, and it is the one rule `cause` needs. #15 stops request
+ * content reaching a *response*; nothing stops it reaching a *log*, and a
+ * driver's own message is the likeliest carrier. Postgres spells a unique
+ * violation:
+ *
+ *     duplicate key value violates unique constraint "owners_email_key"
+ *     Key (email)=(someone@example.com) already exists.
+ *
+ * — a submitted value, quoted by the driver, and `cause: pgError` puts it in
+ * the log with no throw site having interpolated anything. So wrap it:
+ *
+ *     new ApiError("CONFLICT", {
+ *       cause: new Error(`owners.email already taken (pg ${pgError.code})`),
+ *     })
+ *
+ * The driver's `code` — "23505" — and its constraint name are both safe to
+ * name: they describe the schema, not the request. They go in the message you
+ * write rather than in a nested `cause`, because BOTH pino serialisers drop a
+ * non-Error cause silently (measured 21 August 2026) — `cause: pgError.code`
+ * would read as diagnostics and reach no log line at all. Chain an `Error` or
+ * interpolate; a string does neither.
+ *
+ * This is throw-site discipline for the same reason §7.5 assigns the INTERNAL
+ * path's residual risk to the throw site: the handler cannot inspect a message
+ * and know whether a value in it was submitted or authored.
  */
 export class ApiError extends Error {
   readonly code: ErrorCode;
-  readonly details: Readonly<Record<string, string>> | undefined;
+  readonly details: ErrorDetails | undefined;
 
   constructor(
     code: ErrorCode,
     options?: {
-      details?: Readonly<Record<string, string>>;
+      details?: ErrorDetails;
       cause?: unknown;
     },
   ) {
@@ -247,6 +276,34 @@ export function errorEnvelope(
   reply: FastifyReply,
 ) {
   if (error instanceof ApiError) {
+    /*
+     * Logged when it carries a cause, silent when it does not — api-sketch
+     * §1.2, decided 21 August 2026. A 404 with nothing underneath it is not an
+     * event: the route answered the question it was asked, and a line per
+     * missing album is noise that trains people to stop reading the log. A
+     * cause is the signal that something happened the server had to interpret —
+     * a unique violation behind a CONFLICT, a storage failure behind a
+     * NOT_FOUND — and that is worth a line.
+     *
+     * `warn` and not `error`, matching the framework branch below: an ApiError
+     * is a condition this server recognised and answered correctly. `error` is
+     * reserved for the branch where it did not.
+     *
+     * `{err: error}` is safe to hand over because `ApiError`'s own message is
+     * `MESSAGES[code]`, a constant. Everything in the chain below it is the
+     * throw site's responsibility — see the note on `cause` above, which is the
+     * whole of what keeps a driver's quoted request value out of this line.
+     *
+     * ONE CASE THIS DOES NOT COVER, and it is deliberate rather than missed:
+     * `new ApiError("INTERNAL")` with no cause answers 500 and logs nothing.
+     * The rule is cause-based, so widening it here would be a second condition
+     * doing the job a throw site should. Do not throw `INTERNAL` as an
+     * `ApiError` — let an unrecognised error fall to the branch at the bottom
+     * of this function, which logs a stack.
+     */
+    if (error.cause !== undefined) {
+      request.log.warn({ err: error }, "request failed with an underlying cause");
+    }
     return reply.code(STATUS[error.code]).send(body(error.code, error.details));
   }
 
