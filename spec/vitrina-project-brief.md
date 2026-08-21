@@ -167,7 +167,7 @@ Since §10.1 settles v1 on proxying, revocation is checked per request and there
 
 **`albums.status` is not in the initial migration.** It appeared in earlier sketches with no enumerated values, unlike `media.status`, and v1 has no state an album moves through. Add it when something needs it — a plausible future use is Phase 5 time-limited albums.
 
-**`owners` stays minimal.** §12 still lists the owner account model as undecided — email required, or invite-only. A migration is not the place to resolve an open decision, so the initial table carries only what login demonstrably needs.
+**`owners` was minimal in the Phase 0 migration** because the account model was open at the time. §12 has since decided it — email and password — and the columns land in a Phase 1 migration rather than by editing an applied one. See schema doc §3.
 
 ### 9.3 Constraints a migration cannot express
 
@@ -189,7 +189,7 @@ That last one is the subtle case, and the distinction from `token_hash` is worth
 
 **But cascade is not erasure.** A database cascade removes rows and leaves every encrypted object in the bucket, while destroying the only record of which objects existed — `media.id` _is_ the object key. The result is storage you pay for forever and a right-to-erasure request you have reported as satisfied without deleting the images. **Deleting an album or an owner must therefore be an application operation that removes storage objects first and rows second.** Recorded as a B.6 requirement; see schema doc §5.1.
 
-**`owners` is deferred, not designed.** With only `id` and `created_at` there is nothing to authenticate against, so the Phase 1 owner flow cannot start without adding to it. That is acceptable in a provisional migration and should be labelled as such. A password column would not resolve §12 — both candidate account models need one.
+**`owners` as shipped cannot authenticate anyone.** With only `id` and `created_at` there is nothing to authenticate against. §12 has since decided the account model, and the columns arrive in a Phase 1 migration — see schema doc §3, which also owes corrections to three stale `COMMENT ON` strings that an applied migration cannot be edited to fix.
 
 ## 10. Web friction layer
 

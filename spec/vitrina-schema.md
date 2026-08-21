@@ -137,6 +137,8 @@ Hashed rows with expiry, **not** server-side sessions — non-negotiable #6. Sev
 
 _Phase 1 migration, not the Phase 0 one._
 
+**That migration also owes three `COMMENT ON` corrections.** `001_initial_schema.sql` has applied, and its comments are now false: the header calls the owner account model an open decision, one line says an owner password "needs Argon2id as well", and another calls the title/label question coupled and undecidable. An applied migration is not edited — and editing the file would not reach the comments anyway, since `COMMENT ON` text is live data. The forward migration is the only mechanism that fixes both.
+
 | Column            | Type          | Constraints                                                     |
 | ----------------- | ------------- | --------------------------------------------------------------- |
 | `id`              | `uuid`        | PK, default `gen_random_uuid()`                                 |
@@ -330,9 +332,9 @@ Cascade makes it worse rather than better, because the rows it removes are the o
 
 This is a **B.6 requirement**: the API sketch must state that no endpoint deletes an album or owner row without first having deleted the corresponding storage objects.
 
-**`owners` shape**, pending brief §12's account model.
+**~~`owners` shape~~ — closed.** Brief §12 decided email and password on 20 August 2026. The columns and the `owner_keys` table are specified in §3 and land in a **Phase 1 migration**.
 
-**Whether `albums.title` and `recipients.label` stay plaintext**, pending brief §11's owner-key question. The two are coupled and must be decided together (encryption spec §10).
+**Whether `albums.title` and `recipients.label` stay plaintext** — still open, but **no longer blocked**. It was parked because it was coupled to owner key retention; brief §11 closed that, and an owner who unwraps `K_master` at login can decrypt their own titles (encryption spec §10). Note deferring is not free: the relay cannot re-encrypt what it cannot read, so shipping plaintext means a client-side lazy migration later.
 
 ## 6. Token hashing — the canonical form
 
