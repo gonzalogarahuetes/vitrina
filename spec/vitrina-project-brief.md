@@ -377,6 +377,33 @@ Question 10 deserves suspicion. It was designed before anyone asked for it.
 
 ---
 
+## 14b. Recipient onboarding copy — the reference text
+
+_B.7, completed 20 August 2026. This is what a recipient reads after opening an invite. It is the reference text: brief §15.3 gates every translation on a fluent speaker confirming that both the guarantee **and its limit** survive._
+
+> Someone has opened a window to share something with you: you have been given access to an album of their choice, and you can visit it as many times as you want.
+>
+> Nothing is automatically saved to your phone or laptop. There is no file to forward. Pictures are unreadable on our servers.
+>
+> The link is the key: keep it to yourself. Screenshots leave marks, and all invitations are revocable.
+
+### Why each clause is worded as it is
+
+Recorded because every one of these was a correction, and a future edit that "improves" the copy will otherwise reintroduce a claim that took several drafts to remove.
+
+| Clause                                                   | Why not something stronger                                                                                                                                                                                                                                                                                                                                                                 |
+| -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| "Nothing is automatically saved to your phone or laptop" | Not _"pictures never land on any device"_ — they land on the owner's, and on the relay as ciphertext. The true and useful claim is about the **recipient's** device: no camera roll, therefore no cloud backup                                                                                                                                                                             |
+| "There is no file to forward"                            | Not _"you cannot download them"_. A determined recipient can extract what is rendered; §3 forbids implying otherwise. What is true is that nothing saves by default and there is no file object to pass on                                                                                                                                                                                 |
+| "Pictures are unreadable on our servers"                 | Not _"nothing is stored on a server"_. The ciphertext is stored; the relay cannot read it                                                                                                                                                                                                                                                                                                  |
+| **"The link is the key: keep it to yourself"**           | The load-bearing sentence. §11 records the invite as a forwardable bearer credential for a whole album and nothing defends it. Without this line a recipient reasonably treats a link as a link                                                                                                                                                                                            |
+| "Screenshots leave marks"                                | Not _"screenshots leave traces"_, which implies detection that does not exist on the web. A **mark** is on the artifact: the client-side watermark carries the recipient's name into any capture. Deliberately **not** _"shared screenshots leave marks"_ — that would license a private screenshot, which lands in a camera roll and syncs to a cloud, the exact leak §3 promises against |
+| "all invitations are revocable"                          | Impersonal and true. Revocation stops future access and does nothing about what has already been retrieved (encryption spec §6.4); the copy claims no more                                                                                                                                                                                                                                 |
+
+**Nothing here says the product prevents copying**, and no future edit may add it. Note that every draft correction _removed_ a claim rather than adding one — the final text is shorter than the first and says more, because none of it has to be defended.
+
+**This is recipient-facing only.** Owner-facing copy is a separate artifact and carries different obligations, including §11's note that account existence is discoverable through signup.
+
 ## 15. Language and localisation
 
 _Added 11 August 2026. Placed at the end to avoid renumbering; logically it belongs alongside §3._
