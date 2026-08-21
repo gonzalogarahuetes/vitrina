@@ -2,7 +2,7 @@
 
 **Version:** 1
 **Status:** Draft for review · last updated 11 August 2026 · §4 corrected, §8 added
-**Companion to:** `vitrina-encryption-spec.md`, `vitrina-project-brief.md` §6.7
+**Companion to:** `vitrina-encryption-spec.md`, `vitrina-project-brief.md` §6 #7
 
 ---
 

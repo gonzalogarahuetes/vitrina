@@ -63,6 +63,27 @@ jobs:
       - name: Enable corepack
         run: corepack enable
 
+      # Node stdlib only, no dependencies, so this runs before the install and
+      # fails before anything expensive. The documents in spec/ cite each other
+      # by section number and those citations go stale; architecture §9 records
+      # the case that motivated the check — "non-negotiables #26 and #27" when
+      # brief §6 had fifteen items, neither number resolving to anything, found
+      # by hand months later. Reads spec/ only, touches no network and no
+      # Docker, so it belongs in this job and nowhere else.
+      #
+      # A red here means a citation that NAMES a document points at nothing in
+      # it, or a #N past the end of brief §6's list. Under-specified bare
+      # references ("§10.1" meaning the brief's) are printed every run and do
+      # not fail: there are two dozen, they are house style rather than defects,
+      # and a prose citation must never be what holds up a Rust commit.
+      #
+      # The severity split lives in the script, deliberately, not in a
+      # continue-on-error here — that would also stop a genuinely wrong
+      # cross-document citation from failing, which is the one thing this check
+      # is for.
+      - name: Spec citations resolve
+        run: pnpm check:citations
+
       - name: Install JS dependencies
         run: pnpm install --frozen-lockfile
 
@@ -104,7 +125,7 @@ jobs:
       #   C.9      — run the exported JSON vectors from spec/vectors/
       #   C.10     — build the WASM target and run the TypeScript smoke harness
       #   Phase 1  — assert no outbound request carries key material
-      #              (invite spec §7.3)
+      #              (invite spec §7 #3)
       # Each is another step in this job; none requires restructuring.
 
   # ---------------------------------------------------------------------------

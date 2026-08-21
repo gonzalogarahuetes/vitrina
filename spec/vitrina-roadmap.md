@@ -30,7 +30,7 @@ _The goal is a working private album you would actually send to your own mother.
 
 ### Owner flow
 
-- [ ] Account creation and login (token-based, per brief §6.6)
+- [ ] Account creation and login (token-based, per brief §6 #6)
 - [ ] Create album
 - [ ] Select photos, strip metadata, downscale, generate thumbnail, encrypt, upload — all client-side
 - [ ] Upload progress and failure recovery
