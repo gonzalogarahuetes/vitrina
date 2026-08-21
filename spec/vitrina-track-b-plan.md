@@ -70,7 +70,7 @@ Green on a near-empty repo, then kept green.
 
 **Done when:** a pull request runs all of the above, and a commit adding the string `crypto_secretstream` to any file fails CI. Test that deliberately, then revert it.
 
-_Deferred to later phases, but design CI so they slot in: running the exported JSON vectors (C.9), the WASM build (C.10), and the invite-spec §7.3 assertion that no outbound request carries key material (Phase 1)._
+_Deferred to later phases, but design CI so they slot in: running the exported JSON vectors (C.9), the WASM build (C.10), and the invite spec §7 #3 assertion that no outbound request carries key material (Phase 1)._
 
 _Context, not enforcement: `CLAUDE.md` is advisory. Anything that can become a failing build should._
 

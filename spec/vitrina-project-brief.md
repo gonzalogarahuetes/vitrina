@@ -377,7 +377,37 @@ Question 10 deserves suspicion. It was designed before anyone asked for it.
 
 ---
 
-## 14b. Recipient onboarding copy — the reference text
+## 15. Language and localisation
+
+_Added 11 August 2026. Placed at the end to avoid renumbering; logically it belongs alongside §3._
+
+**Target languages: English, Spanish, Catalan, French, Italian.** German is a candidate, gated on §15.3.
+
+### 15.1 The API is locale-agnostic
+
+No route reads `Accept-Language`, and no response contains user-facing prose. Error responses carry a stable machine-readable `code`; the **client** maps it to displayed text in the language the user chose. Putting translation server-side would mean shipping i18n into the API and knowing the caller's locale on every request, for no benefit — the client already knows its own language better than a header does.
+
+**Language is an explicit user setting, never inferred from IP geolocation.** A Catalan speaker in France gets French only if they ask for it.
+
+`albums.title` and `recipients.label` are owner-authored free text in whatever language the owner typed. No localisation applies, and none would if they were later encrypted (encryption spec §10).
+
+### 15.2 Passphrase language is per invite, not per app locale
+
+Encryption spec §6.3 requires passphrase words to come from the _recipient's_ language, because a grandparent transcribing words aloud over the phone gets their own language right and a foreign one wrong. That is a correctness requirement, not a nicety — so the owner selects the wordlist **when creating the invite**, defaulting to their own display language and freely changeable. A Spanish parent inviting a German aunt needs a German passphrase.
+
+**Passphrase languages are a subset of UI languages.** A UI translation needs a translator; a wordlist needs 7,776 words that are phonetically distinct with no homophones and no pairs differing only by a diacritic. See encryption spec §6.3 — offering a passphrase language without a vetted list is worse than not offering it.
+
+### 15.3 A language ships only when a speaker has read the guarantee copy
+
+_The reference text this gate applies to is **§16**._
+
+B.7's onboarding copy states a guarantee **and its limit**. §3 makes overclaiming a product rule rather than a preference, and a machine-translated guarantee is exactly how it gets violated without anyone noticing — the English stays careful while a translation quietly promises more, or drops the screenshot caveat because it reads awkwardly.
+
+So: no language reaches users until someone fluent has read the three sentences and confirmed they neither overclaim nor hedge into meaninglessness. This is a real review burden per language, and it is the strongest practical argument for keeping the copy to three sentences.
+
+---
+
+## 16. Recipient onboarding copy — the reference text
 
 _B.7, completed 20 August 2026. This is what a recipient reads after opening an invite. It is the reference text: brief §15.3 gates every translation on a fluent speaker confirming that both the guarantee **and its limit** survive._
 
@@ -403,29 +433,3 @@ Recorded because every one of these was a correction, and a future edit that "im
 **Nothing here says the product prevents copying**, and no future edit may add it. Note that every draft correction _removed_ a claim rather than adding one — the final text is shorter than the first and says more, because none of it has to be defended.
 
 **This is recipient-facing only.** Owner-facing copy is a separate artifact and carries different obligations, including §11's note that account existence is discoverable through signup.
-
-## 15. Language and localisation
-
-_Added 11 August 2026. Placed at the end to avoid renumbering; logically it belongs alongside §3._
-
-**Target languages: English, Spanish, Catalan, French, Italian.** German is a candidate, gated on §15.3.
-
-### 15.1 The API is locale-agnostic
-
-No route reads `Accept-Language`, and no response contains user-facing prose. Error responses carry a stable machine-readable `code`; the **client** maps it to displayed text in the language the user chose. Putting translation server-side would mean shipping i18n into the API and knowing the caller's locale on every request, for no benefit — the client already knows its own language better than a header does.
-
-**Language is an explicit user setting, never inferred from IP geolocation.** A Catalan speaker in France gets French only if they ask for it.
-
-`albums.title` and `recipients.label` are owner-authored free text in whatever language the owner typed. No localisation applies, and none would if they were later encrypted (encryption spec §10).
-
-### 15.2 Passphrase language is per invite, not per app locale
-
-Encryption spec §6.3 requires passphrase words to come from the _recipient's_ language, because a grandparent transcribing words aloud over the phone gets their own language right and a foreign one wrong. That is a correctness requirement, not a nicety — so the owner selects the wordlist **when creating the invite**, defaulting to their own display language and freely changeable. A Spanish parent inviting a German aunt needs a German passphrase.
-
-**Passphrase languages are a subset of UI languages.** A UI translation needs a translator; a wordlist needs 7,776 words that are phonetically distinct with no homophones and no pairs differing only by a diacritic. See encryption spec §6.3 — offering a passphrase language without a vetted list is worse than not offering it.
-
-### 15.3 A language ships only when a speaker has read the guarantee copy
-
-B.7's onboarding copy states a guarantee **and its limit**. §3 makes overclaiming a product rule rather than a preference, and a machine-translated guarantee is exactly how it gets violated without anyone noticing — the English stays careful while a translation quietly promises more, or drops the screenshot caveat because it reads awkwardly.
-
-So: no language reaches users until someone fluent has read the three sentences and confirmed they neither overclaim nor hedge into meaninglessness. This is a real review burden per language, and it is the strongest practical argument for keeping the copy to three sentences.
