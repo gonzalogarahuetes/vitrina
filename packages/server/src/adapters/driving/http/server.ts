@@ -4,9 +4,75 @@ import fastify, {
   type FastifyServerOptions,
 } from "fastify";
 import cors from "@fastify/cors";
+import { stdSerializers } from "pino";
 import type { UseCases } from "../../../application/use-cases/index.js";
 import { errorEnvelope, notFoundEnvelope } from "./error-envelope.js";
 import health from "./routes/health.js";
+
+/*
+ * What the log is allowed to carry, and how an error is shaped when it gets
+ * there. Owned by this adapter and NOT by whoever calls buildServer — see
+ * `loggerWithPolicy` below for why that distinction is load-bearing rather than
+ * tidy.
+ *
+ * `redact`: CLAUDE.md's third hard rule puts logs in scope for key material.
+ * Fastify's default serialiser logs method and URL only, so a token in an
+ * Authorization header is not logged today — but that is an inherited default,
+ * and this rule is one the project treats as catastrophic. Made explicit so it
+ * survives someone widening the serialisers later.
+ *
+ * Note what redaction does *not* protect: invite spec §2.1 puts `token` and
+ * `key` in the URL *fragment* precisely because fragments are never sent to the
+ * server. Redaction is the second line of defence, not the first.
+ *
+ * `serializers.err`: `errWithCause` rather than pino's default `err`, decided
+ * 21 August 2026 — api-sketch §1.2. The default does not lose a cause, and the
+ * document's claim that it did was wrong: pino-std-serializers 7.1.0 FLATTENS
+ * the chain, joining every cause message into `err.message` with ": " and
+ * appending each stack under "caused by:". So this change buys structure, not
+ * presence — `err.cause` as a nested object, each link keeping its own message
+ * and stack, greppable by field instead of by substring.
+ *
+ * The cost, since it is a real one: `err.message` is now the top-level message
+ * ALONE. Anything reading it for the underlying reason has to walk `err.cause`
+ * instead, and a log query written against the flattened form stops matching.
+ */
+const LOG_POLICY = {
+  redact: ["req.headers.authorization", "req.headers.cookie"],
+  serializers: { err: stdSerializers.errWithCause },
+};
+
+/**
+ * The caller chooses where the log goes; this module chooses what it may say.
+ *
+ * `deps.logger` used to be spliced in with `??`, which handed the caller the
+ * whole options object and therefore the policy above with it. Every test that
+ * captured a log stream passed `{level, stream}` and so silently ran with no
+ * redaction and no serialisers — harmless in production, which passes no
+ * logger, but it meant no test could prove either rule held. Worse for the rule
+ * added today: a test asserting the cause chain reaches the log would have been
+ * asserting its own configuration, which is the same failure mode `v1Plugins`
+ * documents below — "a test written that way passes against the very bug it is
+ * meant to catch".
+ *
+ * So the spread puts LOG_POLICY last and a caller cannot override it. `false`
+ * is passed through, because "no logger at all" is a destination and not a
+ * policy.
+ *
+ * `NonNullable` on the return type is not cosmetic: `exactOptionalPropertyTypes`
+ * refuses `undefined` for `logger`, and a signature admitting it sends
+ * `fastify()` down its HTTP/2 overload, which fails four lines later with an
+ * error about `Http2ServerRequest`. This function always returns a value.
+ */
+function loggerWithPolicy(
+  override: BuildServerDeps["logger"],
+): NonNullable<FastifyServerOptions["logger"]> {
+  if (override === false) return false;
+
+  const destination =
+    override === undefined || override === true ? {} : override;
+  return { ...destination, ...LOG_POLICY };
+}
 
 /**
  * What the HTTP adapter needs from configuration — deliberately not the whole
@@ -21,8 +87,13 @@ export type BuildServerDeps = {
   readonly config: HttpConfig;
   readonly useCases: UseCases;
   /**
-   * Logger override. Omit in production to get the redacted logger below; pass
-   * `false` in tests so eight assertions do not emit eighty lines of pino JSON.
+   * Logger DESTINATION override, not a logger override. Omit in production;
+   * pass `false` in tests so eight assertions do not emit eighty lines of pino
+   * JSON, or `{level, stream}` to read the lines back.
+   *
+   * `redact` and `serializers` are not yours to set — `loggerWithPolicy` merges
+   * LOG_POLICY over whatever arrives here, so a test reads the same log shape
+   * production writes.
    */
   readonly logger?: FastifyServerOptions["logger"];
   /**
@@ -49,20 +120,7 @@ export async function buildServer(
   deps: BuildServerDeps,
 ): Promise<FastifyInstance> {
   const app = fastify({
-    logger: deps.logger ?? {
-      /*
-       * CLAUDE.md's third hard rule puts logs in scope for key material.
-       * Fastify's default serialiser logs method and URL only, so a token in an
-       * Authorization header is not logged today — but that is an inherited
-       * default, and this rule is one the project treats as catastrophic. Made
-       * explicit so it survives someone widening the serialisers later.
-       *
-       * Note what this does *not* protect: invite spec §2.1 puts `token` and
-       * `key` in the URL *fragment* precisely because fragments are never sent
-       * to the server. Redaction is the second line of defence, not the first.
-       */
-      redact: ["req.headers.authorization", "req.headers.cookie"],
-    },
+    logger: loggerWithPolicy(deps.logger),
     /*
      * bodyLimit stays at Fastify's 1 MiB default until B.6 settles the upload
      * path. Brief §10.1 proxies ciphertext through the API in v1, so whatever

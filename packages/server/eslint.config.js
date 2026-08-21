@@ -41,6 +41,7 @@ import babelParser from "@babel/eslint-parser";
 const FORBIDDEN_VENDORS = [
   "fastify",
   "@fastify/*",
+  "pino",
   "pg",
   "pg-*",
   "aws-sdk",

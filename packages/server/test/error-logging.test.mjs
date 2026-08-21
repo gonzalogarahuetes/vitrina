@@ -38,7 +38,10 @@ import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
 
 import { buildServer } from "../dist/adapters/driving/http/server.js";
-import { errorEnvelope } from "../dist/adapters/driving/http/error-envelope.js";
+import {
+  ApiError,
+  errorEnvelope,
+} from "../dist/adapters/driving/http/error-envelope.js";
 
 const CLIENT_ORIGIN = "http://localhost:5173";
 
@@ -302,11 +305,16 @@ describe("a validation failure logs a projection, not the error (by construction
  * diagnostic value" of one. Projecting here too would look like consistency and
  * would trade a leak that was measured for blind 500s.
  *
- * Measured while writing this, and asserted as it is rather than as the document
- * describes it: pino's default `err` serialiser emits `{type, message, stack}`
- * and DROPS `error.cause`. §1.2 calls the inward side the stack and the cause
- * chain; the cause chain is not in the log line. Reported rather than encoded —
- * `pino.stdSerializers.errWithCause` is the fix if that claim is meant to hold.
+ * A NOTE HERE WAS WRONG AND IS CORRECTED, 21 August 2026. It read: "pino's
+ * default `err` serialiser emits {type, message, stack} and DROPS error.cause".
+ * It does not. Re-measured against pino-std-serializers 7.1.0, whose own source
+ * says "We append cause messages and stacks to _err, therefore skipping causes
+ * here": the default FLATTENS the chain, joining every cause message into
+ * `err.message` with ": " and appending each stack under "caused by:". The
+ * chain was in the log all along, unstructured.
+ *
+ * So `errWithCause` was adopted for structure rather than for presence — see
+ * the suite below, and LOG_POLICY in server.ts.
  */
 describe("the INTERNAL path stays complete inward", () => {
   const THROWN = "internal-detail-that-must-not-leak";
@@ -358,5 +366,250 @@ describe("the INTERNAL path stays complete inward", () => {
       String(line.err.stack).includes(THROWN),
       "the stack is the entire diagnostic value of an unrecognised error",
     );
+  });
+});
+
+/*
+ * The ApiError branch — api-sketch §1.2, decided 21 August 2026, and the two
+ * §6.2 rows it discharges.
+ *
+ * The rule is cause-based: a warn line when the error carries one, silence when
+ * it does not. "A 404 with nothing underneath it is not an event."
+ *
+ * THESE TESTS CONFIGURE NO SERIALISERS, and that is the point rather than an
+ * omission. They pass `{level, stream}` — a destination — and assert a
+ * STRUCTURED `err.cause`, which only appears under `errWithCause`. So they fail
+ * if LOG_POLICY stops being the adapter's to own, which is the state server.ts
+ * was in until today: a caller-supplied logger replaced the policy wholesale, so
+ * a test that set its own serialiser would have been asserting its own
+ * configuration.
+ */
+describe("an ApiError logs when it carries a cause, and not otherwise", () => {
+  const AUTHORED = "owners.email already taken (pg 23505)";
+  const DRIVER_CODE = "23505";
+  // What a driver quotes back at you, and the reason the throw-site rule exists.
+  const DRIVER_QUOTED = "victim@example.com";
+  const RAW_DRIVER =
+    `duplicate key value violates unique constraint "owners_email_key" ` +
+    `Key (email)=(${DRIVER_QUOTED}) already exists.`;
+
+  let app;
+  let lines;
+
+  before(async () => {
+    lines = [];
+    app = await buildServer({
+      config: { clientOrigin: CLIENT_ORIGIN },
+      useCases: {},
+      logger: {
+        level: "warn",
+        stream: {
+          write(line) {
+            lines.push(JSON.parse(line));
+          },
+        },
+      },
+      v1Plugins: [
+        async (scope) => {
+          scope.get("/absent", async () => {
+            throw new ApiError("NOT_FOUND");
+          });
+          scope.get("/conflict", async () => {
+            throw new ApiError("CONFLICT", { cause: new Error(AUTHORED) });
+          });
+          scope.get("/deep", async () => {
+            throw new ApiError("CONFLICT", {
+              cause: new Error(AUTHORED, { cause: new Error("connection reset") }),
+            });
+          });
+          scope.get("/string-cause", async () => {
+            throw new ApiError("CONFLICT", { cause: DRIVER_CODE });
+          });
+          // The rule violated on purpose, so the guard's location is asserted
+          // rather than assumed. See the cases at the end of this suite.
+          scope.get("/unwrapped", async () => {
+            throw new ApiError("CONFLICT", { cause: new Error(RAW_DRIVER) });
+          });
+          // Shaped like a node-postgres error: an Error with extra ENUMERABLE
+          // own properties. Postgres puts the submitted value in `detail`, not
+          // in `message`, and errWithCause copies those properties through.
+          scope.get("/pg-shaped", async () => {
+            const pgError = new Error(
+              'duplicate key value violates unique constraint "owners_email_key"',
+            );
+            pgError.code = DRIVER_CODE;
+            pgError.detail = `Key (email)=(${DRIVER_QUOTED}) already exists.`;
+            pgError.table = "owners";
+            throw new ApiError("CONFLICT", { cause: pgError });
+          });
+        },
+      ],
+    });
+    await app.ready();
+  });
+
+  after(async () => {
+    await app.close();
+  });
+
+  const get = async (url) => {
+    lines.length = 0;
+    const res = await app.inject({ method: "GET", url });
+    return { res, lines, raw: JSON.stringify(lines) };
+  };
+
+  it("says nothing about a 404 with nothing underneath it", async () => {
+    const { res, lines: logged } = await get("/v1/absent");
+
+    assert.equal(res.statusCode, 404);
+    assert.equal(
+      logged.length,
+      0,
+      `a bare ApiError must be silent, got: ${JSON.stringify(logged)}`,
+    );
+  });
+
+  it("logs one warn line when the error carries a cause", async () => {
+    const { res, lines: logged, raw } = await get("/v1/conflict");
+
+    assert.equal(res.statusCode, 409);
+    assert.equal(logged.length, 1, `expected one line, got: ${raw}`);
+    // warn, not error: the server recognised this condition and answered it
+    // correctly. 50 is reserved for the branch where it did not.
+    assert.equal(logged[0].level, 40);
+    assert.equal(logged[0].err.type, "ApiError");
+  });
+
+  it("keeps the cause chain structured rather than flattened into the message", async () => {
+    // The §6.2 row. Under the default `err` serialiser this line's message
+    // would be "Conflict, duplicated value.: owners.email already taken (pg
+    // 23505)" and there would be no `cause` key at all.
+    const { lines: logged } = await get("/v1/conflict");
+    const { err } = logged[0];
+
+    assert.equal(err.message, "Conflict, duplicated value.");
+    assert.ok(!err.message.includes(AUTHORED), `flattened: ${err.message}`);
+    assert.equal(typeof err.cause, "object");
+    assert.equal(err.cause.message, AUTHORED);
+    assert.ok(String(err.cause.stack).includes(AUTHORED));
+  });
+
+  it("walks the chain past the first link", async () => {
+    const { lines: logged } = await get("/v1/deep");
+
+    assert.equal(logged[0].err.cause.message, AUTHORED);
+    assert.equal(logged[0].err.cause.cause.message, "connection reset");
+  });
+
+  it("keeps the cause off the wire whatever it holds", async () => {
+    const { res } = await get("/v1/conflict");
+
+    assert.deepEqual(Object.keys(res.json()).sort(), ["code", "message"]);
+    assert.equal(res.json().code, "CONFLICT");
+    assert.ok(!res.body.includes(AUTHORED), res.body);
+  });
+
+  it("drops a non-Error cause, because ApiError uses the constructor form", async () => {
+    // Enumerability, not type. `Error(msg, {cause})` defines cause
+    // NON-enumerably, so neither serialiser picks up a non-Error value.
+    // `e.cause = "x"` defines it enumerably and both keep it. This asserts the
+    // form ApiError actually uses — change that `super(...)` to an assignment
+    // and this fails, which is the point.
+    const { res, raw } = await get("/v1/string-cause");
+
+    assert.equal(res.statusCode, 409);
+    assert.equal(
+      raw.includes(DRIVER_CODE),
+      false,
+      `a string cause reached the log, so ApiError no longer uses the constructor form: ${raw}`,
+    );
+  });
+
+  it("carries the driver code when it is written into a message instead", async () => {
+    const { raw } = await get("/v1/conflict");
+
+    // The prescribed shape: the code goes in the message you write, where it
+    // survives serialisation, rather than in a bare cause where it does not.
+    assert.ok(raw.includes("pg 23505"), raw);
+  });
+
+  it("does not sanitise the chain — the throw-site rule is the only guard", async () => {
+    const { res, raw } = await get("/v1/unwrapped");
+
+    // Asserted as it is, not as one might wish it were. A driver error chained
+    // verbatim puts a submitted value in the log, and no handler can tell that
+    // value from an authored one. Recorded so nobody reads the branch above as
+    // a guarantee it does not make: the rule lives on `ApiError.cause`'s doc
+    // comment, and this is the failure it prevents.
+    assert.ok(
+      raw.includes(DRIVER_QUOTED),
+      "if this now passes cleanly, the handler gained a sanitiser and §1.2 needs it",
+    );
+    // The wire is unaffected either way — that half IS structural.
+    assert.ok(!res.body.includes(DRIVER_QUOTED), res.body);
+  });
+
+  it("copies a cause's enumerable own properties, which is how `detail` leaks", async () => {
+    const { res, lines: logged, raw } = await get("/v1/pg-shaped");
+
+    // The measurement that corrected api-sketch §1.2. Under the DEFAULT `err`
+    // serialiser a cause is flattened to message and stack, so `detail` never
+    // reached the log; errWithCause copies own properties, so it does. Adopting
+    // errWithCause WIDENED this exposure rather than relocating it, and the
+    // throw-site rule on ApiError.cause is what closes it.
+    assert.equal(
+      logged[0].err.cause.detail,
+      `Key (email)=(${DRIVER_QUOTED}) already exists.`,
+    );
+    assert.ok(
+      raw.includes(DRIVER_QUOTED),
+      `expected the unwrapped pg error to leak its detail: ${raw}`,
+    );
+    assert.equal(logged[0].err.cause.table, "owners");
+    // Not in `message` — which is why the default serialiser did not carry it.
+    assert.ok(!logged[0].err.cause.message.includes(DRIVER_QUOTED));
+
+    assert.ok(!res.body.includes(DRIVER_QUOTED), res.body);
+  });
+});
+
+/*
+ * The merge order in `loggerWithPolicy`, asserted directly rather than only as a
+ * side effect of the suite above.
+ */
+describe("the log policy is the adapter's, not the caller's", () => {
+  it("ignores a caller-supplied err serialiser", async () => {
+    const lines = [];
+    const app = await buildServer({
+      config: { clientOrigin: CLIENT_ORIGIN },
+      useCases: {},
+      logger: {
+        level: "warn",
+        stream: {
+          write(line) {
+            lines.push(JSON.parse(line));
+          },
+        },
+        // A caller trying to own what the log may say. LOG_POLICY spreads last.
+        serializers: { err: () => ({ hijacked: true }) },
+        redact: [],
+      },
+      v1Plugins: [
+        async (scope) => {
+          scope.get("/conflict", async () => {
+            throw new ApiError("CONFLICT", { cause: new Error("underneath") });
+          });
+        },
+      ],
+    });
+    await app.ready();
+
+    await app.inject({ method: "GET", url: "/v1/conflict" });
+
+    assert.equal(lines.length, 1);
+    assert.equal(lines[0].err.hijacked, undefined);
+    assert.equal(lines[0].err.cause.message, "underneath");
+
+    await app.close();
   });
 });

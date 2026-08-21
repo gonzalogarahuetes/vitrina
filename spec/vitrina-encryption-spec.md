@@ -306,7 +306,15 @@ A distinct route, not a phase flag inside login, so the property below has somew
 
 **Signup is outside that rule, and cannot be brought inside it in v1.** Registration must reject a duplicate address, and with no email sending there is no way to respond identically and deliver the difference out of band. The property is therefore _credential-route indistinguishability_, not account-existence secrecy. Recorded as a limitation in §10 rather than assumed away.
 
-**Server-side parameters are a separate choice from §6.2's.** §6.2's Argon2id figures were sized for a mobile WASM heap on a low-end Android phone. An owner password is verified by a server under concurrency, where the same figure becomes a per-request allocation an unauthenticated caller can trigger — see the api-sketch's rate-limit reasoning, which is deliberately written to hold whatever the number turns out to be. Choose it for the server; do not inherit it.
+**The relay applies its own Argon2id to the proof. This is decided, and the reason is not the one it looks like.**
+
+The relay never receives the password — it receives a proof, which in the honest case is 32 bytes of Argon2id output with nothing cheap to brute-force. That resembles `token_hash`, where a fast SHA-256 is correct, and the resemblance is misleading. **`token_hash` covers a token the relay minted itself, so its entropy is a fact the relay knows. A proof's entropy is a claim about what a client did, and the relay cannot verify it.**
+
+The risk is not a user weakening their own account. It is a Vitrina client doing it silently — a WASM build falling back to weaker parameters, a mobile port splitting the derivation wrongly, a normalisation bug. Login still succeeds, nothing fails, and every proof from that client is weak until a database is stolen. That is §9.1's failure class and brief non-negotiable #17's test: _does it work, wrongly, without this._ A work factor the relay controls is the only part of this that does not depend on four implementations each having done their half correctly.
+
+**Two KDF layers, two purposes, two parameter sets.** The client's Argon2id makes the password expensive to guess and produces the KEK; its parameters are bounded by a mobile WASM heap (§6.2) and live on the `owner_keys` row. The relay's Argon2id is a second layer over already-strong input in the honest case, so it may use lower figures — but it must be chosen for **a server under concurrency**, where an unauthenticated caller can trigger one allocation per request. Its parameters live on `owners`, per row, so they can be raised and applied lazily at next login. Neither set may be inherited from the other, and neither is specified yet.
+
+**The parameter-fetch route returns the client's parameters only.** The relay's are its own business and the client has no use for them.
 
 **Recovery is out of v1**, and the consequence is not softenable: forgetting the password loses every album. The relay cannot re-wrap what it cannot read. This is why the `owner_keys` table exists as a table rather than a column — Phase 2 adds recovery by inserting a row, with no migration and no re-encryption.
 
