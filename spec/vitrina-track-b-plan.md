@@ -162,7 +162,7 @@ _If you can't do it in three sentences, the product isn't clear yet, and that's 
 
 ### B.8 — Record decisions · _yours, 10 minutes_
 
-Update brief §12 in place. SvelteKit and Fastify are both confirmed as of 11 August 2026, with the server choice following from the §10.1 proxy decision. License stays absent (all rights reserved) with the real deadline being the first external pull request. Hosting remains open and is low-stakes given the blind relay — though brief §10.1's proxying decision means egress now crosses your server, so it is slightly less low-stakes than it was.
+Update brief §12 in place. SvelteKit and Fastify are both confirmed as of 11 August 2026, with the server choice following from the §10.1 proxy decision. License stays absent (all rights reserved) with the real deadline being the first external pull request. Hosting is decided as of 20 August 2026 — EU, Hetzner, with the B.4 provider test as its acceptance condition. See brief §12.
 
 **Done when:** brief §12 contains no decision that's actually been made.
 
