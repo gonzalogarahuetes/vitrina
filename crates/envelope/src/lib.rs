@@ -6,7 +6,7 @@ pub struct Header {
     cipher: u8,
     base_nonce: [u8; 16],
     chunk_size: u32,
-    plaintext: u64,
+    plaintext_length: u64,
     asset_id: [u8; 16],
 }
 
@@ -17,6 +17,8 @@ pub enum HeaderError {
     WrongCipher(u8),
     ReservedNotZero { offset: usize },
     PaddingNotZero { offset: usize },
+    PlaintextLengthNotZero,
+    ChunkSizeNotZero,
     TooShort { expected: usize, got: usize },
 }
 
@@ -53,7 +55,13 @@ impl Header {
         // chunk_size and plaintext must be only validated with from_le_bytes
         let chunk_size =
             u32::from_le_bytes(bytes[24..28].try_into().expect("length checked above"));
-        let plaintext = u64::from_le_bytes(bytes[28..36].try_into().expect("length checked above"));
+        if(chunk_size == 0) {
+            return Err(HeaderError::ChunkSizeNotZero);
+        }
+        let plaintext_length = u64::from_le_bytes(bytes[28..36].try_into().expect("length checked above"));
+        if(plaintext_length == 0) {
+            return Err(HeaderError::PlaintextLengthNotZero);
+        }
         // padding must be all 0s
         let padding = &bytes[52..64];
         if padding != [0u8; 12] {
@@ -69,7 +77,7 @@ impl Header {
             cipher: bytes[5],
             base_nonce,
             chunk_size,
-            plaintext,
+            plaintext_length,
             asset_id,
         })
     }
@@ -145,6 +153,26 @@ mod tests {
         assert!(matches!(
             Header::parse(&bad),
             Err(HeaderError::PaddingNotZero { offset: 63 })
+        ));
+    }
+
+    #[test]
+    fn rejects_plaintext_non_zero() {
+        let mut bad = VALID;
+        bad[28..36].fill(0);
+        assert!(matches!(
+            Header::parse(&bad),
+            Err(HeaderError::PlaintextLengthNotZero)
+        ));
+    }
+
+    #[test]
+    fn rejects_chunk_size_non_zero() {
+        let mut bad = VALID;
+        bad[24..28].fill(0);
+        assert!(matches!(
+            Header::parse(&bad),
+            Err(HeaderError::ChunkSizeNotZero)
         ));
     }
 }
