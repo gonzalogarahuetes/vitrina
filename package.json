@@ -8,6 +8,7 @@
     "test": "pnpm -r --if-present test",
     "build": "pnpm -r --if-present build",
     "check:forbidden": "./scripts/check-forbidden-constructions.sh",
+    "check:citations": "node scripts/check-spec-citations.mjs",
     "infra:up": "docker compose up -d",
     "infra:wait": "./scripts/wait-for-createbucket.sh",
     "infra:down": "docker compose down",
