@@ -109,12 +109,20 @@ erDiagram
 
 **Resolved 20 August 2026 (brief §12), but not in the Phase 0 migration.** The account model is email and password. The columns below land in a **Phase 1 migration**, not the applied `001_initial_schema.sql` — recording the target here does not retrospectively change what shipped.
 
-| Column      | Type                                           | Constraints                                                          |
-| ----------- | ---------------------------------------------- | -------------------------------------------------------------------- |
-| `email`     | `citext` or `text` with a lowercase constraint | NOT NULL, UNIQUE                                                     |
-| `auth_hash` | `bytea`                                        | NOT NULL — the login proof, never the password. Encryption spec §6.6 |
+| Column                 | Type                                           | Constraints                                                                      |
+| ---------------------- | ---------------------------------------------- | -------------------------------------------------------------------------------- |
+| `email`                | `citext` or `text` with a lowercase constraint | NOT NULL, UNIQUE                                                                 |
+| `auth_hash`            | `bytea`                                        | NOT NULL — the relay's Argon2id over the received proof, never over the password |
+| `auth_salt`            | `bytea`                                        | NOT NULL, 16 bytes                                                               |
+| `auth_kdf_memory_kib`  | `integer`                                      | NOT NULL                                                                         |
+| `auth_kdf_iterations`  | `integer`                                      | NOT NULL                                                                         |
+| `auth_kdf_parallelism` | `integer`                                      | NOT NULL                                                                         |
 
-**KDF parameters live on `owner_keys`, not here** — see that table. Whether `auth_hash` shares a derivation with the key-encryption key is settled by encryption spec §6.6 and is still open.
+**Two KDF parameter sets exist and they are not the same.** These are the _relay's_, applied to the proof it receives. The _client's_ — used to derive the KEK and the proof from the password — live on `owner_keys`, are bounded by a mobile WASM heap, and are what `/login/params` returns. Neither may be inherited from the other.
+
+_An earlier revision of this document argued for a fast SHA-256 here, on the grounds that a proof is 32 high-entropy bytes like `token_hash`. That was wrong and is withdrawn: the relay mints a token and therefore knows its entropy, whereas a proof's entropy is a claim about client behaviour the relay cannot verify. See encryption spec §6.6._
+
+Per row, so figures can be raised and applied lazily at the next login — the same reason as `owner_keys`, and the standard cost-upgrade pattern.
 
 Case-folding `email` matters: two rows differing only in case would be two accounts one user cannot tell apart.
 
