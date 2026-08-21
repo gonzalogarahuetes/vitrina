@@ -107,7 +107,16 @@ erDiagram
 | `id`         | `uuid`        | PK, default `gen_random_uuid()` |
 | `created_at` | `timestamptz` | NOT NULL, default `now()`       |
 
-**Deliberately incomplete.** There is nothing here to authenticate against, because brief §12 still lists the account model as undecided — email required, or invite-only. Phase 1 cannot build the owner flow without adding to this table, and that is the right place to resolve it. A migration is not where an open product decision gets settled.
+**Resolved 20 August 2026 (brief §12), but not in the Phase 0 migration.** The account model is email and password. The columns below land in a **Phase 1 migration**, not the applied `001_initial_schema.sql` — recording the target here does not retrospectively change what shipped.
+
+| Column      | Type                                           | Constraints                                                          |
+| ----------- | ---------------------------------------------- | -------------------------------------------------------------------- |
+| `email`     | `citext` or `text` with a lowercase constraint | NOT NULL, UNIQUE                                                     |
+| `auth_hash` | `bytea`                                        | NOT NULL — the login proof, never the password. Encryption spec §6.6 |
+
+**KDF parameters live on `owner_keys`, not here** — see that table. Whether `auth_hash` shares a derivation with the key-encryption key is settled by encryption spec §6.6 and is still open.
+
+Case-folding `email` matters: two rows differing only in case would be two accounts one user cannot tell apart.
 
 ### `owner_tokens`
 
@@ -121,6 +130,45 @@ erDiagram
 | `created_at` | `timestamptz` | NOT NULL, default `now()`       |
 
 Hashed rows with expiry, **not** server-side sessions — non-negotiable #6. Several rows per owner is normal, one per signed-in device. `token_hash` is SHA-256 of a 32-byte random token; there is nothing to brute-force in 256 bits of entropy, and Argon2id here would be pure per-request cost.
+
+### `owner_keys`
+
+_Phase 1 migration, not the Phase 0 one._
+
+| Column            | Type          | Constraints                                                     |
+| ----------------- | ------------- | --------------------------------------------------------------- |
+| `id`              | `uuid`        | PK, default `gen_random_uuid()`                                 |
+| `owner_id`        | `uuid`        | NOT NULL, FK → `owners(id)` `ON DELETE CASCADE`                 |
+| `kind`            | `text`        | NOT NULL, `CHECK (kind IN ('password','recovery'))`             |
+| `wrapped_master`  | `bytea`       | NOT NULL, 48 bytes — `K_master` (32) plus the Poly1305 tag (16) |
+| `wrap_nonce`      | `bytea`       | NOT NULL, 24 bytes                                              |
+| `kdf_salt`        | `bytea`       | NULL — required for `kind = 'password'`                         |
+| `kdf_memory_kib`  | `integer`     | NULL — required for `kind = 'password'`                         |
+| `kdf_iterations`  | `integer`     | NULL — required for `kind = 'password'`                         |
+| `kdf_parallelism` | `integer`     | NULL — required for `kind = 'password'`                         |
+| `created_at`      | `timestamptz` | NOT NULL, default `now()`                                       |
+
+**Several rows per owner is the point.** Each holds the same `K_master` wrapped under a different credential — the password today, a recovery key in Phase 2, potentially a per-device key later. Brief §11: a single `master_key_wrapped` column on `owners` would choose no-recovery permanently, whereas this makes Phase 2 an `INSERT` with no migration and no re-encryption.
+
+A password change re-wraps `K_master` and updates the `password` row. **Album keys are never touched**, because `K_album` is wrapped by `K_master` rather than derived from it (encryption spec §2).
+
+**KDF parameters are per row, and that is load-bearing.** The same argument as encryption spec §6.2's per-recipient parameters — hardcoding them turns "the owner-password parameters remain open" (brief §12) into "frozen at first implementation", and unlike the recipient case an owner's entire album collection hangs off that wrapping. Per row, raising them is real: the next login re-derives under the new figures and re-wraps `K_master`, which is exactly what the N-rows design buys.
+
+They are nullable because a **recovery key is high-entropy random and needs no password KDF at all** — the same shape as `recipients`, where the passphrase columns are NULL for QR recipients. Enforce it:
+
+```sql
+CHECK (
+  kind <> 'password' OR (
+        kdf_salt IS NOT NULL AND octet_length(kdf_salt) = 16
+    AND kdf_memory_kib IS NOT NULL AND kdf_iterations IS NOT NULL
+    AND kdf_parallelism IS NOT NULL
+  )
+)
+```
+
+`CHECK (octet_length(wrapped_master) = 48 AND octet_length(wrap_nonce) = 24)`, for the same reason as `recipients`.
+
+**v1 has exactly one row per owner**, `kind = 'password'`. Recovery is Phase 2. The table shape is what makes that additive.
 
 ### `albums`
 

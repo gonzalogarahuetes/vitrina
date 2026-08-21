@@ -41,6 +41,10 @@ These are not stylistic preferences. Each one breaks something specific.
 ## 2. Key hierarchy
 
 ```
+K_master (32 bytes, random, one per owner)          ← §6.6
+    │
+    └── wraps K_album, one wrapping per album
+            │
 K_album  (32 bytes, random, one per album)
     │
     ├── K_asset(id) = BLAKE2b-256(key = K_album, msg = "vitrina-asset-v1" ‖ asset_id)
@@ -53,6 +57,8 @@ K_album  (32 bytes, random, one per album)
 **`base_nonce` is not a UUID and MUST NOT be made one for consistency.** It is 16 fully random bytes. The nonce-collision argument in §4.1 depends on all 128 bits, and spending six of them on version and variant markers would weaken it for no benefit — a nonce is not an identifier.
 
 The domain-separation strings are ASCII, without a null terminator, and are part of the format. Changing one is a breaking change.
+
+**`K_album` is wrapped by `K_master`, never derived from it.** A derived key cannot be re-wrapped, which would make password change, recovery keys and rotation permanently impossible (brief §11). Wrapping costs 32 bytes per album. Note that this is a **key-management** relationship, not a format one: the envelope has no idea where `K_album` came from, so §3 through §5 are untouched by it.
 
 ### 2.1 Why derive per-asset keys at all
 
@@ -165,7 +171,7 @@ A tempting simplification is to authenticate only the chunk index. It blocks the
 
 ---
 
-## 6. Recipient key wrapping
+## 6. Key wrapping
 
 There are two ways a recipient obtains `K_album`. The QR path is the default, but the two modes are **not ordered on a single axis** — see §6.5 before describing either as simply stronger.
 
@@ -256,6 +262,69 @@ Earlier drafts of this document called the QR path "strictly stronger." That is 
 
 Neither mode dominates. Direct mode remains the default because database theft is the threat this architecture exists to defeat, and because delivery by QR is what makes the product usable by a grandparent with no account. But if invite sharing ever becomes the concern that matters most, the mode that keeps the server in the loop is the one with a lever to pull.
 
+### 6.6 Owner key wrapping
+
+**Not yet fully specified. The shape is decided (brief §11, 20 August 2026); the exact derivation is not, and MUST be settled with conformance vectors per §9.1 before Phase 1.**
+
+An owner holds `K_master`, 32 random bytes, generated client-side at signup. Every `K_album` they own is wrapped under it and stored server-side. `K_master` itself is wrapped once per credential and stored in `owner_keys` — one row for the password today, one for a recovery key in Phase 2, potentially one per device later.
+
+**Two constraints, and only the first is about database theft.**
+
+**The password MUST NEVER leave the device.** The client derives the login proof locally and sends only that. This is not a hardening preference — the KEK is derived from the password, so a relay that receives the password can compute the KEK itself, which would make it _able_ to unwrap while merely choosing not to. §2.2 forbids transmitting derived keys; transmitting the input they are derived from is the same thing by another route.
+
+**The login proof and the KEK MUST be independently derived.** If the value the relay stores to verify a login is also the value that unwraps `K_master`, a stolen database yields both the wrapped blob and its unwrapping key, and the password protects nothing.
+
+The two are separate defences against separate adversaries — the first against a compromised or coerced relay, the second against a database thief. Satisfying one does not satisfy the other.
+
+**A consequence that shapes the login route: it is two round trips.** Deriving the proof client-side requires the salt and Argon2id parameters before anything can be computed, so the client fetches them first. **Decided 20 August 2026.**
+
+The alternative — deriving the salt from the email to save a round trip — was rejected for two reasons.
+
+**It is incompatible with per-row KDF parameters.** Parameters live on `owner_keys` precisely so they can be raised without invalidating existing accounts, and the schema calls that load-bearing. The client needs them before deriving, so it must fetch them regardless; deriving the salt removes one lookup from a call that still has to happen. The only way to reach a single round trip is to make parameters a global constant, which forfeits the property. The two designs are not a symmetric trade — one silently reopens a decision made elsewhere.
+
+**And its failure mode is §9.1's class at the worst severity in this system.** "A hash of the normalised address" hides a specification: Unicode in the local part, IDN in the domain, and case-folding rules that differ between languages. That rule would have to agree byte-for-byte across Rust, TypeScript, Swift and Kotlin, permanently. Disagreement yields a different salt, a different KEK, and a `K_master` that will not unwrap — an account nobody can open, retroactively, for every wrapping already made. Every other row in §9.1's table costs an invite, which a parent can reissue. This one costs an entire album collection.
+
+**Clients MUST send the address exactly as typed and MUST NOT normalise it at all** — not trimming, not `toLowerCase()`, nothing. Any client-side transformation reintroduces the agreement problem in a weaker form: a client that lowercases differently from the relay produces a lookup miss rather than an unopenable account. Recoverable, and there is no reason to have it.
+
+**The asymmetry that settles it is where the complexity lives.** Normalisation is still required under the chosen design — the relay must normalise before looking up an email and before computing a decoy — but it happens **entirely server-side and crosses no client boundary.** If the relay's normalisation is wrong it holds the addresses in plaintext and can migrate. Four disagreeing clients cannot be repaired. Same operation, opposite recoverability.
+
+The predictable-salt objection is real and minor: per-email uniqueness still defeats cross-account amortisation, and what is lost is the requirement that an attacker steal the database before beginning work on a known target.
+
+### 6.6.1 The parameter-fetch route
+
+A distinct route, not a phase flag inside login, so the property below has somewhere to be asserted:
+
+- **Always answers `200`.** An unknown address returns decoy values indistinguishable from real ones.
+- **Decoys are deterministic per address** — `HMAC(server_secret, normalised_email)` truncated to 16 bytes — so repeated attempts return the same salt. A varying salt is itself an oracle.
+- **Decoy parameters equal the real ones.** Free in v1, where every row carries the same values, so a decoy has nothing to distinguish itself from. **The property degrades the moment parameters differ between accounts**, which is the cost of the per-row storage that made them changeable. Worth writing down before that happens rather than discovering it.
+- **The lookup runs unconditionally** and the substitution happens on miss. Branching before the query is a timing oracle.
+- **Rate-limited on the same IP basis as login.** An oracle that cannot be distinguished but can be queried without limit is still a harvesting surface.
+- **The server secret is effectively permanent, and belongs in the same operational category as the database.** Rotating it moves every decoy salt while real salts, being stored, stay put — so anyone comparing responses across the rotation learns which addresses exist. It must be backed up alongside Postgres.
+- **Absent at boot MUST be a hard error.** The ordinary implementation — read from the environment, generate a random one if missing — silently destroys the property on every restart, and nothing fails while it happens. See brief §6 non-negotiable #17.
+
+**The indistinguishability requirement now spans two routes, and is one rule, not two:** no credential route may reveal whether an account exists — not by status, not by code, not by response shape, and not by timing.
+
+**Signup is outside that rule, and cannot be brought inside it in v1.** Registration must reject a duplicate address, and with no email sending there is no way to respond identically and deliver the difference out of band. The property is therefore _credential-route indistinguishability_, not account-existence secrecy. Recorded as a limitation in §10 rather than assumed away.
+
+**Server-side parameters are a separate choice from §6.2's.** §6.2's Argon2id figures were sized for a mobile WASM heap on a low-end Android phone. An owner password is verified by a server under concurrency, where the same figure becomes a per-request allocation an unauthenticated caller can trigger — see the api-sketch's rate-limit reasoning, which is deliberately written to hold whatever the number turns out to be. Choose it for the server; do not inherit it.
+
+**Recovery is out of v1**, and the consequence is not softenable: forgetting the password loses every album. The relay cannot re-wrap what it cannot read. This is why the `owner_keys` table exists as a table rather than a column — Phase 2 adds recovery by inserting a row, with no migration and no re-encryption.
+
+### 6.6.2 Account creation
+
+`K_master` is generated **client-side** at signup, 32 random bytes from a CSPRNG. The client derives the KEK from the password, wraps `K_master`, and posts the wrapping. The relay receives:
+
+- the address as typed, unnormalised (§6.6)
+- the login proof — **never the password**
+- the KDF salt and parameters, which become the `owner_keys` row
+- `wrapped_master` and `wrap_nonce`
+
+**This is the second route that accepts wrap material**, alongside recipient creation. The distinction the route-table audit must encode: **a wrapped blob is ciphertext and may be posted; the key that wrapped it and the secret that derived that key may never be.** Both routes carry the first and neither may carry the second. This one wraps the key every album in the account hangs off, which makes it the highest-consequence body in the system.
+
+The account and its first `owner_keys` row are created in one transaction. An owner with no wrapping is an account that can authenticate and decrypt nothing.
+
+**Signup reveals whether an address is already registered**, and cannot be made not to in v1 — see §10.
+
 ## 7. Metadata
 
 Filenames, capture timestamps, dimensions, and (Phase 3) duration are serialized as JSON and encrypted under `K_meta(asset_id)` using this same envelope format. There is no separate format for metadata.
@@ -324,7 +393,9 @@ Implementations SHOULD additionally carry a property test asserting round-trip i
 
 ### 9.1 The rule this section generalises
 
-**Any value that two implementations must compute identically needs a known-answer vector, not a prose description.** Prose says what should happen; a vector says whether it did. Where the two disagree the failure is usually total and silent — an authentication tag that will not verify, a blob that will not unwrap, an invite that never works — with no diagnostic pointing at the cause.
+**Any value that two implementations must compute identically needs a known-answer vector, not a prose description.**
+
+**Corollary, and it can change a design rather than just test one: prefer the option whose byte-level agreement stays on one side of a client boundary.** A rule the relay applies alone is recoverable — it holds the inputs and can migrate. A rule four clients must apply identically, forever, is not. §6.6's rejection of email-derived salts turns on exactly this, and the same question is worth asking of any future construction before reaching for a vector to police it. Prose says what should happen; a vector says whether it did. Where the two disagree the failure is usually total and silent — an authentication tag that will not verify, a blob that will not unwrap, an invite that never works — with no diagnostic pointing at the cause.
 
 Four instances have already been found by review rather than by test, which is why this is now a rule rather than an observation:
 
@@ -359,10 +430,16 @@ Recorded honestly so they are not mistaken for oversights.
 
 **The number of assets in an album is visible**, as is upload timing.
 
+**Account existence is discoverable through signup.** The credential routes are indistinguishable by design (§6.6.1), but registration must reject a duplicate address and v1 has no email sending, so there is no way to answer identically and deliver the difference out of band. What is protected is that an attacker cannot learn which addresses exist _by attacking the login path_; they can still learn it by attempting to register one.
+
 **An invite can be forwarded, and nothing in v1 prevents or detects it.** A recipient who passes their QR or passphrase to someone else grants that person the same access, and the relay cannot distinguish them. Revocation removes both at once or neither. Options and their trade-offs are in `vitrina-invite-spec.md` §8; none is in v1.
 
 **Album titles and recipient labels are stored in plaintext.** §6.1 says the relay holds "a label" for each recipient, and albums carry a title the owner can read back without holding a key. This is intended, and it is also the sharpest inconsistency in the product: _"Sofía's first birthday"_ and _"María"_ are a child's name and a family member's name sitting readable in a database whose entire pitch is that it cannot read anything.
 
-It is a defensible trade under the accident-not-adversary threat model — the names alone are not the harm the product exists to prevent, and encrypting them costs real usability. But the reason it is not simply fixed is worth stating: encrypting an album title means the owner cannot see their own album list without holding the album key, which requires solving how an owner retains `K_album` across sessions and devices — an unresolved question (brief §11). **The two decisions are coupled and must be made together.** Until then, treat this as a recorded limitation rather than a settled design.
+It is a defensible trade under the accident-not-adversary threat model — the names alone are not the harm the product exists to prevent, and encrypting them costs real usability.
+
+**The dependency that parked this is gone as of 20 August 2026.** It was not simply fixed because encrypting a title means the owner cannot see their own album list without holding the album key — and how an owner retains keys was unresolved. Brief §11 now answers it: `K_master` is unwrapped at login and every `K_album` hangs off it, so an owner can decrypt their own titles. **This is now open on its own merits rather than blocked.**
+
+Two things bear on deciding it. **Encrypting later is a client-side lazy migration**, because the relay cannot re-encrypt what it cannot read — so plaintext titles would persist in two states indefinitely, with clients migrating on access. That is §7's problem in miniature and makes "ship plaintext, fix in Phase 2" more expensive than it sounds. And the natural split is **`albums.title` under `K_album`**, so a recipient can see what they are looking at, and **`recipients.label` under `K_master`**, since it is owner-only.
 
 **Client-side watermarking is bypassable** by editing the JavaScript. See brief §5 for why this is the correct trade and why it must not be "fixed" by moving watermarking server-side.
