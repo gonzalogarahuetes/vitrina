@@ -58,6 +58,13 @@ credential lifecycle rather than owner sessions alone. **Implementing them needs
 `owners` columns and the `owner_keys` table, which land in a Phase 1 migration**
 — `001_initial_schema.sql` has applied and contains neither.
 
+**Amended again later the same day**, after encryption spec §6.6, schema §3 and
+brief §9.3 settled the proof-verification question this document had flagged. Two
+changes: the relay's own Argon2id layer is now stated wherever it bears on a route
+(§5.2, §7.5, §7.6), and **`details`'s type is spelled once, canonically, in §1.1**
+— it had acquired three spellings in a day, one of them the type §1.1 exists to
+reject.
+
 ---
 
 ## 1. The error envelope
@@ -76,9 +83,26 @@ credential lifecycle rather than owner sessions alone. **Implementing them needs
 §7.3 explains why the auth routes in particular are the wrong place for a
 machine-readable hint.
 
-**`details` is typed `{ fields: string[] }`. Decided 21 August 2026** — an
-amendment, because PR 1 shipped without settling it and it therefore had no
-owner, the one state the open-items list exists to prevent.
+**`details` is typed `ErrorDetails`. Decided 21 August 2026** — an amendment,
+because PR 1 shipped without settling it and it therefore had no owner, the one
+state the open-items list exists to prevent.
+
+**This is the canonical declaration, spelled exactly as the code spells it, and
+every other mention in this document cites the name rather than re-spelling the
+structure:**
+
+```ts
+type ErrorDetails = { readonly fields: readonly string[] };
+```
+
+That convention is not fussiness. Within a day of the decision this document
+carried **three** spellings — `{ fields: string[] }` here, `{fields: readonly
+string[]}` in §6.1, and `Record<string, string>` still sitting in §1.2's bullet
+list, which is the type this section rejects. A document whose whole argument is
+that *the type is the enforcement* cannot be loose about the type. Same discipline
+as §7.2's rule for citations: **name the thing you mean; only the section gets a
+number.** A name survives a change to the structure; a re-spelling drifts from it
+silently.
 
 The constraint that decides the shape is #15: it must distinguish a field **name**
 from a field **value**. `Record<string, string>` — what the type was — fails
@@ -94,8 +118,8 @@ list* — the type forecloses the shape that made echoing natural, not a throw s
 determined to lie, and `http.test.mjs` asserts that as the property rather than
 overclaiming. And `fields` is the only member: a future code needing context that
 is genuinely not a field name gets a sibling key with its own #15 argument, never
-a widening of this one. It lives on `ErrorDetails` in `packages/shared` (§1.4),
-because a client that must render it has to import it.
+a widening of this one. It lives in `packages/shared` (§1.4), because a client
+that must render it has to import it.
 
 Implemented at `packages/server/src/adapters/driving/http/error-envelope.ts`, as
 a single module wired through `setErrorHandler` **and** `setNotFoundHandler`.
@@ -194,8 +218,12 @@ The rule is enforced **structurally**, not by review:
   `cause` chain and all — goes to `request.log.error`. **This path is deliberately
   not sanitised** (see the note below).
 - **`details` may carry field *names*, never field *values*.** It is typed
-  `Record<string, string>` and is for machine-readable context the client needs
-  in order to act. Putting the offending input in it is exactly #15.
+  `ErrorDetails` (§1.1) and is for machine-readable context the client needs in
+  order to act. Putting the offending input in it is exactly #15. **This bullet
+  said `Record<string, string>` until 21 August 2026** — the very type §1.1
+  rejects, cited from the section §1.1 names as its own precedent. Corrected
+  rather than quietly reworded, because a document arguing that the type is the
+  enforcement cannot carry the rejected type in its list of rules.
 - **`cause` is logged and never serialised.** An `ApiError` may chain an
   underlying error for diagnosis; that chain does not reach the response.
 
@@ -759,9 +787,12 @@ recovery key and no rotation are possible afterwards.
   anything derived, and it is why §4.1's audit has a second subject.
 - **N wrappings, not one column.** An `owner_keys` table holds several wrappings
   of the same `K_master`, one per credential. Phase 2 adds a recovery key by
-  `INSERT` rather than by migration. The **per-row KDF parameters** that table
-  exists to carry are what force `POST /login/params` to exist at all (§7.5): a
-  global constant would have removed the round trip and the property with it.
+  `INSERT` rather than by migration. The **per-row client KDF parameters** that
+  table exists to carry are what force `POST /login/params` to exist at all
+  (§7.5): a global constant would have removed the round trip and the property
+  with it. The relay keeps a *second*, independent parameter set on `owners`, also
+  per row and never returned to a client — §5.2 has the table, and conflating the
+  two is the drift both this document and brief §9.3 now guard against.
 - **The login proof and the key-encryption key are independently derived from
   the password**, and **the password never leaves the device.** Together these fix
   what `POST /login` receives — a derived proof, never a password. Encryption spec
@@ -782,54 +813,53 @@ An earlier version of this section said §12 blocked PR 2 outright, which is why
 PR 2 went unwritten longer than it needed to; a later one narrowed it to the
 request body alone. Both are now history: §7.5 states the body.
 
-**Still open, and now owned rather than parked: the owner password's Argon2id
-parameters.** Brief §12 closed the model and left these explicitly open, and they
-must not be filled in by default. The one Argon2id figure written down anywhere in
-this project is the passphrase wrap's 64 MiB (encryption spec §6.2), chosen for a
-**mobile WASM heap** on a low-end Android phone. Inheriting it would be choosing a
-parameter from the opposite constraint's benchmark. They stopped being a deferred
-hole when the model closed, because `/signup` and `/login/params` both carry them
-and someone needs a number to test against.
+**Still open, and now owned rather than parked: the Argon2id parameters — and
+there are TWO SETS, not one.** Encryption spec §6.6 settled the structure on
+21 August 2026; the numbers remain unspecified, and neither set may be inherited
+from the other or from the passphrase wrap's 64 MiB (§6.2).
 
-**A coupled ambiguity that needs recording in encryption spec §6.6, and is not
-this document's to resolve.** "The owner password's Argon2id parameters" is
-written as one set of numbers, and the closed design implies as many as three:
+| Set | Applied by | Bounded by | Stored on | Returned to a client |
+| --- | ---------- | ---------- | --------- | -------------------- |
+| Client's | the client, over the password | a mobile WASM heap on a low-end Android phone | `owner_keys`, per row | **Yes** — that is what `/login/params` is for |
+| Relay's | the relay, over the received proof | a server under concurrency | `owners`, per row | **No** — the client has no use for them |
 
-1. the client's derivation of the **KEK** that unwraps `K_master`;
-2. the client's derivation of the **login proof**, independently derived from the
-   same password per §5.1;
-3. whatever the server does to **verify** that proof.
+They stopped being a deferred hole when the model closed, because `/signup` and
+`/login/params` both carry the client's set and someone needs a number to test
+against.
 
-§6.6 says the parameters must be chosen for "a server under concurrency", and
-§7.6 builds the rate limiter's justification on every login attempt costing "a
-full Argon2id verification". But (1) and (2) run **on the client**, sized for the
-weakest phone, and the proof arriving at the server is already a high-entropy
-32-byte value.
+**An ambiguity flagged here on 21 August 2026 is now resolved, and this document
+got the substance of it wrong.** The flag asked what verifies the proof
+server-side, since the design implies three Argon2id applications — the client's
+KEK derivation, the client's proof derivation, and whatever the relay does with
+the result — and §7.6's rate-limit argument depends on the third.
 
-**Schema §3 has already made the argument that decides (3), for a different
-column.** On `owner_tokens.token_hash` it says: `token_hash` is SHA-256 of a
-32-byte random token, "there is nothing to brute-force in 256 bits of entropy, and
-**Argon2id here would be pure per-request cost**". A login proof derived from
-Argon2id is the same shape — 32 high-entropy bytes — so the same reasoning says
-`owners.auth_hash` wants a fast hash too. Schema §3 also records the question as
-open in the adjacent line: "whether `auth_hash` shares a derivation with the
-key-encryption key is settled by encryption spec §6.6 and is still open."
+**Answer: the relay applies its own Argon2id to the proof** (encryption spec
+§6.6, schema §3). So §7.6's argument holds, at the relay's parameters.
 
-**If (3) is a fast hash, §7.6's memory-exhaustion argument does not hold** and the
-limiter is justified by credential stuffing alone. That is still a justification,
-but it is a different one, and §7.6 is written as though the first were settled.
-The reading that keeps §7.6 true — server-side Argon2id over the proof — is the
-one schema §3 argues against for an identically shaped value, which is why this is
-worth flagging rather than assuming either way.
+**The reasoning this section offered for the other answer was wrong, and the
+correction is the useful part.** It argued from schema §3's own note on
+`owner_tokens.token_hash` — 32 high-entropy bytes, "Argon2id here would be pure
+per-request cost" — that `owners.auth_hash` should want a fast hash for the same
+reason, the values being the same shape. **Schema §3 has since withdrawn that
+argument explicitly**, and the distinction it draws is the one this document
+missed:
 
-Flagged rather than resolved: it is a key-derivation question, so it belongs to
-encryption spec §6.6 and to whoever owns the cryptographic layer. **What this
-document must not do is pick one and write route text that assumes it** — §7.6
-now carries the same flag beside the argument that depends on it. Note the
-practical consequence if (3) is a fast hash: "the owner password's Argon2id
-parameters" are then **client** parameters, and §6.6's instruction to size them
-for "a server under concurrency" is sizing advice for a computation the server
-does not perform.
+> The relay mints a token, and therefore *knows* its entropy. A proof's entropy
+> is a **claim about what a client did**, and the relay cannot verify it.
+
+The threat is not an owner choosing a weak password. It is a *Vitrina client*
+silently producing weak proofs — a WASM build falling back to lower parameters, a
+mobile port splitting the derivation wrongly, a normalisation bug. Login still
+succeeds, nothing fails, and every proof from that build is weak until a database
+is stolen. That is non-negotiable #17's test exactly — *does it work, wrongly,
+without this* — and a work factor the relay controls is the only part that does
+not depend on four implementations each having done their half correctly.
+
+Worth recording as a reasoning failure rather than a fact correction: the argument
+was structurally sound and reached the wrong answer because it compared two values
+by **shape** when the property that mattered was **provenance**. Two columns
+holding 32 high-entropy bytes are not the same column if only one of them is known
+to hold them.
 
 ### 5.3 Do `albums.title` and `recipients.label` become encrypted? (encryption spec §10)
 
@@ -887,7 +917,7 @@ which are only written down. **This table grows with every PR** and is the reaso
 | An `ApiError` with a cause logs one `warn` line; without one, nothing (§1.2) | `error-logging.test.mjs`: a route throwing `ApiError("NOT_FOUND")` produces zero lines, one throwing `ApiError("CONFLICT", {cause})` produces exactly one at level 40. Verified by violation — logging unconditionally fails the first |
 | The cause chain reaches the log structured, not flattened (§1.2) | `serializers.err: pino.stdSerializers.errWithCause` in `LOG_POLICY`, plus assertions that `err.message` is the constant alone, `err.cause` is an object, and a second-level `err.cause.cause` is walked. Verified by violation — the default `err` serialiser fails three cases |
 | All ten codes of §1.1 exist, each with a status and a message | `packages/shared/src/index.ts` holds the union; `STATUS` and `MESSAGES` in `error-envelope.ts` are `satisfies Record<ErrorCode, …>`, so a code missing from either does not compile |
-| `details` cannot express a field *value* (§1.1) | `ErrorDetails = {fields: readonly string[]}` in `packages/shared`. The type is the enforcement: `tsc` rejects `details: {kind: "…"}` at the throw site — verified by probe. `http.test.mjs` pins the wire shape, that it gains no siblings, and that it is absent rather than `undefined` when unset. **Note what it does not claim:** a value can still be put *in the list*, and the test asserts that rather than implying otherwise |
+| `details` cannot express a field *value* (§1.1) | `ErrorDetails` in `packages/shared`, spelled canonically in §1.1. The type is the enforcement: `tsc` rejects `details: {kind: "…"}` at the throw site — verified by probe. `http.test.mjs` pins the wire shape, that it gains no siblings, and that it is absent rather than `undefined` when unset. **Note what it does not claim:** a value can still be put *in the list*, and the test asserts that rather than implying otherwise |
 | No framework 4xx collapses to `INTERNAL` (§1.2) | `test/framework-4xx.test.mjs`, 19 cases: oversized body → 413, unmatched and absent `Content-Type` → 415, malformed and empty JSON → 400, plus a sweep asserting no case answers `INTERNAL` or a non-4xx. The reply status is `STATUS[code]`, never the number keyed in the inverse table, so a wrong row cannot produce a status and a code that disagree |
 | An unmapped 4xx is a loud `INTERNAL`, not a quiet 400 | No fallback in the inverse table; verified by probe — a `410` returns `INTERNAL`, a `503` returns `INTERNAL`, and a method mismatch is a `404` rather than an unmapped `405` (§1.1) |
 | A validation failure logs a projection, not the error (§1.2) | `projectValidation` in `error-envelope.ts`, plus `test/error-logging.test.mjs`: a wired half against real AJV, and a by-construction half feeding `data`, an interpolated `message` and a hostile `params` that a `verbose: true` or custom-keyword configuration would produce. Every case asserts the entry's keys against a whitelist, so widening the projection fails here. Measured against the previous `{ err: error }`: 7 of 8 cases fail |
@@ -914,7 +944,7 @@ Each row names the assertion, not just the gap, so that writing it is mechanical
 | §7.2 no token in a query string | A test walking the route table asserting no route declares a `token`, `access_token` or `key` query parameter |
 | §7.5 no request body reaches a log, on any route | The redaction list covers two *headers*. PR 2 introduces the first routes whose **body** carries a shared secret. Nothing today logs a body — pino's default serialisers log method and URL — but nothing stops it either. Owed: a test that POSTs a distinctive secret to `/login`, captures the log stream, and asserts the secret is absent from every line. **`/signup` is now the better subject**, since its body carries a proof *and* wrap material, so the same test covers more per assertion. **Scoped to the validation and success paths, not `INTERNAL`** (§1.2): a secret reaching a log through a `500` means someone interpolated a request value into a throw, which is a throw-site bug the handler cannot police. Because §1.2's projection rule is global, this test states a property of every route. **Its paired row is discharged** — the projection landed 20 August 2026 (§6.1), so this row is now a single change rather than half of one, and what it waits on is the route |
 | §7.5 signup's two writes are one transaction | An owner row with no `owner_keys` row can authenticate and decrypt nothing, and no route can repair it — the relay cannot reconstruct a wrapping it never had. Owed: a test that fails the second insert and asserts the first is rolled back. **Needs the Phase 1 migration**, since neither the `owners` columns nor `owner_keys` exist yet, which is why this is a row rather than code |
-| §7.6 the limiter on the three unauthenticated routes | Not built, and now three routes rather than one — `/signup`, `/login/params`, `/login` (§7.6). Note it is in-process state: correct on one instance, silently broken on two (PR 5 states this as a general property; it is true from the moment this limiter exists). `/login/params` must be limited on §4.3's grounds even if the Argon2id-cost argument turns out not to apply (§5.2), so a limiter added "where the expensive work is" would miss it |
+| §7.6 the limiter on the three unauthenticated routes | Not built, and now three routes rather than one — `/signup`, `/login/params`, `/login` (§7.6). Note it is in-process state: correct on one instance, silently broken on two (PR 5 states this as a general property; it is true from the moment this limiter exists). `/login/params` must be limited on §4.3's grounds and not on cost — it is a lookup and an HMAC, so a limiter added "where the expensive work is" would skip precisely the route whose protection is an enumeration property rather than an allocation |
 
 **Four rows were deleted here, 20 August 2026**, on the same principle as the
 deletion below — a discharged owed row is errata, and a reader who finds one
@@ -1087,7 +1117,7 @@ leaks: a field name on `INVALID_CREDENTIALS` would say which half was wrong
 (§7.7). `details` stays for the routes where a client must know *which* field to
 fix, and PR 2 has none.
 
-That is unchanged by §1.1 settling the *shape* as `{ fields: string[] }` on
+That is unchanged by §1.1 settling the shape as `ErrorDetails` on
 21 August 2026, and the two decisions are worth keeping apart: the shape says what
 `details` may contain **if** a route sends one, and this paragraph says no route
 in PR 2 sends one. **A field name is safe from #15 and still unsafe from §4.3** —
@@ -1179,7 +1209,11 @@ in the account hangs off (encryption spec §6.6.2):
 - the address **exactly as typed, unnormalised** — see `/login/params` below for
   why any client-side normalisation is forbidden;
 - the **login proof**, never the password;
-- the **KDF salt and parameters**, which become the first `owner_keys` row;
+- the **client's KDF salt and parameters**, which become the first `owner_keys`
+  row. **The relay's own Argon2id parameters are NOT in this body and must never
+  be** — the relay generates its `auth_salt` and chooses its own figures. A
+  client-supplied work factor would let a client set the work factor protecting
+  it, which is precisely the threat that layer exists to answer (§5.2);
 - **`wrapped_master` and `wrap_nonce`.**
 
 **This is the second route that accepts wrap material**, alongside §7.7's
@@ -1243,8 +1277,15 @@ collection.
   computing a decoy — but it happens **entirely server-side and crosses no client
   boundary**, so a relay that gets it wrong holds plaintext addresses and can
   migrate. Four disagreeing clients cannot be repaired.
-- **`200`:** the `kdf_salt` and the three Argon2id parameters. Nothing else, and
-  nothing that varies with whether the account exists.
+- **`200`:** the **client's** `kdf_salt` and its three Argon2id parameters, from
+  the caller's `owner_keys` row. Nothing else, and nothing that varies with
+  whether the account exists.
+- **The relay's parameters are never returned here.** They are the relay's
+  business and the client has no use for them (encryption spec §6.6): the client
+  derives a proof, and what the relay then does to that proof is not an input to
+  any client computation. Returning them would leak the relay's work factor to an
+  unauthenticated caller for no purpose. **This route returns one of the two
+  parameter sets, and the reader has to know which** — §5.2 has the table.
 - **Unknown addresses get deterministic decoys** — `HMAC(server_secret,
   normalised_address)` truncated to 16 bytes — so repeated attempts return the
   same salt. A varying salt is itself an oracle. **The lookup runs
@@ -1298,10 +1339,12 @@ wrapped-blob route will need the same extension for the same reason.
   Non-negotiable #16 forbids transmitting derived keys; transmitting the input
   they are derived from is the same thing by another route. **The proof is still a
   bearer-equivalent secret** and is covered by the no-body-in-logs rule below.
-- **What verifies the proof server-side is flagged, not stated** — §5.2's coupled
-  ambiguity. Whether that verification is Argon2id or a fast hash over a
-  high-entropy 32-byte value changes §7.6's justification and nothing else on this
-  route. It is a key-derivation question for encryption spec §6.6.
+- **The relay applies its own Argon2id to the proof** and compares against
+  `owners.auth_hash` (encryption spec §6.6, schema §3). **This was flagged as
+  ambiguous earlier on 21 August 2026 and is now settled** — see §5.2, including
+  why the fast-hash reading this document briefly argued for was wrong. The
+  practical consequence for this route is only that §7.6's cost argument holds;
+  the request and response shapes are unaffected either way.
 - **`200`:** `{ "token": "<43 chars, base64url>", "expires_at": "2026-09-03T09:41:12Z" }`
   **and nothing else.** Without `expires_at` a client cannot warn before a
   two-week window lapses, and a parent meets expiry mid-upload rather than being
@@ -1392,23 +1435,29 @@ three are unauthenticated by construction. The section keeps its title because
 three, on the same IP basis.
 
 **The `/login` limiter is not optional hardening.** §7.5's dummy-value mitigation
-means every attempt against an unknown account runs the same verification a real
-one does — that is the point of it — and therefore an unauthenticated caller can
-force that work per request, at whatever the owner-password parameters turn out to
-be (§5.2). **State that, or it reads as friction and gets removed.** The argument
-deliberately names no number, so it holds whatever §5.2's parameters land on.
+means every attempt against an unknown account runs the **same full Argon2id
+verification** a real one does — that is the point of it — and therefore an
+unauthenticated caller can force one allocation per request, at whatever the
+**relay's** Argon2id parameters turn out to be (§5.2). The limiter bounds a
+memory-exhaustion vector the product created deliberately. **State that, or it
+reads as friction and gets removed.** The argument deliberately names no number,
+so it holds whatever those parameters land on.
 
-> **Flagged 21 August 2026 — §5.2's coupled ambiguity lands on this paragraph.**
-> The sentence above used to say "a **full Argon2id verification**", and that is
-> only true if the *server* runs Argon2id. Under the closed design the client
-> derives the proof and the server receives a high-entropy 32-byte value, for
-> which a fast hash is sufficient. **If verification is a fast hash, the
-> memory-exhaustion argument does not hold** and this limiter is justified by
-> credential stuffing alone — still a justification, and a different one. The
-> wording has been loosened to "the same verification a real one does" so that it
-> is true either way, but **the paragraph should be rewritten once encryption spec
-> §6.6 settles which it is**, rather than left ambiguous permanently. Do not
-> resolve it here; it is a key-derivation decision.
+**A flag stood here for part of 21 August 2026 and is discharged.** It warned that
+"full Argon2id verification" is only true if the *relay* runs Argon2id, and that
+under a fast-hash reading this paragraph's whole justification evaporated.
+**Encryption spec §6.6 settled it the same day: the relay applies its own Argon2id
+to the proof it receives**, so the argument holds and the original wording is
+restored rather than kept hedged. Recorded rather than silently reverted, because
+the hedged wording ("the same verification a real one does") is what a reader
+would otherwise find in the history and mistake for the current rule.
+
+Two consequences for this section specifically. The parameters bounding this cost
+are the **relay's**, sized for a server under concurrency — not the client's,
+which are bounded by a mobile WASM heap and never reach this route (§5.2's table).
+And the relay's layer exists *because* a proof's entropy is a claim the relay
+cannot verify, which means the cost is not optional: removing it to relieve the
+limiter would remove the property the limiter protects.
 
 **Keyed on IP, and this is the one place that is right.** Every other limit in the
 system keys on the token hash, because a family behind one NAT shares an address
@@ -1619,8 +1668,8 @@ immediate — the UI may say so without hedging.
 
 | Route | Scheme | Body | Success | Errors |
 | ----- | ------ | ---- | ------- | ------ |
-| `POST /v1/signup` | none | address as typed · proof · `kdf_salt` + params · `wrapped_master` · `wrap_nonce` (§7.5) | `201` `{id, created_at}`, `no-store` | 400 · 409 `CONFLICT` · 413 · 415 · 429 |
-| `POST /v1/login/params` | none | address as typed (§7.5) | `200` `{kdf_salt, params}` — **always**, decoys on miss | 400 · 413 · 415 · 429 |
+| `POST /v1/signup` | none | address as typed · proof · **client** `kdf_salt` + params · `wrapped_master` · `wrap_nonce` (§7.5) — never the relay's params | `201` `{id, created_at}`, `no-store` | 400 · 409 `CONFLICT` · 413 · 415 · 429 |
+| `POST /v1/login/params` | none | address as typed (§7.5) | `200` — the **client's** `{kdf_salt, params}` only, **always**, decoys on miss | 400 · 413 · 415 · 429 |
 | `POST /v1/login` | none | address as typed · proof (§7.5) | `200` `{token, expires_at}`, `no-store` | 400 · 401 `INVALID_CREDENTIALS` · 413 · 415 · 429 |
 | `POST /v1/logout` | owner | none | `204` | 401 |
 | `POST /v1/logout/all` | owner | none | `204` | 401 |
@@ -1646,9 +1695,11 @@ the route's only purpose.
 
 - **The owner password's Argon2id parameters** — §5.2. **`POST /login`'s request
   body is no longer on this list**: brief §12 closed the account model and §7.5
-  states the body. What remains is the parameters, and the coupled ambiguity about
-  *what verifies the proof server-side*, which §7.6 flags because its own argument
-  depends on the answer. Both are encryption spec §6.6's to settle.
+  states the body. What remains is **the numbers, in two sets** — the client's and
+  the relay's (§5.2's table) — both encryption spec §6.6's to settle. **The
+  coupled ambiguity about *what verifies the proof server-side* is no longer on
+  this list**: §6.6 settled it on 21 August 2026, the relay applies its own
+  Argon2id, and §7.6's cost argument holds unchanged as a result.
 - **Whether `recipients.label` is encrypted** — §5.3. **No longer described as
   coupled to §5.1**, which is closed and closed in the direction that dissolves
   the coupling; it is simply undecided. §7.7 accepts the field as plaintext today
