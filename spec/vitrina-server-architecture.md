@@ -143,7 +143,7 @@ A few directory names are enforcing a non-negotiable rather than expressing tast
 
 §0 says that if this document and the code disagree, that is a bug in one of them. This section records the pass that closed the gaps rather than leaving the reader to find them: `buildServer`'s signature (§2), `config.ts` (§2), the ESLint rule moving from "add one" to "here it is" (§6), and the ports being empty files (§7). The api-sketch's own "deviations to be reconciled" list is what prompted it.
 
-Two dangling references were removed. §2 and §8 cited non-negotiables **#26** and **#27**; brief §6 contains fifteen, and `git log -S` shows both numbers were introduced with this document, so neither ever resolved to anything. The rules they were reaching for are real and are now cited properly — #15 for the one-error-shape choke point, and brief §12's Fastify/JSON-Schema argument for `schemas/`. **If #26 and #27 were shorthand for something else, that intent is lost and worth restating.**
+Two dangling references were removed. §2 and §8 cited non-negotiables **#26** and **#27**; brief §6 contained fifteen items at the time and numbers seventeen now, and `git log -S` shows both numbers were introduced with this document, so neither ever resolved to anything and neither resolves today. The rules they were reaching for are real and are now cited properly — #15 for the one-error-shape choke point, and brief §12's Fastify/JSON-Schema argument for `schemas/`. **If #26 and #27 were shorthand for something else, that intent is lost and worth restating.**
 
 ### Where the error-code union lives — settled 20 August 2026
 

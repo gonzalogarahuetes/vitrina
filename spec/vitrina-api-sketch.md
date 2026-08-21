@@ -60,10 +60,17 @@ credential lifecycle rather than owner sessions alone. **Implementing them needs
 
 **Amended again later the same day**, after encryption spec §6.6, schema §3 and
 brief §9.3 settled the proof-verification question this document had flagged. Two
-changes: the relay's own Argon2id layer is now stated wherever it bears on a route
-(§5.2, §7.5, §7.6), and **`details`'s type is spelled once, canonically, in §1.1**
-— it had acquired three spellings in a day, one of them the type §1.1 exists to
-reject.
+changes: the relay's peppered fast hash over the proof is now stated wherever it
+bears on a route (§5.2, §7.5, §7.6), and **`details`'s type is spelled once,
+canonically, in §1.1** — it had acquired three spellings in a day, one of them
+the type §1.1 exists to reject.
+
+**Corrected again**, after §6.6 fixed the relay's side as `HMAC(pepper, proof)`
+rather than a KDF. This document had spent a day stating the opposite in five
+places, and every one of them is now the peppered form: there is **one KDF
+parameter set, client-side**, and no server-side figure to size, store or
+withhold. §7.6's cost argument does not survive that and is rewritten rather
+than patched — see there.
 
 **The Phase 1 migration named above now owes two things beyond the new tables**,
 both recorded in schema §3 rather than here, and both cheaper to do in that
@@ -861,9 +868,11 @@ recovery key and no rotation are possible afterwards.
   `INSERT` rather than by migration. The **per-row client KDF parameters** that
   table exists to carry are what force `POST /login/params` to exist at all
   (§7.5): a global constant would have removed the round trip and the property
-  with it. The relay keeps a *second*, independent parameter set on `owners`, also
-  per row and never returned to a client — §5.2 has the table, and conflating the
-  two is the drift both this document and brief §9.3 now guard against.
+  with it. **There is no second parameter set.** The relay applies no KDF — it
+  peppers the proof it receives (encryption spec §6.6) — so `owner_keys`' per-row
+  figures are the only ones in the system, and a route that returns them is
+  returning all of them. An earlier version of this bullet claimed a second,
+  server-side set on `owners`; withdrawn.
 - **The login proof and the key-encryption key are independently derived from
   the password**, and **the password never leaves the device.** Together these fix
   what `POST /login` receives — a derived proof, never a password. Encryption spec
@@ -884,36 +893,50 @@ An earlier version of this section said §12 blocked PR 2 outright, which is why
 PR 2 went unwritten longer than it needed to; a later one narrowed it to the
 request body alone. Both are now history: §7.5 states the body.
 
-**Still open, and now owned rather than parked: the Argon2id parameters — and
-there are TWO SETS, not one.** Encryption spec §6.6 settled the structure on
-21 August 2026; the numbers remain unspecified, and neither set may be inherited
-from the other or from the passphrase wrap's 64 MiB (§6.2).
+**Still open, and now owned rather than parked: the Argon2id parameters. There is
+exactly ONE SET, client-side.** Encryption spec §6.6 settled the structure on
+21 August 2026 and corrected it the same day; the numbers remain unspecified, and
+they may not be inherited from the passphrase wrap's 64 MiB (§6.2).
 
 | Set | Applied by | Bounded by | Stored on | Returned to a client |
 | --- | ---------- | ---------- | --------- | -------------------- |
-| Client's | the client, over the password | a mobile WASM heap on a low-end Android phone | `owner_keys`, per row | **Yes** — that is what `/login/params` is for |
-| Relay's | the relay, over the received proof | a server under concurrency | `owners`, per row | **No** — the client has no use for them |
+| The only one | the client, over the password | a mobile WASM heap on a low-end Android phone | `owner_keys`, per row | **Yes** — that is what `/login/params` is for |
+
+**This table had a second row for part of 21 August 2026** — a relay-side set on
+`owners`, bounded by "a server under concurrency", never returned. It is
+withdrawn, along with the `owners.auth_salt` and `auth_kdf_*` columns proposed to
+carry it, which never shipped in a migration. The relay applies no KDF: it
+peppers the proof (below), and a keyed fast hash has no work factor to
+parameterise per account.
+
+One derivation feeds both halves. The client runs Argon2id **once** to a root and
+derives the KEK and the proof from it by keyed hash with distinct domain strings
+(encryption spec §6.6.1) — §6.6's independence requirement is met, because a PRF
+output does not yield its key, and the single run is what lets the parameters be
+sized for the weakest phone rather than for two runs of it.
 
 They stopped being a deferred hole when the model closed, because `/signup` and
-`/login/params` both carry the client's set and someone needs a number to test
-against.
+`/login/params` both carry that set and someone needs a number to test against.
 
 **An ambiguity flagged here on 21 August 2026 is now resolved, and this document
-got the substance of it wrong.** The flag asked what verifies the proof
-server-side, since the design implies three Argon2id applications — the client's
-KEK derivation, the client's proof derivation, and whatever the relay does with
-the result — and §7.6's rate-limit argument depends on the third.
+got the substance of it wrong twice — in opposite directions.** The flag asked
+what verifies the proof server-side, since the design implies three Argon2id
+applications — the client's KEK derivation, the client's proof derivation, and
+whatever the relay does with the result — and §7.6's rate-limit argument depended
+on the third.
 
-**Answer: the relay applies its own Argon2id to the proof** (encryption spec
-§6.6, schema §3). So §7.6's argument holds, at the relay's parameters.
+**Answer: the relay applies `auth_hash = HMAC(pepper, proof)`** — a peppered fast
+hash, not a KDF (encryption spec §6.6.1, schema §3). There is no third Argon2id
+application, and there are only two, both client-side, both from one run.
+**§7.6's cost argument does not survive that** and is rewritten there rather than
+hedged.
 
-**The reasoning this section offered for the other answer was wrong, and the
-correction is the useful part.** It argued from schema §3's own note on
-`owner_tokens.token_hash` — 32 high-entropy bytes, "Argon2id here would be pure
-per-request cost" — that `owners.auth_hash` should want a fast hash for the same
-reason, the values being the same shape. **Schema §3 has since withdrawn that
-argument explicitly**, and the distinction it draws is the one this document
-missed:
+**Both wrong answers had the same shape, which is the part worth keeping.** The
+first argued from schema §3's note on `owner_tokens.token_hash` — 32 high-entropy
+bytes, "Argon2id here would be pure per-request cost" — that `owners.auth_hash`
+wants a plain fast hash for the same reason, the values being the same shape. The
+second accepted the refutation of that and concluded relay-side Argon2id. The
+refutation is right and the conclusion did not follow:
 
 > The relay mints a token, and therefore *knows* its entropy. A proof's entropy
 > is a **claim about what a client did**, and the relay cannot verify it.
@@ -923,14 +946,26 @@ silently producing weak proofs — a WASM build falling back to lower parameters
 mobile port splitting the derivation wrongly, a normalisation bug. Login still
 succeeds, nothing fails, and every proof from that build is weak until a database
 is stolen. That is non-negotiable #17's test exactly — *does it work, wrongly,
-without this* — and a work factor the relay controls is the only part that does
-not depend on four implementations each having done their half correctly.
+without this*.
 
-Worth recording as a reasoning failure rather than a fact correction: the argument
-was structurally sound and reached the wrong answer because it compared two values
-by **shape** when the property that mattered was **provenance**. Two columns
-holding 32 high-entropy bytes are not the same column if only one of them is known
-to hold them.
+**But Argon2id over the proof does not answer it, and the pepper does.** A KDF's
+protection scales with the entropy of its input, which is precisely the quantity
+the relay cannot check — so against a weak-client build it buys a slowdown and
+nothing categorical. A pepper is not an amplifier of the client's work; it is a
+secret the attacker does not hold, so the comparison value cannot be computed at
+all, whatever the client did. It is also the only one of the two that leaves
+§4.3's dummy verification cheap instead of turning it into a memory-allocation
+vector by construction. **Honest limit:** against a live full compromise the
+pepper buys nothing, since proofs are visible in flight (encryption spec §6.6.1).
+
+Worth recording as two reasoning failures rather than two fact corrections. The
+first was structurally sound and reached the wrong answer because it compared two
+values by **shape** when the property that mattered was **provenance**: two
+columns holding 32 high-entropy bytes are not the same column if only one of them
+is known to hold them. The second accepted that correction and then reached for
+the **stronger primitive instead of the applicable one** — a KDF is what you use
+when the input's entropy is low, not when it is unverifiable, and those are
+different problems with different answers.
 
 ### 5.3 Do `albums.title` and `recipients.label` become encrypted? (encryption spec §10)
 
@@ -1282,11 +1317,13 @@ in the account hangs off (encryption spec §6.6.2):
 - the address **exactly as typed, unnormalised** — see `/login/params` below for
   why any client-side normalisation is forbidden;
 - the **login proof**, never the password;
-- the **client's KDF salt and parameters**, which become the first `owner_keys`
-  row. **The relay's own Argon2id parameters are NOT in this body and must never
-  be** — the relay generates its `auth_salt` and chooses its own figures. A
-  client-supplied work factor would let a client set the work factor protecting
-  it, which is precisely the threat that layer exists to answer (§5.2);
+- the **KDF salt and parameters**, which become the first `owner_keys` row.
+  **These are the only KDF parameters in the system** — the relay applies no KDF
+  to the proof, only a pepper (§5.2), so there is no second, server-side figure
+  for this body to be accused of carrying. That a client supplies its own work
+  factor is therefore not mitigated by a relay-side layer: what answers the
+  weak-client threat is the pepper, which is a secret rather than a cost
+  (encryption spec §6.6.1);
 - **`wrapped_master` and `wrap_nonce`.**
 
 **This is the second route that accepts wrap material**, alongside §7.7's
@@ -1350,15 +1387,17 @@ collection.
   computing a decoy — but it happens **entirely server-side and crosses no client
   boundary**, so a relay that gets it wrong holds plaintext addresses and can
   migrate. Four disagreeing clients cannot be repaired.
-- **`200`:** the **client's** `kdf_salt` and its three Argon2id parameters, from
-  the caller's `owner_keys` row. Nothing else, and nothing that varies with
-  whether the account exists.
-- **The relay's parameters are never returned here.** They are the relay's
-  business and the client has no use for them (encryption spec §6.6): the client
-  derives a proof, and what the relay then does to that proof is not an input to
-  any client computation. Returning them would leak the relay's work factor to an
-  unauthenticated caller for no purpose. **This route returns one of the two
-  parameter sets, and the reader has to know which** — §5.2 has the table.
+- **`200`:** the `kdf_salt` and its three Argon2id parameters, from the caller's
+  `owner_keys` row. Nothing else, and nothing that varies with whether the account
+  exists.
+- **That is every KDF parameter the system has**, so nothing is being withheld
+  here and no reader has to work out which set this is. An earlier version of this
+  bullet said the route returns "one of the two parameter sets" and that the
+  relay's own were never returned; the relay has none — §5.2 has the corrected
+  table, and it peppers the proof rather than deriving from it (encryption spec
+  §6.6.1). **What must still
+  never appear in this response is the pepper**, which is a secret and not a
+  parameter, and which no client computation takes as an input.
 - **Unknown addresses get deterministic decoys** — `HMAC(server_secret,
   normalised_address)` truncated to 16 bytes — so repeated attempts return the
   same salt. A varying salt is itself an oracle. **The lookup runs
@@ -1431,12 +1470,18 @@ wrapped-blob route will need the same extension for the same reason.
   Non-negotiable #16 forbids transmitting derived keys; transmitting the input
   they are derived from is the same thing by another route. **The proof is still a
   bearer-equivalent secret** and is covered by the no-body-in-logs rule below.
-- **The relay applies its own Argon2id to the proof** and compares against
-  `owners.auth_hash` (encryption spec §6.6, schema §3). **This was flagged as
+- **The relay applies `HMAC(pepper, proof)`** and compares against
+  `owners.auth_hash` (encryption spec §6.6.1, schema §3). **This was flagged as
   ambiguous earlier on 21 August 2026 and is now settled** — see §5.2, including
-  why the fast-hash reading this document briefly argued for was wrong. The
-  practical consequence for this route is only that §7.6's cost argument holds;
-  the request and response shapes are unaffected either way.
+  why both of this document's earlier answers, a plain fast hash and relay-side
+  Argon2id, were wrong. The request and response shapes are unaffected either way;
+  what does move is §7.6, whose cost argument assumed the relay ran a KDF.
+- **The pepper is not a parameter and never leaves the relay.** It is not in this
+  response, not in `/login/params`, and not derivable from anything a client
+  holds. Absent at boot MUST be a hard error — **and note the failure mode differs
+  from the decoy secret's**: a missing pepper breaks every login loudly, *except*
+  on a fresh deployment with no accounts, where generate-if-missing works and the
+  damage surfaces only once real accounts exist. Non-negotiable #17.
 - **`200`:** `{ "token": "<43 chars, base64url>", "expires_at": "2026-09-03T09:41:12Z" }`
   **and nothing else.** Without `expires_at` a client cannot warn before a
   two-week window lapses, and a parent meets expiry mid-upload rather than being
@@ -1526,30 +1571,42 @@ three are unauthenticated by construction. The section keeps its title because
 `/login` is the route the reasoning was written for; the limiter covers all
 three, on the same IP basis.
 
-**The `/login` limiter is not optional hardening.** §7.5's dummy-value mitigation
-means every attempt against an unknown account runs the **same full Argon2id
-verification** a real one does — that is the point of it — and therefore an
-unauthenticated caller can force one allocation per request, at whatever the
-**relay's** Argon2id parameters turn out to be (§5.2). The limiter bounds a
-memory-exhaustion vector the product created deliberately. **State that, or it
-reads as friction and gets removed.** The argument deliberately names no number,
-so it holds whatever those parameters land on.
+**The `/login` limiter is not optional hardening — but the reason changed on
+21 August 2026, and the old reason must not be left standing.** This section
+argued that §7.5's dummy-value mitigation makes every attempt against an unknown
+account run the same full Argon2id verification a real one does, so an
+unauthenticated caller could force one 64-MiB-class allocation per request, and
+the limiter bounded a memory-exhaustion vector the product had created
+deliberately. **That argument is void.** Encryption spec §6.6.1 settles the
+relay's side as `HMAC(pepper, proof)`, and one of its stated reasons for the
+pepper is precisely that it keeps the dummy verification from becoming a
+memory-allocation vector — which Argon2id would have made it by construction. The
+relay verifies a login for the cost of one HMAC. **There is no work here to
+exhaust.**
 
-**A flag stood here for part of 21 August 2026 and is discharged.** It warned that
-"full Argon2id verification" is only true if the *relay* runs Argon2id, and that
-under a fast-hash reading this paragraph's whole justification evaporated.
-**Encryption spec §6.6 settled it the same day: the relay applies its own Argon2id
-to the proof it receives**, so the argument holds and the original wording is
-restored rather than kept hedged. Recorded rather than silently reverted, because
-the hedged wording ("the same verification a real one does") is what a reader
-would otherwise find in the history and mistake for the current rule.
+Recorded rather than silently reverted, because a reader who finds the
+memory-exhaustion wording in the history will otherwise mistake it for the
+current rule — and because it is the third consecutive claim this section has made
+about the same layer (fast hash, then relay-side Argon2id, now the pepper) and the
+history is what stops a fourth from being argued from scratch.
 
-Two consequences for this section specifically. The parameters bounding this cost
-are the **relay's**, sized for a server under concurrency — not the client's,
-which are bounded by a mobile WASM heap and never reach this route (§5.2's table).
-And the relay's layer exists *because* a proof's entropy is a claim the relay
-cannot verify, which means the cost is not optional: removing it to relieve the
-limiter would remove the property the limiter protects.
+**What justifies the limiter now** is what already justified it on
+`/login/params`, so the two arguments merge rather than sitting apart:
+
+- **Credential stuffing.** Three unauthenticated routes with no token to key on
+  are the only unlimited surface in the system, and an unbounded `/login` is an
+  offline attack conducted online.
+- **§4.3's indistinguishability is per-response, not per-campaign.** Decoys and
+  dummy verification make one answer uninformative; unlimited answers are still a
+  harvesting surface. `/signup`'s `409` makes that concrete — it reveals existence
+  by design (§4.3), so an unlimited `/signup` is an enumeration oracle whatever
+  the other two routes do.
+
+**State the reason, or the limiter reads as friction and gets removed.** Note that
+it survives the correction intact: what changed is why it is there, not whether.
+And the cost argument's disappearance is not a reason to relax the numbers — a
+limiter sized against an allocation cost that no longer exists would be sized
+against nothing, which is the mistake in the opposite direction.
 
 **Keyed on IP, and this is the one place that is right.** Every other limit in the
 system keys on the token hash, because a family behind one NAT shares an address
@@ -1560,12 +1617,15 @@ attempts a day, and **10 per 15 minutes per IP** — provisional — inconvenien
 nobody while slowing credential stuffing. If you decide not to limit them, say so
 explicitly rather than leaving the gap silent.
 
-**`/login/params` needs the limit for a different reason, and it is worth
-separating.** It is not protecting work — the route is a lookup and an HMAC. It is
-protecting §4.3: the decoys make existence undetectable per response, and an
-attacker who can query without limit harvests the address space anyway. A limiter
-sized only against Argon2id cost would reasonably be relaxed on this route, which
-is exactly the mistake to foreclose. **Same IP basis, same numbers, different
+**`/login/params` needed the limit for a different reason, and that reason is now
+the shared one.** It is not protecting work — the route is a lookup and an HMAC —
+it is protecting §4.3, since the decoys make existence undetectable per response
+while an attacker who can query without limit harvests the address space anyway.
+**As of the pepper correction, `/login` is in the same position**: it too is a
+lookup and an HMAC. The note kept here is the one that has outlived two versions
+of this section — a limiter sized only against a KDF cost would reasonably be
+relaxed on a route that has none, and every one of these three routes now has
+none. **Same IP basis, same numbers, and no longer a different
 justification.**
 
 **The limiter is in-process state.** Correct on one instance, silently broken on
@@ -1760,8 +1820,8 @@ immediate — the UI may say so without hedging.
 
 | Route | Scheme | Body | Success | Errors |
 | ----- | ------ | ---- | ------- | ------ |
-| `POST /v1/signup` | none | address as typed · proof · **client** `kdf_salt` + params · `wrapped_master` · `wrap_nonce` (§7.5) — never the relay's params | `201` `{id, created_at}`, `no-store` | 400 · 409 `CONFLICT` · 413 · 415 · 429 |
-| `POST /v1/login/params` | none | address as typed (§7.5) | `200` — the **client's** `{kdf_salt, params}` only, **always**, decoys on miss, `no-store` | 400 · 413 · 415 · 429 |
+| `POST /v1/signup` | none | address as typed · proof · `kdf_salt` + params · `wrapped_master` · `wrap_nonce` (§7.5) — never the password, never `K_master` | `201` `{id, created_at}`, `no-store` | 400 · 409 `CONFLICT` · 413 · 415 · 429 |
+| `POST /v1/login/params` | none | address as typed (§7.5) | `200` — `{kdf_salt, params}` only, **always**, decoys on miss, `no-store` | 400 · 413 · 415 · 429 |
 | `POST /v1/login` | none | address as typed · proof (§7.5) | `200` `{token, expires_at}`, `no-store` | 400 · 401 `INVALID_CREDENTIALS` · 413 · 415 · 429 |
 | `POST /v1/logout` | owner | none | `204` | 401 |
 | `POST /v1/logout/all` | owner | none | `204` | 401 |
@@ -1791,11 +1851,12 @@ the route's only purpose.
 
 - **The owner password's Argon2id parameters** — §5.2. **`POST /login`'s request
   body is no longer on this list**: brief §12 closed the account model and §7.5
-  states the body. What remains is **the numbers, in two sets** — the client's and
-  the relay's (§5.2's table) — both encryption spec §6.6's to settle. **The
+  states the body. What remains is **the numbers, one set, client-side**,
+  encryption spec §6.6's to settle, from phase-0-plan §8's V.1 measurement. **The
   coupled ambiguity about *what verifies the proof server-side* is no longer on
-  this list**: §6.6 settled it on 21 August 2026, the relay applies its own
-  Argon2id, and §7.6's cost argument holds unchanged as a result.
+  this list either**: §6.6.1 settled it on 21 August 2026 as `HMAC(pepper, proof)`,
+  which withdrew the second parameter set and voided §7.6's memory-exhaustion
+  argument — rewritten there, not carried forward.
 - **Whether `recipients.label` is encrypted** — §5.3. **No longer described as
   coupled to §5.1**, which is closed and closed in the direction that dissolves
   the coupling; it is simply undecided. §7.7 accepts the field as plaintext today
