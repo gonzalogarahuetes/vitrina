@@ -168,13 +168,20 @@ They are nullable because a **recovery key is high-entropy random and needs no p
 CHECK (
   kind <> 'password' OR (
         kdf_salt IS NOT NULL AND octet_length(kdf_salt) = 16
-    AND kdf_memory_kib IS NOT NULL AND kdf_iterations IS NOT NULL
-    AND kdf_parallelism IS NOT NULL
+    AND kdf_memory_kib  >= 16384   -- absolute floor, NOT the v1 value
+    AND kdf_iterations  >= 2
+    AND kdf_parallelism >= 1
   )
 )
 ```
 
 `CHECK (octet_length(wrapped_master) = 48 AND octet_length(wrap_nonce) = 24)`, for the same reason as `recipients`.
+
+**The floors were missing here until 21 August 2026, and the omission was backwards.** This block checked only `IS NOT NULL` on the three integers, while `recipients` floored all three with an explicit argument about degradation to pointlessness — and two paragraphs above, this very section argues that "unlike the recipient case an owner's entire album collection hangs off that wrapping." The constraint was applied to the lower-consequence table and not to the higher one. The `NOT NULL` checks are subsumed: a `NULL` fails a `>=` comparison, so the floors carry both properties.
+
+**The figures are copied from `recipients` deliberately, and the reasoning is the same one**: both are Argon2id over a human-supplied secret, derived client-side, bounded by the same mobile WASM heap (encryption spec §6.2). A floor is a degradation guard, not a strength target, so a higher consequence does not by itself argue for a higher floor — it argues for the guard existing, which is what was missing. What the higher consequence does change is the response to a breach: for a recipient the cost is one re-issued invitation, and for an owner it is the album collection, so the note below about never relaxing the floor applies here with no room at all.
+
+> **Confirm the numbers before this reaches a migration.** They are inherited from `recipients` rather than derived for owners, and Argon2id figures are yours to set — this document should not be where an owner-side KDF parameter gets decided by copy. Two specific questions I cannot answer from the specs: whether an owner floor should sit *above* the recipient floor given that a password is typically weaker than a system-generated passphrase (encryption spec §6.3 forbids user-chosen passphrases for recipients, so the owner case is the one place a human-chosen secret is accepted); and whether `owners.auth_kdf_*` — the **relay's** set, which no client supplies — wants floors at all, since the threat there is relay misconfiguration rather than a weakened client, and #17 argues yes while "the relay chooses its own parameters" argues it is already structural.
 
 **v1 has exactly one row per owner**, `kind = 'password'`. Recovery is Phase 2. The table shape is what makes that additive.
 
@@ -260,6 +267,28 @@ For QR recipients every column is NULL, the right-hand side evaluates to NULL, a
 The `48` is coupled to version 1 of the wrap format. If §6.2 ever changes, this constraint must change with it — which is a feature: it forces the format change to be deliberate rather than silent.
 
 **The KDF floors are deliberately well below v1's chosen parameters** (64 MiB, t=3, p=1 — encryption spec §6.2). They are an absolute minimum, not a restatement of the current value, and the distinction matters: Phase 0 plan §8 schedules V.1 to test whether 64 MiB allocates in a WASM heap on a low-end Android phone, and states that a failure there _is_ a spec change. A floor pinned to 65536 would block the corrected value rather than protect anything.
+
+> **The applied migration disagrees with this block, and the migration is the bug.** §0 requires naming which, so: `001_initial_schema.sql` ships `kdf_memory_kib >= 65536` and `kdf_iterations >= 3` — the v1 *chosen* values, not floors. `parallelism >= 1` agrees. Verified against the applied file, 21 August 2026.
+>
+> **This document's numbers are the correct ones**, on the argument two paragraphs up: a floor pinned to the chosen value blocks the corrected value, so if V.1 forces 64 MiB down, the shipped constraint rejects every new invitation and the failure arrives as a database error during a spec change nobody expected to be blocked. The migration's floors are not "safer" — they convert a planned parameter change into a schema migration.
+>
+> **The fix is an `ALTER` in the Phase 1 migration, not an edit to an applied file.** `001_initial_schema.sql` has run; rewriting it would leave the file and the database disagreeing, which is the same class of drift §0 forbids one level down:
+>
+> ```sql
+> ALTER TABLE recipients DROP CONSTRAINT "CHK_recipients_kdf_wrap_kind";
+> ALTER TABLE recipients ADD  CONSTRAINT "CHK_recipients_kdf_wrap_kind" CHECK (
+>   kind = 'qr' OR (
+>         octet_length(kdf_salt)   = 16
+>     AND octet_length(wrap_nonce) = 24
+>     AND octet_length(wrapped)    = 48
+>     AND kdf_memory_kib  >= 16384   -- absolute floor, NOT the v1 value
+>     AND kdf_iterations  >= 2
+>     AND kdf_parallelism >= 1
+>   )
+> );
+> ```
+>
+> **Relaxing a floor is normally the wrong direction**, and the paragraph below says so in terms — which is why this is worth spelling out rather than filing as a typo. What makes it right here is *what the number is for*: 16384 is the degradation-to-pointlessness floor, and 65536 was never a floor at all but the chosen value in a floor's position. Lowering a floor to the value that was argued for is not the same act as lowering the argued floor, and only the second is what the paragraph below forbids. It travels with the `owner_keys` floors, which need adding in the same migration.
 
 What the floor does protect against is degradation to something pointless — a bug or a careless migration setting memory to a few hundred KiB, which would make the offline attack §6.3 exists to manage effectively free.
 

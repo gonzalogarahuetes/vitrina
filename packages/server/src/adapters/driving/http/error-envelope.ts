@@ -105,6 +105,26 @@ const FRAMEWORK_4XX: Readonly<Record<number, ErrorCode>> = {
 };
 
 /**
+ * Codes that may be thrown. `INTERNAL` is deliberately not one of them.
+ *
+ * api-sketch §1.2 stated this as prose — "do not throw INTERNAL as an ApiError,
+ * let an unrecognised error fall through to the branch that logs a stack" — and
+ * prose is the wrong home for it: the reason the rule exists is that
+ * `new ApiError("INTERNAL")` with no cause answers 500 and logs NOTHING, which is
+ * the one case where the cause-based logging rule below is silently wrong.
+ *
+ * Excluding it here makes that a compile error instead. Verified safe before
+ * narrowing: nothing in `src/` constructs an `ApiError` with `INTERNAL`, and the
+ * `500` envelope is built by `body("INTERNAL")` at the bottom of `errorEnvelope`
+ * rather than by throwing — so the handler's own path is unaffected.
+ *
+ * To signal a 500, throw anything else — a plain `Error` reaches the unrecognised
+ * branch, which logs a stack. That is the diagnostic an `INTERNAL` needs and the
+ * one an `ApiError` cannot carry.
+ */
+type ThrowableCode = Exclude<ErrorCode, "INTERNAL">;
+
+/**
  * The throwable. Carries a `code` and nothing that can leak.
  *
  * `details` is for machine-readable, non-echoing context the client needs in
@@ -132,23 +152,48 @@ const FRAMEWORK_4XX: Readonly<Record<number, ErrorCode>> = {
  *       cause: new Error(`owners.email already taken (pg ${pgError.code})`),
  *     })
  *
- * The driver's `code` — "23505" — and its constraint name are both safe to
- * name: they describe the schema, not the request. They go in the message you
- * write rather than in a nested `cause`, because BOTH pino serialisers drop a
- * non-Error cause silently (measured 21 August 2026) — `cause: pgError.code`
- * would read as diagnostics and reach no log line at all. Chain an `Error` or
- * interpolate; a string does neither.
+ * THE LEAK IS BIGGER THAN THE MESSAGE, and this is the part worth knowing.
+ * `errWithCause` copies the cause's **enumerable own properties** into the log
+ * line, and a node-postgres error carries `code`, `detail`, `table` and `schema`
+ * as exactly that. Postgres puts the submitted value in `detail`, not in
+ * `message`:
+ *
+ *     message: 'duplicate key value violates unique constraint "owners_email_key"'
+ *     detail:  'Key (email)=(victim@example.com) already exists.'
+ *
+ * Measured 21 August 2026: `cause: pgError` puts `detail` — and the address — in
+ * the log under `errWithCause`, and does NOT under pino's default `err`, which
+ * flattens a cause to message and stack only. So adopting `errWithCause` widened
+ * this exposure rather than merely relocating it, and this rule is what closes
+ * it. api-sketch §1.2 records the correction.
+ *
+ * The driver's `code` — "23505" — and its constraint name are both safe to name:
+ * they describe the schema, not the request. Put them **in the message you
+ * write**, not in a nested `cause`:
+ *
+ *     cause: new Error(`… (pg ${pgError.code})`)   // reaches the log
+ *     cause: pgError.code                          // vanishes — see below
+ *
+ * A bare string cause vanishes *from this class specifically*, and the reason is
+ * enumerability rather than type. `Error(msg, {cause})` defines `cause`
+ * NON-enumerably, so neither serialiser picks up a non-Error value; `e.cause =
+ * "23505"` defines it enumerably and both serialisers keep it. An Error cause is
+ * walked either way, because both serialisers read `.cause` directly when it is
+ * one. This class uses the constructor form below — so for an `ApiError`, a
+ * string cause is silently dropped. **If that `super(...)` is ever changed to an
+ * assignment, this paragraph inverts**, and a `cause: pgError.code` starts
+ * reaching logs.
  *
  * This is throw-site discipline for the same reason §7.5 assigns the INTERNAL
- * path's residual risk to the throw site: the handler cannot inspect a message
- * and know whether a value in it was submitted or authored.
+ * path's residual risk to the throw site: the handler cannot inspect a chained
+ * value and know whether it was submitted or authored.
  */
 export class ApiError extends Error {
-  readonly code: ErrorCode;
+  readonly code: ThrowableCode;
   readonly details: ErrorDetails | undefined;
 
   constructor(
-    code: ErrorCode,
+    code: ThrowableCode,
     options?: {
       details?: ErrorDetails;
       cause?: unknown;
@@ -294,12 +339,12 @@ export function errorEnvelope(
      * throw site's responsibility — see the note on `cause` above, which is the
      * whole of what keeps a driver's quoted request value out of this line.
      *
-     * ONE CASE THIS DOES NOT COVER, and it is deliberate rather than missed:
-     * `new ApiError("INTERNAL")` with no cause answers 500 and logs nothing.
-     * The rule is cause-based, so widening it here would be a second condition
-     * doing the job a throw site should. Do not throw `INTERNAL` as an
-     * `ApiError` — let an unrecognised error fall to the branch at the bottom
-     * of this function, which logs a stack.
+     * THE ONE CASE A CAUSE-BASED RULE CANNOT COVER is now unreachable rather
+     * than merely discouraged: `new ApiError("INTERNAL")` with no cause would
+     * answer 500 and log nothing, and `ThrowableCode` excludes `INTERNAL` so it
+     * does not compile. Widening the condition here — "or status >= 500" —
+     * would have been the handler doing a throw site's job; excluding the code
+     * removes the case instead. See `ThrowableCode` above.
      */
     if (error.cause !== undefined) {
       request.log.warn({ err: error }, "request failed with an underlying cause");

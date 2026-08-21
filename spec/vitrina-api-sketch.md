@@ -65,6 +65,18 @@ changes: the relay's own Argon2id layer is now stated wherever it bears on a rou
 — it had acquired three spellings in a day, one of them the type §1.1 exists to
 reject.
 
+**The Phase 1 migration named above now owes two things beyond the new tables**,
+both recorded in schema §3 rather than here, and both cheaper to do in that
+migration than after it:
+
+- **`owner_keys` KDF floors.** The table floors nothing today, while `recipients`
+  floors all three integers — the constraint was applied to the lower-consequence
+  table and not the higher one.
+- **An `ALTER` correcting `recipients`' floors.** The applied
+  `001_initial_schema.sql` ships the v1 *chosen* values (`>= 65536`, `>= 3`) where
+  floors belong (`>= 16384`, `>= 2`). Schema §0 makes that a bug in one of the
+  two; the migration is the bug, and an applied file is not edited to fix it.
+
 ---
 
 ## 1. The error envelope
@@ -376,17 +388,38 @@ second is the one that matters:
   real: `err.message` is now the top-level message alone, so anything reading it
   for the underlying reason must walk `err.cause`, and a log query written
   against the flattened form stops matching.
-- **The #15 exposure is not new and was never hypothetical.** If the chain has
-  been reaching the log flattened since the first `cause` was passed, then a
-  driver error chained verbatim has been putting its quoted request values in
-  the log all along. `errWithCause` moves where the value sits — `err.cause.message`
-  rather than `err.message` — and changes nothing about whether it is there.
+- **The #15 exposure is real, and `errWithCause` WIDENED it.** This bullet said
+  the opposite until 21 August 2026 — "moves where the value sits and changes
+  nothing about whether it is there" — and that was wrong. Corrected below,
+  because it is the reason the rule that follows is not merely hygiene.
+
+**Correction: `errWithCause` copies the cause's enumerable own properties, and
+that is where the leak is.** The earlier claim assumed the value lives in the
+cause's `message`, where the default serialiser was already flattening it. In a
+real `node-postgres` error it does not:
+
+```
+message: 'duplicate key value violates unique constraint "owners_email_key"'
+detail:  'Key (email)=(victim@example.com) already exists.'
+code:    '23505'
+```
+
+`detail` is an **enumerable own property**, and so are `code`, `table` and
+`schema`. Measured on the installed versions:
+
+| Serialiser | `cause: pgError` |
+| ---------- | ---------------- |
+| default `err` | flattens the cause to `message` + `stack` only. `detail` never reaches the log — **the address does not leak** |
+| `errWithCause` | copies own properties through: `err.cause.detail` carries `Key (email)=(victim@example.com)` — **the address leaks** |
+
+So adopting `errWithCause` did not relocate this exposure, it created it for
+chained driver errors. That does not reverse the decision — structured causes are
+still worth having, and a driver error should never have been chained verbatim —
+but it does mean **the rule below is load-bearing rather than tidy**, and it
+should have landed in the same change as the serialiser rather than beside it.
 
 **So the rule: chain a message you wrote, not a driver error verbatim.** This is
-a #15 guard, not a style note. Postgres spells a unique violation
-`duplicate key value violates unique constraint "owners_email_key" Key (email)=(someone@example.com) already exists.`
-— a submitted value, quoted by the driver, reaching the log with no throw site
-having interpolated anything. Wrap it:
+a #15 guard, not a style note. Wrap it:
 
 ```ts
 throw new ApiError("CONFLICT", {
@@ -396,13 +429,29 @@ throw new ApiError("CONFLICT", {
 
 The driver's `code` and constraint name are both safe to name, because they
 describe the schema rather than the request. They belong **in the message you
-write**, not in a nested `cause`: both serialisers drop a non-`Error` cause
-silently, so `cause: pgError.code` reads as diagnostics and reaches no log line
-at all.
+write**, not in a bare `cause` — and the reason is narrower than an earlier
+version of this paragraph claimed.
+
+**Second correction: "both serialisers drop a non-`Error` cause" was stated
+generally and is true of one of two syntaxes.** It depends on **enumerability**,
+not on type:
+
+| How `cause` is set | Non-`Error` value (e.g. `"23505"`) | `Error` value |
+| ------------------ | ---------------------------------- | ------------- |
+| `new Error(msg, { cause })` | **Dropped** by both — the options form defines `cause` non-enumerably | Walked by both |
+| `err.cause = value` | **Retained** by both, string and all | Walked by both |
+
+Both serialisers read `.cause` directly when it holds an `Error`, which is why an
+Error cause survives either way; a non-`Error` value is only picked up by
+property enumeration. **`ApiError` uses the constructor form**, so for this
+codebase the original advice holds and `cause: pgError.code` does vanish. It is
+scoped to that rather than claimed of pino in general, and **a test asserts the
+form**, so changing that `super(...)` to an assignment fails CI instead of
+silently inverting this paragraph.
 
 It sits with the paragraph above as throw-site discipline rather than a handler
-guarantee, for the same reason: the handler cannot inspect a message and know
-whether a value in it was submitted or authored. §6.2 carries what that costs in
+guarantee, for the same reason: the handler cannot inspect a chained value and
+know whether it was submitted or authored. §6.2 carries what that costs in
 enforceability. The rule is written on `ApiError`'s `cause` doc comment as well
 as here, because whoever chains a `pg` error will be reading the constructor and
 not this document.
@@ -426,11 +475,33 @@ left no trace on the server.
   `ApiError`'s message is `MESSAGES[code]`, a constant. Everything below it in
   the chain is the throw site's responsibility, per the rule above.
 
-**One case the cause-based rule does not cover, and it is deliberate:**
-`new ApiError("INTERNAL")` with no cause answers `500` and logs nothing. Adding
-a second condition on status would be the handler doing a throw site's job. The
-rule instead is: **do not throw `INTERNAL` as an `ApiError`** — let an
-unrecognised error fall through to the branch that logs a stack.
+**The one case a cause-based rule cannot cover is now unreachable, not
+discouraged.** `new ApiError("INTERNAL")` with no cause would answer `500` and
+log nothing — the single place where the rule above is silently wrong, since a
+`500` with no log line is the one error that is useless without one.
+
+This was prose here and **nowhere else**: absent from §6.1, absent from §6.2, and
+therefore in the one state §6 exists to prevent — a rule with no enforcement and
+no record that it lacks any. The fix costs a type:
+
+```ts
+type ThrowableCode = Exclude<ErrorCode, "INTERNAL">;
+```
+
+`ApiError`'s constructor takes that instead of `ErrorCode`, so the case is a
+compile error and the row moves to §6.1. **Checked before narrowing, because it
+would have been circular otherwise:** nothing in `src/` constructs an `ApiError`
+with `INTERNAL`, and the `500` envelope is built by `body("INTERNAL")` at the
+bottom of `errorEnvelope` rather than by throwing — so the handler does not
+depend on the code it can no longer throw. Verified by probe: `new
+ApiError("INTERNAL")` fails `tsc`.
+
+Adding a second condition on status (`or status >= 500`) was the alternative and
+is worse: it is the handler doing a throw site's job, and it leaves the
+throw site able to express a thing it should not. **To signal a `500`, throw
+anything else** — a plain `Error` reaches the unrecognised branch, which logs a
+stack. That is the diagnostic an `INTERNAL` needs and precisely what an
+`ApiError` cannot carry.
 
 **The log policy belongs to the adapter, not to `buildServer`'s caller.**
 `redact` and `serializers` are merged over whatever logger a caller passes, and
@@ -915,6 +986,8 @@ which are only written down. **This table grows with every PR** and is the reaso
 | `Authorization` and `Cookie` headers never appear in logs | `redact: ["req.headers.authorization", "req.headers.cookie"]`, in `LOG_POLICY`. **This row used to claim "key material never in logs", which is more than two redacted headers deliver** — see §6.2. Note the redaction is inert today either way: Fastify's default `req` serialiser logs method and URL and no headers at all, so this fires only once someone widens it. Kept for exactly that day |
 | The log policy is the adapter's, not the caller's (§1.2) | `loggerWithPolicy` in `server.ts` spreads `LOG_POLICY` **last** over any caller-supplied logger; `false` alone passes through. `error-logging.test.mjs` asserts a caller-supplied `serializers.err` is ignored. Without this row the two below are untestable — a test would configure the serialiser it then asserts |
 | An `ApiError` with a cause logs one `warn` line; without one, nothing (§1.2) | `error-logging.test.mjs`: a route throwing `ApiError("NOT_FOUND")` produces zero lines, one throwing `ApiError("CONFLICT", {cause})` produces exactly one at level 40. Verified by violation — logging unconditionally fails the first |
+| `INTERNAL` cannot be thrown as an `ApiError` (§1.2) | `ThrowableCode = Exclude<ErrorCode, "INTERNAL">` on the constructor. The type is the enforcement — verified by probe, `new ApiError("INTERNAL")` fails `tsc`. **This row is why §6 exists:** the rule was prose in §1.2 and in neither §6.1 nor §6.2 until 21 August 2026, so it was unenforced *and* unrecorded as unenforced |
+| `ApiError` sets `cause` via the constructor, not by assignment (§1.2) | `error-logging.test.mjs`: a string cause must not reach the log. Sounds like a style assertion and is not — the options form defines `cause` non-enumerably, which is the only reason a non-`Error` cause is dropped. Verified by violation: rewriting `super(msg, {cause})` as `this.cause = cause` fails this case, and would silently invert §1.2's advice |
 | The cause chain reaches the log structured, not flattened (§1.2) | `serializers.err: pino.stdSerializers.errWithCause` in `LOG_POLICY`, plus assertions that `err.message` is the constant alone, `err.cause` is an object, and a second-level `err.cause.cause` is walked. Verified by violation — the default `err` serialiser fails three cases |
 | All ten codes of §1.1 exist, each with a status and a message | `packages/shared/src/index.ts` holds the union; `STATUS` and `MESSAGES` in `error-envelope.ts` are `satisfies Record<ErrorCode, …>`, so a code missing from either does not compile |
 | `details` cannot express a field *value* (§1.1) | `ErrorDetails` in `packages/shared`, spelled canonically in §1.1. The type is the enforcement: `tsc` rejects `details: {kind: "…"}` at the throw site — verified by probe. `http.test.mjs` pins the wire shape, that it gains no siblings, and that it is absent rather than `undefined` when unset. **Note what it does not claim:** a value can still be put *in the list*, and the test asserts that rather than implying otherwise |
@@ -935,7 +1008,7 @@ Each row names the assertion, not just the gap, so that writing it is mechanical
 
 | Rule | What is owed |
 | ---- | ------------ |
-| §1.2 chain a message you wrote, not a driver error verbatim | **Prose only, and structurally unenforceable here** — the reason it is worth a row rather than a note. The handler cannot inspect a chained message and tell a submitted value from an authored one, so no assertion in `error-logging.test.mjs` can close this; that file instead asserts the *absence* of a guarantee, so nobody reads the `ApiError` branch as making one. The nearest thing to enforcement arrives with PR 3's repository adapter, where a real `pg` error is first available to chain: extend §7.5's per-route log test to the `CONFLICT` path and assert the submitted value is absent from every line. Until then this is review discipline, and the rule is written on `ApiError`'s `cause` doc comment because that is where someone chaining a driver error is looking |
+| §1.2 chain a message you wrote, not a driver error verbatim | **Prose only, and structurally unenforceable here** — the reason it is worth a row rather than a note. The handler cannot inspect a chained value and tell a submitted one from an authored one, so no assertion in `error-logging.test.mjs` can close this; that file instead asserts the *absence* of a guarantee, so nobody reads the `ApiError` branch as making one. **The exposure is larger than this row first recorded** (corrected 21 August 2026): `errWithCause` copies a cause's enumerable own properties, so a chained `pg` error carries `detail` — where Postgres puts the submitted value — and not merely a message. A test now asserts that leak exists rather than implying it does not. The nearest thing to enforcement arrives with PR 3's repository adapter, where a real `pg` error is first available to chain: extend §7.5's per-route log test to the `CONFLICT` path and assert the submitted value is absent from every line. Until then this is review discipline, and the rule is written on `ApiError`'s `cause` doc comment because that is where someone chaining a driver error is looking |
 | §1.2 the `429` row is unasserted provision | The status → code table maps `429 → RATE_LIMITED` ahead of any code that can raise one, on §1.1's "a code registered late is a `500` in the meantime". `framework-4xx.test.mjs` cannot exercise it. Owed with §7.6: assert it against the real limiter, and check first whether that limiter builds its own reply — `@fastify/rate-limit`'s `errorResponseBuilder` never reaches `setErrorHandler`, which would make this row inert while looking live |
 | §2 the `/v1` mount exists | A test that fails when the mount is removed *and* is not about error handling: register a probe route through `v1Plugins`, assert it answers at `/v1/<path>` **and** 404s at `/<path>`. The second half is what makes it about the prefix |
 | §4.1 no key material in any parameter | **Prose only.** The route-table walk brief §12 promises. PR 2 gives it **two** subjects, not one: §7.7's create-recipient accepts wrap material and must accept no passphrase, and §7.5's `/signup` accepts the wrapping every album key in the account hangs off and must accept neither the password nor `K_master`. The second is the higher-consequence body in the system, so the walk should be written against it rather than demonstrated on the easier one |
@@ -1310,6 +1383,25 @@ collection.
   be distinguished but can be queried without limit is still a harvesting surface.
 - **Errors:** `400 VALIDATION_FAILED` · `413` · `415` · `429 RATE_LIMITED`. **No
   `404`, ever** — that is the whole point of the route.
+- **Response `Cache-Control: no-store`**, like the other two credential routes.
+  **This route carried no such line until 21 August 2026**, and the omission was
+  never argued — which is the objection, not the risk. A `POST` response is not
+  cacheable by default, so the practical exposure here is close to nil; but §7.5
+  calls this header forgettable *by design*, brief §10.1 records a forgotten
+  `no-store` as its canonical works-but-wrong failure, and #17 says a security
+  property must not be silently absent. **An asymmetry that needs an argument is
+  worse than a header that costs nothing.**
+
+**One rule, therefore, rather than three route properties: every response on a
+credential route carries `Cache-Control: no-store`.** `/signup`, `/login/params`
+and `/login`. Stated as a blanket rule because that is the form nobody has to
+remember per route — the same move as §10.1 setting the header as object metadata
+at upload time so no code path can forget it. Here it must be set by a handler and
+therefore *can* be forgotten, which is exactly why the rule is blanket rather than
+case-by-case. What it protects on this route specifically is thin and worth naming
+honestly: the real `kdf_salt` is not a secret, but it is a per-account value, and a
+cache that retains it turns §4.3's indistinguishability into something an attacker
+can test against a shared proxy instead of against the relay.
 
 **`POST /v1/login`** — no authentication. Response `Cache-Control: no-store`,
 because the body carries a credential.
@@ -1669,7 +1761,7 @@ immediate — the UI may say so without hedging.
 | Route | Scheme | Body | Success | Errors |
 | ----- | ------ | ---- | ------- | ------ |
 | `POST /v1/signup` | none | address as typed · proof · **client** `kdf_salt` + params · `wrapped_master` · `wrap_nonce` (§7.5) — never the relay's params | `201` `{id, created_at}`, `no-store` | 400 · 409 `CONFLICT` · 413 · 415 · 429 |
-| `POST /v1/login/params` | none | address as typed (§7.5) | `200` — the **client's** `{kdf_salt, params}` only, **always**, decoys on miss | 400 · 413 · 415 · 429 |
+| `POST /v1/login/params` | none | address as typed (§7.5) | `200` — the **client's** `{kdf_salt, params}` only, **always**, decoys on miss, `no-store` | 400 · 413 · 415 · 429 |
 | `POST /v1/login` | none | address as typed · proof (§7.5) | `200` `{token, expires_at}`, `no-store` | 400 · 401 `INVALID_CREDENTIALS` · 413 · 415 · 429 |
 | `POST /v1/logout` | owner | none | `204` | 401 |
 | `POST /v1/logout/all` | owner | none | `204` | 401 |
@@ -1686,6 +1778,10 @@ the next (§1.1).
 
 **Two rows carry wrap material** — `/signup` and create-recipient — and they are
 §4.1's audit subjects. Neither carries a passphrase, a password, or a KEK.
+
+**All three credential routes carry `no-store`**, as one rule rather than three
+properties (§7.5). `/login/params` was the odd one out until 21 August 2026, with
+no reason recorded either way.
 
 **`/login/params` is the only route in the system that cannot answer `404`.** Not
 an omission from the errors column: §4.3 is why, and a `404` there would defeat

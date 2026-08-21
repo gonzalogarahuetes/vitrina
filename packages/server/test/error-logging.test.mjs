@@ -386,6 +386,7 @@ describe("the INTERNAL path stays complete inward", () => {
  */
 describe("an ApiError logs when it carries a cause, and not otherwise", () => {
   const AUTHORED = "owners.email already taken (pg 23505)";
+  const DRIVER_CODE = "23505";
   // What a driver quotes back at you, and the reason the throw-site rule exists.
   const DRIVER_QUOTED = "victim@example.com";
   const RAW_DRIVER =
@@ -421,10 +422,25 @@ describe("an ApiError logs when it carries a cause, and not otherwise", () => {
               cause: new Error(AUTHORED, { cause: new Error("connection reset") }),
             });
           });
+          scope.get("/string-cause", async () => {
+            throw new ApiError("CONFLICT", { cause: DRIVER_CODE });
+          });
           // The rule violated on purpose, so the guard's location is asserted
-          // rather than assumed. See the last case in this suite.
+          // rather than assumed. See the cases at the end of this suite.
           scope.get("/unwrapped", async () => {
             throw new ApiError("CONFLICT", { cause: new Error(RAW_DRIVER) });
+          });
+          // Shaped like a node-postgres error: an Error with extra ENUMERABLE
+          // own properties. Postgres puts the submitted value in `detail`, not
+          // in `message`, and errWithCause copies those properties through.
+          scope.get("/pg-shaped", async () => {
+            const pgError = new Error(
+              'duplicate key value violates unique constraint "owners_email_key"',
+            );
+            pgError.code = DRIVER_CODE;
+            pgError.detail = `Key (email)=(${DRIVER_QUOTED}) already exists.`;
+            pgError.table = "owners";
+            throw new ApiError("CONFLICT", { cause: pgError });
           });
         },
       ],
@@ -493,6 +509,30 @@ describe("an ApiError logs when it carries a cause, and not otherwise", () => {
     assert.ok(!res.body.includes(AUTHORED), res.body);
   });
 
+  it("drops a non-Error cause, because ApiError uses the constructor form", async () => {
+    // Enumerability, not type. `Error(msg, {cause})` defines cause
+    // NON-enumerably, so neither serialiser picks up a non-Error value.
+    // `e.cause = "x"` defines it enumerably and both keep it. This asserts the
+    // form ApiError actually uses — change that `super(...)` to an assignment
+    // and this fails, which is the point.
+    const { res, raw } = await get("/v1/string-cause");
+
+    assert.equal(res.statusCode, 409);
+    assert.equal(
+      raw.includes(DRIVER_CODE),
+      false,
+      `a string cause reached the log, so ApiError no longer uses the constructor form: ${raw}`,
+    );
+  });
+
+  it("carries the driver code when it is written into a message instead", async () => {
+    const { raw } = await get("/v1/conflict");
+
+    // The prescribed shape: the code goes in the message you write, where it
+    // survives serialisation, rather than in a bare cause where it does not.
+    assert.ok(raw.includes("pg 23505"), raw);
+  });
+
   it("does not sanitise the chain — the throw-site rule is the only guard", async () => {
     const { res, raw } = await get("/v1/unwrapped");
 
@@ -506,6 +546,29 @@ describe("an ApiError logs when it carries a cause, and not otherwise", () => {
       "if this now passes cleanly, the handler gained a sanitiser and §1.2 needs it",
     );
     // The wire is unaffected either way — that half IS structural.
+    assert.ok(!res.body.includes(DRIVER_QUOTED), res.body);
+  });
+
+  it("copies a cause's enumerable own properties, which is how `detail` leaks", async () => {
+    const { res, lines: logged, raw } = await get("/v1/pg-shaped");
+
+    // The measurement that corrected api-sketch §1.2. Under the DEFAULT `err`
+    // serialiser a cause is flattened to message and stack, so `detail` never
+    // reached the log; errWithCause copies own properties, so it does. Adopting
+    // errWithCause WIDENED this exposure rather than relocating it, and the
+    // throw-site rule on ApiError.cause is what closes it.
+    assert.equal(
+      logged[0].err.cause.detail,
+      `Key (email)=(${DRIVER_QUOTED}) already exists.`,
+    );
+    assert.ok(
+      raw.includes(DRIVER_QUOTED),
+      `expected the unwrapped pg error to leak its detail: ${raw}`,
+    );
+    assert.equal(logged[0].err.cause.table, "owners");
+    // Not in `message` — which is why the default serialiser did not carry it.
+    assert.ok(!logged[0].err.cause.message.includes(DRIVER_QUOTED));
+
     assert.ok(!res.body.includes(DRIVER_QUOTED), res.body);
   });
 });
