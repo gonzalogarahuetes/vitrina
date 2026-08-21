@@ -118,8 +118,16 @@ jobs:
       # continue-on-error. `-D warnings` is the point of the step: a warning
       # that CI tolerates is a warning nobody reads. It runs last so that every
       # other check still reports its real result while this one is red.
-      - name: cargo clippy -- -D warnings
-        run: cargo clippy -- -D warnings
+      #
+      # `--all-targets` is required, not cosmetic: without it clippy lints only
+      # the lib target, so nothing in #[cfg(test)] is linted at all. That is
+      # both a coverage hole — test code is code, and `cargo test` only compiles
+      # it, it does not lint it — and the source of a misleading dead-code
+      # report on crates/envelope, since a field read only from a test appears
+      # unread when the tests are not in the compilation. Widening it is a
+      # strengthening; do not narrow it to make this step quieter.
+      - name: cargo clippy --all-targets -- -D warnings
+        run: cargo clippy --all-targets -- -D warnings
 
       # Slots for later phases. Do not implement these ahead of their step:
       #   C.9      — run the exported JSON vectors from spec/vectors/
