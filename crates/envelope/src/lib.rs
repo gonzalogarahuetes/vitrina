@@ -17,8 +17,8 @@ pub enum HeaderError {
     WrongCipher(u8),
     ReservedNotZero { offset: usize },
     PaddingNotZero { offset: usize },
-    PlaintextLengthNotZero,
-    ChunkSizeNotZero,
+    PlaintextLengthZero,
+    ChunkSizeZero,
     TooShort { expected: usize, got: usize },
 }
 
@@ -56,11 +56,11 @@ impl Header {
         let chunk_size =
             u32::from_le_bytes(bytes[24..28].try_into().expect("length checked above"));
         if(chunk_size == 0) {
-            return Err(HeaderError::ChunkSizeNotZero);
+            return Err(HeaderError::ChunkSizeZero);
         }
         let plaintext_length = u64::from_le_bytes(bytes[28..36].try_into().expect("length checked above"));
         if(plaintext_length == 0) {
-            return Err(HeaderError::PlaintextLengthNotZero);
+            return Err(HeaderError::PlaintextLengthZero);
         }
         // padding must be all 0s
         let padding = &bytes[52..64];
@@ -94,11 +94,43 @@ mod tests {
         0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
     ];
 
+    const GOLDEN: [u8; 64] = [
+        0x56, 0x54, 0x52, 0x4E,                          // 0   magic VTRN
+        0x01,                                            // 4   version
+        0x01,                                            // 5   cipher
+        0x00, 0x00,                                      // 6   reserved
+        0xA0, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5, 0xA6, 0xA7,  // 8   base_nonce
+        0xA8, 0xA9, 0xAA, 0xAB, 0xAC, 0xAD, 0xAE, 0xAF,
+        0x00, 0x00, 0x04, 0x00,                          // 24  chunk_size 262144
+        0x01, 0x00, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00,  // 28  plaintext_length 262145
+        0xB0, 0xB1, 0xB2, 0xB3, 0xB4, 0xB5, 0xB6, 0xB7,  // 36  asset_id
+        0xB8, 0xB9, 0xBA, 0xBB, 0xBC, 0xBD, 0xBE, 0xBF,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00,              // 52  padding
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    ];
+
     #[test]
     fn parses_a_valid_header() {
         let h = Header::parse(&VALID).unwrap(); // in a test, a panic IS the failure
         assert_eq!(h.version, 1);
         assert_eq!(h.cipher, 1);
+    }
+
+    #[test]
+    fn parses_golden_header() {
+        let h = Header::parse(&GOLDEN).unwrap();
+        assert_eq!(h.version, 1);
+        assert_eq!(h.cipher, 1);
+        assert_eq!(h.chunk_size, 262144);
+        assert_eq!(h.plaintext_length, 262145);
+        assert_eq!(h.base_nonce, [
+            0xA0, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5, 0xA6, 0xA7,
+            0xA8, 0xA9, 0xAA, 0xAB, 0xAC, 0xAD, 0xAE, 0xAF,
+        ]);
+        assert_eq!(h.asset_id, [
+            0xB0, 0xB1, 0xB2, 0xB3, 0xB4, 0xB5, 0xB6, 0xB7,
+            0xB8, 0xB9, 0xBA, 0xBB, 0xBC, 0xBD, 0xBE, 0xBF,
+        ]);
     }
 
     #[test]
@@ -162,7 +194,7 @@ mod tests {
         bad[28..36].fill(0);
         assert!(matches!(
             Header::parse(&bad),
-            Err(HeaderError::PlaintextLengthNotZero)
+            Err(HeaderError::PlaintextLengthZero)
         ));
     }
 
@@ -172,7 +204,7 @@ mod tests {
         bad[24..28].fill(0);
         assert!(matches!(
             Header::parse(&bad),
-            Err(HeaderError::ChunkSizeNotZero)
+            Err(HeaderError::ChunkSizeZero)
         ));
     }
 }
