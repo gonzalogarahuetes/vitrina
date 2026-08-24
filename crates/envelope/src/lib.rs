@@ -106,6 +106,7 @@ impl Header {
 mod tests {
     // a submodule literally named `tests`
     use super::*; // pull the parent module's items (Header, HeaderError, ...) into scope
+    use proptest::prelude::*;
 
     #[rustfmt::skip]
     const GOLDEN: [u8; 64] = [
@@ -182,23 +183,33 @@ mod tests {
     }
 
     #[test]
-    fn rejects_reserved_non_zero() {
-        let mut bad: [u8; 64] = GOLDEN;
-        bad[6] = 1;
-        assert!(matches!(
-            Header::parse(&bad),
-            Err(HeaderError::ReservedNotZero { offset: 6 })
-        ));
+    fn rejects_reserved_non_zero_at_any_offset() {
+        for offset in 6..8 {
+            let mut bad: [u8; 64] = GOLDEN;
+            bad[offset] = 1;
+            assert!(
+                matches!(
+                    Header::parse(&bad),
+                    Err(HeaderError::ReservedNotZero { offset: o }) if o == offset
+                ),
+                "byte {offset} was not rejected",
+            );
+        }
     }
 
     #[test]
-    fn rejects_padding_non_zero() {
-        let mut bad: [u8; 64] = GOLDEN;
-        bad[63] = 1;
-        assert!(matches!(
-            Header::parse(&bad),
-            Err(HeaderError::PaddingNotZero { offset: 63 })
-        ));
+    fn rejects_padding_non_zero_at_any_offset() {
+        for offset in 52..64 {
+            let mut bad: [u8; 64] = GOLDEN;
+            bad[offset] = 1;
+            assert!(
+                matches!(
+                    Header::parse(&bad),
+                    Err(HeaderError::PaddingNotZero { offset: o }) if o == offset
+                ),
+                "byte {offset} was not rejected",
+            );
+        }
     }
 
     #[test]
@@ -237,7 +248,24 @@ mod tests {
         assert_eq!(bytes, GOLDEN);
     }
 
-    use proptest::prelude::*;
+    #[test]
+    fn accepts_extreme_but_valid_sizes() {
+        for (chunk_size, plaintext_length) in [
+            (1u32, 1u64),
+            (1, u64::MAX),
+            (u32::MAX, 1),
+            (u32::MAX, u64::MAX),
+        ] {
+            let mut b = GOLDEN;
+            b[24..28].copy_from_slice(&chunk_size.to_le_bytes());
+            b[28..36].copy_from_slice(&plaintext_length.to_le_bytes());
+
+            let h = Header::parse(&b).expect("extremes are valid per §8");
+            assert_eq!(h.chunk_size, chunk_size);
+            assert_eq!(h.plaintext_length, plaintext_length);
+        }
+    }
+
     proptest! {
         #[test]
         fn round_trips_any_valid_header(
