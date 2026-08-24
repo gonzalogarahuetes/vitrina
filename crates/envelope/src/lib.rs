@@ -232,4 +232,20 @@ mod tests {
             Err(HeaderError::ChunkSizeZero)
         ));
     }
+
+    #[test]
+    fn converts_parsed_header_to_bytes() {
+        let h: Header = Header::parse(&GOLDEN).unwrap();
+        let bytes: [u8; 64] = Header::to_bytes(&h);
+        assert_eq!(bytes, GOLDEN);
+    }
+
+    #[test]
+    fn ignores_bytes_after_the_header() {
+        let mut with_junk: Vec<u8> = GOLDEN.to_vec();
+        with_junk.extend_from_slice(&[0xFF; 30]);
+        let h: Header = Header::parse(&with_junk).unwrap();
+        let bytes: [u8; 64] = Header::to_bytes(&h);
+        assert_eq!(bytes, GOLDEN);
+    }
 }
