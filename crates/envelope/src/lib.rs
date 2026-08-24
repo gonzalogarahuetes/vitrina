@@ -61,13 +61,8 @@ impl Header {
         }
         let asset_id: [u8; 16] = bytes[36..52].try_into().expect("length checked above");
         // padding must be all 0s
-        let padding: &[u8] = &bytes[52..64];
-        if padding != [0u8; 12] {
-            let index = padding.iter().position(|&b| b != 0).unwrap();
-            let total_index = index + 52;
-            return Err(HeaderError::PaddingNotZero {
-                offset: total_index,
-            });
+        if let Some(i) = bytes[52..64].iter().position(|&b| b != 0) {
+            return Err(HeaderError::PaddingNotZero { offset: 52 + i });
         }
         Ok(Header {
             version: bytes[4],
