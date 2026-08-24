@@ -107,12 +107,6 @@ mod tests {
     // a submodule literally named `tests`
     use super::*; // pull the parent module's items (Header, HeaderError, ...) into scope
 
-    const VALID: [u8; 64] = [
-        86, 84, 82, 78, 1, 1, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 0, 0, 1,
-        0, 0, 0, 80, 0, 0, 0, 0, 0, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47,
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-    ];
-
     #[rustfmt::skip]
     const GOLDEN: [u8; 64] = [
         0x56, 0x54, 0x52, 0x4E, // 0   magic VTRN
@@ -128,13 +122,6 @@ mod tests {
         0x00, // 52  padding
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     ];
-
-    #[test]
-    fn parses_a_valid_header() {
-        let h: Header = Header::parse(&VALID).unwrap(); // in a test, a panic IS the failure
-        assert_eq!(h.version, 1);
-        assert_eq!(h.cipher, 1);
-    }
 
     #[test]
     fn parses_golden_header() {
@@ -162,21 +149,21 @@ mod tests {
     #[test]
     fn rejects_short_input() {
         assert!(matches!(
-            Header::parse(&VALID[0..40]),
+            Header::parse(&GOLDEN[0..40]),
             Err(HeaderError::TooShort { .. })
         ));
     }
 
     #[test]
     fn rejects_bad_magic() {
-        let mut bad: [u8; 64] = VALID;
+        let mut bad: [u8; 64] = GOLDEN;
         bad[0] = 0;
         assert!(matches!(Header::parse(&bad), Err(HeaderError::BadMagic)));
     }
 
     #[test]
     fn rejects_wrong_version() {
-        let mut bad: [u8; 64] = VALID;
+        let mut bad: [u8; 64] = GOLDEN;
         bad[4] = 9;
         assert!(matches!(
             Header::parse(&bad),
@@ -186,7 +173,7 @@ mod tests {
 
     #[test]
     fn rejects_wrong_cipher() {
-        let mut bad: [u8; 64] = VALID;
+        let mut bad: [u8; 64] = GOLDEN;
         bad[5] = 9;
         assert!(matches!(
             Header::parse(&bad),
@@ -196,7 +183,7 @@ mod tests {
 
     #[test]
     fn rejects_reserved_non_zero() {
-        let mut bad: [u8; 64] = VALID;
+        let mut bad: [u8; 64] = GOLDEN;
         bad[6] = 1;
         assert!(matches!(
             Header::parse(&bad),
@@ -206,7 +193,7 @@ mod tests {
 
     #[test]
     fn rejects_padding_non_zero() {
-        let mut bad: [u8; 64] = VALID;
+        let mut bad: [u8; 64] = GOLDEN;
         bad[63] = 1;
         assert!(matches!(
             Header::parse(&bad),
@@ -216,7 +203,7 @@ mod tests {
 
     #[test]
     fn rejects_zero_plaintext_length() {
-        let mut bad: [u8; 64] = VALID;
+        let mut bad: [u8; 64] = GOLDEN;
         bad[28..36].fill(0);
         assert!(matches!(
             Header::parse(&bad),
@@ -226,7 +213,7 @@ mod tests {
 
     #[test]
     fn rejects_zero_chunk_size() {
-        let mut bad: [u8; 64] = VALID;
+        let mut bad: [u8; 64] = GOLDEN;
         bad[24..28].fill(0);
         assert!(matches!(
             Header::parse(&bad),
