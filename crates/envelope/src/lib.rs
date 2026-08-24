@@ -1,4 +1,4 @@
-pub const EXPECTED_MAGIC: [u8; 4] = [86, 84, 82, 78];
+pub const EXPECTED_MAGIC: [u8; 4] = [0x56, 0x54, 0x52, 0x4E];
 
 #[derive(Debug)]
 pub struct Header {
@@ -44,12 +44,8 @@ impl Header {
             return Err(HeaderError::WrongCipher(bytes[5]));
         }
         // Two reserved bytes that must be 0 for now
-        let reserved: &[u8] = &bytes[6..8];
-        if reserved != [0u8; 2] {
-            if bytes[6] != 0 {
-                return Err(HeaderError::ReservedNotZero { offset: 6 });
-            }
-            return Err(HeaderError::ReservedNotZero { offset: 7 });
+        if let Some(i) = bytes[6..8].iter().position(|&b| b != 0) {
+            return Err(HeaderError::ReservedNotZero { offset: 6 + i });
         }
         let base_nonce: [u8; 16] = bytes[8..24].try_into().expect("length checked above");
         // chunk_size and plaintext must be only validated with from_le_bytes
@@ -63,6 +59,7 @@ impl Header {
         if plaintext_length == 0 {
             return Err(HeaderError::PlaintextLengthZero);
         }
+        let asset_id: [u8; 16] = bytes[36..52].try_into().expect("length checked above");
         // padding must be all 0s
         let padding: &[u8] = &bytes[52..64];
         if padding != [0u8; 12] {
@@ -72,7 +69,6 @@ impl Header {
                 offset: total_index,
             });
         }
-        let asset_id: [u8; 16] = bytes[36..52].try_into().expect("length checked above");
         Ok(Header {
             version: bytes[4],
             cipher: bytes[5],
@@ -110,17 +106,17 @@ mod tests {
 
     #[rustfmt::skip]
     const GOLDEN: [u8; 64] = [
-        0x56, 0x54, 0x52, 0x4E, // 0   magic VTRN
-        0x01, // 4   version
-        0x01, // 5   cipher
-        0x00, 0x00, // 6   reserved
-        0xA0, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5, 0xA6, 0xA7, // 8   base_nonce
-        0xA8, 0xA9, 0xAA, 0xAB, 0xAC, 0xAD, 0xAE, 0xAF, 0x00, 0x00, 0x04,
-        0x00, // 24  chunk_size 262144
+        0x56, 0x54, 0x52, 0x4E,                         //  0  magic  VTRN
+        0x01,                                           //  4  version
+        0x01,                                           //  5  cipher
+        0x00, 0x00,                                     //  6  reserved
+        0xA0, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5, 0xA6, 0xA7, //  8  base_nonce
+        0xA8, 0xA9, 0xAA, 0xAB, 0xAC, 0xAD, 0xAE, 0xAF,
+        0x00, 0x00, 0x04, 0x00,                         // 24  chunk_size       262144
         0x01, 0x00, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, // 28  plaintext_length 262145
         0xB0, 0xB1, 0xB2, 0xB3, 0xB4, 0xB5, 0xB6, 0xB7, // 36  asset_id
-        0xB8, 0xB9, 0xBA, 0xBB, 0xBC, 0xBD, 0xBE, 0xBF, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x00, // 52  padding
+        0xB8, 0xB9, 0xBA, 0xBB, 0xBC, 0xBD, 0xBE, 0xBF,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00,             // 52  padding
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     ];
 
@@ -210,6 +206,18 @@ mod tests {
                 "byte {offset} was not rejected",
             );
         }
+    }
+
+    #[test]
+    fn reports_first_non_zero_padding_byte() {
+        let mut bad: [u8; 64] = GOLDEN;
+        bad[55] = 1;
+        bad[60] = 1;
+        let err: HeaderError = Header::parse(&bad).unwrap_err();
+        assert!(
+            matches!(err, HeaderError::PaddingNotZero { offset: 55 }),
+            "got {err:?}"
+        );
     }
 
     #[test]
