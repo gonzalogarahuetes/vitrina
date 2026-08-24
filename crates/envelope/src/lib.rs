@@ -113,6 +113,7 @@ mod tests {
         0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
     ];
 
+    #[rustfmt::skip]
     const GOLDEN: [u8; 64] = [
         0x56, 0x54, 0x52, 0x4E, // 0   magic VTRN
         0x01, // 4   version
@@ -214,7 +215,7 @@ mod tests {
     }
 
     #[test]
-    fn rejects_plaintext_non_zero() {
+    fn rejects_zero_plaintext_length() {
         let mut bad: [u8; 64] = VALID;
         bad[28..36].fill(0);
         assert!(matches!(
@@ -224,7 +225,7 @@ mod tests {
     }
 
     #[test]
-    fn rejects_chunk_size_non_zero() {
+    fn rejects_zero_chunk_size() {
         let mut bad: [u8; 64] = VALID;
         bad[24..28].fill(0);
         assert!(matches!(
@@ -247,5 +248,25 @@ mod tests {
         let h: Header = Header::parse(&with_junk).unwrap();
         let bytes: [u8; 64] = Header::to_bytes(&h);
         assert_eq!(bytes, GOLDEN);
+    }
+
+    use proptest::prelude::*;
+    proptest! {
+        #[test]
+        fn round_trips_any_valid_header(
+            base_nonce: [u8; 16],
+            asset_id: [u8; 16],
+            chunk_size in 1u32..,
+            plaintext_length in 1u64..,
+        ) {
+            let mut b = GOLDEN;
+            b[8..24].copy_from_slice(&base_nonce);
+            b[24..28].copy_from_slice(&chunk_size.to_le_bytes());
+            b[28..36].copy_from_slice(&plaintext_length.to_le_bytes());
+            b[36..52].copy_from_slice(&asset_id);
+
+            let h = Header::parse(&b).unwrap();
+            prop_assert_eq!(Header::to_bytes(&h), b);
+        }
     }
 }
