@@ -108,17 +108,6 @@ jobs:
       - name: cargo test
         run: cargo test
 
-      # KNOWN RED, and left that way on purpose.
-      #
-      # Nothing in crates/envelope is `pub` yet, so dead_code fires on
-      # EXPECTED_MAGIC, Header, HeaderError and Header::parse. The repo owner is
-      # fixing that separately, as part of the C ladder.
-      #
-      # Do not "fix" this by adding -A dead_code, #![allow(dead_code)], or
-      # continue-on-error. `-D warnings` is the point of the step: a warning
-      # that CI tolerates is a warning nobody reads. It runs last so that every
-      # other check still reports its real result while this one is red.
-      #
       # `--all-targets` is required, not cosmetic: without it clippy lints only
       # the lib target, so nothing in #[cfg(test)] is linted at all. That is
       # both a coverage hole — test code is code, and `cargo test` only compiles
