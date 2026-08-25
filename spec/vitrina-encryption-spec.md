@@ -18,12 +18,12 @@ MUST, MUST NOT, SHOULD, and MAY carry their usual RFC 2119 meanings.
 
 ## 1. Primitives
 
-| Purpose                        | Algorithm          | Notes                                                       |
-| ------------------------------ | ------------------ | ----------------------------------------------------------- |
-| Authenticated encryption       | XChaCha20-Poly1305 | 24-byte nonce, 16-byte tag                                  |
-| Key derivation from keys       | BLAKE2b-256, keyed | libsodium `crypto_generichash` with a key                   |
-| Key derivation from passphrase | Argon2id           | Parameters in §6                                            |
-| Randomness                     | CSPRNG             | `crypto.getRandomValues`, `getrandom`, `SecRandomCopyBytes` |
+| Purpose                        | Algorithm          | Notes                                                                                                                                                                       |
+| ------------------------------ | ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Authenticated encryption       | XChaCha20-Poly1305 | 24-byte nonce, 16-byte tag                                                                                                                                                  |
+| Key derivation from keys       | BLAKE2b-256, keyed | RFC 7693 keyed BLAKE2b, 32-byte key, 32-byte output. Equivalent to libsodium's `crypto_generichash` with a key — named for the external anchor in §9.2, not as a dependency |
+| Key derivation from passphrase | Argon2id           | Parameters in §6                                                                                                                                                            |
+| Randomness                     | CSPRNG             | `crypto.getRandomValues`, `getrandom`, `SecRandomCopyBytes`                                                                                                                 |
 
 All integers in this format are **little-endian**.
 
@@ -202,18 +202,18 @@ The server stores `salt`, the Argon2id parameters, `wrap_nonce`, and `wrapped`. 
 
 **Exact lengths for version 1.** Every one of these is fixed, and a reader or a database MAY enforce them:
 
-| Value        | Bytes | Why                                                                    |
-| ------------ | ----- | ---------------------------------------------------------------------- |
-| `salt`       | 16    | libsodium's `crypto_pwhash` requires exactly `crypto_pwhash_SALTBYTES` |
-| `wrap_nonce` | 24    | XChaCha20-Poly1305 nonce                                               |
-| `KEK`        | 32    | Argon2id output length                                                 |
-| `wrapped`    | 48    | `K_album` (32) plus the Poly1305 tag (16)                              |
+| Value        | Bytes | Why                                                                                       |
+| ------------ | ----- | ----------------------------------------------------------------------------------------- |
+| `salt`       | 16    | `crypto_pwhash_SALTBYTES`, so an external Argon2id vector exists to anchor against (§9.2) |
+| `wrap_nonce` | 24    | XChaCha20-Poly1305 nonce                                                                  |
+| `KEK`        | 32    | Argon2id output length                                                                    |
+| `wrapped`    | 48    | `K_album` (32) plus the Poly1305 tag (16)                                                 |
 
-The salt length deserves particular attention, because it is the one that **will not fail in Rust**. RustCrypto's `argon2` accepts salts from 8 to 64 bytes, so a 32-byte salt passes every test in `crates/envelope` and is then rejected by libsodium in the browser. Confirm the constant against libsodium directly during C.8 rather than trusting this table.
+The salt length needs enforcing in the crate, because **nothing else will enforce it.** RustCrypto's `argon2` accepts salts from 8 to 64 bytes, and since libsodium is not a dependency anywhere in Vitrina (brief §6 #4), no second implementation rejects a wrong length. Earlier revisions of this paragraph said the browser's libsodium would; that was written against a design that was never built. The 16 is kept because it is the value an external Argon2id vector uses (§9.2) and because it is already committed in the schema's `CHECK` — not because anything would reject an alternative.
 
 **Argon2id parameters for version 1:** memory 64 MiB, iterations 3, parallelism 1.
 
-Parameters are stored per recipient, not hardcoded, so they can be raised later without invalidating existing invitations. 64 MiB is a floor chosen for mobile browsers running libsodium under WASM — libsodium's `MODERATE` preset (256 MiB) risks failing on the low-end Android devices in our audience. **Verify on real target devices before shipping**, not in a desktop browser.
+Parameters are stored per recipient, not hardcoded, so they can be raised later without invalidating existing invitations. 64 MiB is a floor chosen for a mobile browser running the crate under WASM; libsodium's `MODERATE` preset (256 MiB) is the figure it was chosen against, and would risk failing to allocate on the low-end Android devices in our audience. **Verify on real target devices before shipping**, not in a desktop browser.
 
 ### 6.3 Passphrases MUST be system-generated
 
@@ -380,7 +380,7 @@ In no case may a reader attempt best-effort parsing or partial recovery.
 
 The reference Rust implementation MUST ship known-answer test vectors as JSON in `spec/vectors/`, and every other implementation MUST pass them unchanged. This is the mechanism — the only mechanism — that keeps the browser, iOS, and Android implementations from silently diverging.
 
-**`spec/vectors/` is not scoped to the envelope format.** It carries two classes: envelope conformance (the ten categories below) and the protocol-level byte agreements in §9.1. Both belong in one file because the mechanism is what matters, not which document defines the value — and a second vectors directory for the same purpose is precisely the duplication this project keeps engineering against. CI MUST run every vector against every implementation, not only against the Rust crate.
+**`spec/vectors/` is not scoped to the envelope format.** It carries two classes: envelope conformance (the categories below) and the protocol-level byte agreements in §9.1. Both belong in one file because the mechanism is what matters, not which document defines the value — and a second vectors directory for the same purpose is precisely the duplication this project keeps engineering against. CI MUST run every vector against every implementation, not only against the Rust crate.
 
 Each vector supplies hex-encoded `K_album`, `asset_id`, `base_nonce`, `chunk_size`, and plaintext, and the expected full envelope bytes.
 
@@ -391,15 +391,16 @@ Required coverage:
 3. Plaintext exactly `chunk_size + 1` (two chunks, second is 1 byte)
 4. Multiple full chunks plus a partial final chunk
 5. Key derivation: `K_album` + `asset_id` → each of `K_asset`, `K_thumb`, `K_meta`
-6. Argon2id wrap and unwrap round trip with fixed salt and parameters
-7. **Negative:** tampered ciphertext byte → decryption fails
-8. **Negative:** chunks 0 and 1 swapped → decryption fails
-9. **Negative:** final chunk removed and `plaintext_length` adjusted → decryption fails
-10. **Negative:** `version` byte altered → rejected
+6. **The keyed BLAKE2b primitive itself, at 32-byte key and 32-byte output, against an external anchor.** See §9.2 — category 5 cannot substitute for this.
+7. Argon2id wrap and unwrap round trip with fixed salt and parameters
+8. **Negative:** tampered ciphertext byte → decryption fails
+9. **Negative:** chunks 0 and 1 swapped → decryption fails
+10. **Negative:** final chunk removed and `plaintext_length` adjusted → decryption fails
+11. **Negative:** `version` byte altered → rejected
 
 The negative cases matter as much as the positive ones. An implementation that accepts reordered chunks will pass every positive test and be broken.
 
-Implementations SHOULD additionally carry a property test asserting round-trip identity for random plaintext lengths from 1 byte to several times `chunk_size`, and SHOULD cross-check §1 primitive outputs against libsodium directly.
+Implementations SHOULD additionally carry a property test asserting round-trip identity for random plaintext lengths from 1 byte to several times `chunk_size`, and MUST cross-check §1 primitive outputs against an external anchor — see §9.2, which specifies what that means now that libsodium is not a dependency.
 
 ### 9.1 The rule this section generalises
 
@@ -411,7 +412,7 @@ Four instances have already been found by review rather than by test, which is w
 
 | Value                                           | How it fails                                                                                                        |
 | ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| Argon2id salt length                            | RustCrypto accepts 8–64 bytes, libsodium requires exactly 16 — passes every Rust test, rejected in the browser      |
+| Argon2id salt length                            | RustCrypto accepts 8–64 bytes; the format requires exactly 16 and nothing but the crate enforces it                 |
 | Passphrase normalisation (§6.3)                 | Generator and entry path must transform identically; a mismatch is an unwrappable blob                              |
 | `cipher` byte rejection (§8)                    | Reader behaviour on an unknown value was undefined                                                                  |
 | Token hashing (`vitrina-schema.md` §6)          | SHA-256 over raw bytes versus over the base64url string; every invite fails identically                             |
@@ -420,7 +421,19 @@ Four instances have already been found by review rather than by test, which is w
 
 Only two of these are envelope concerns. The rest are protocol-adjacent and belong in `spec/vectors/` regardless, per the scope note above.
 
-**Required protocol vectors**, in addition to §9's ten envelope categories:
+### 9.2 Self-generated vectors cannot catch a wrong primitive
+
+Most categories above are generated by the reference implementation and then required of every other one. That works for anything where the question is _do two implementations agree_ — and fails completely where the question is _is the reference itself right._
+
+**Category 5 is the case that fails.** It derives `K_asset` from `K_album` using keyed BLAKE2b. BLAKE2b writes the key length and digest length into its internal parameter block, so a configuration mismatch produces entirely different output with no error. If the reference implementation sets that block wrongly, category 5's vector is wrong too — and every implementation that passes it is wrong in the same way. The vector is self-consistent and useless.
+
+This is the one place §9.1's rule needs a stronger form: **at least one vector in the set must be anchored outside this project.** Category 6 is that anchor. libsodium's own `test/default/generichash2.c` iterates key and output lengths together, so its iteration at `i = 31` is a 32-byte key with 32-byte output, with expected values in `generichash2.exp`. Read the value from that file rather than from any summary of it.
+
+Two limits on what category 6 proves. It uses the streaming API, which for BLAKE2b agrees with one-shot for the same total input — so it still exercises the parameter block, but the message must be assembled identically (that test feeds its message three times). And it proves the _primitive_ matches libsodium; it says nothing about whether the domain-separation strings in §2 are right. Those remain category 5's job.
+
+**Category 6 must pass before category 5's vectors are generated.** Generating the set first and checking the primitive afterwards means discovering at C.10 that categories 1 through 5 all need regenerating.
+
+**Required protocol vectors**, in addition to §9's envelope categories:
 
 1. A token in both forms — 32 raw bytes and its canonical 43-character base64url — with the expected SHA-256 of the raw bytes
 2. A non-canonical 43-character spelling of that same token, asserted to be **rejected** rather than accepted

@@ -12,6 +12,8 @@ Private photo sharing built on a blind relay: the client encrypts before upload,
 | `spec/vitrina-encryption-spec.md` | The envelope format. **Read in full before any work in `crates/envelope/`** |
 | `spec/vitrina-invite-spec.md`     | Invite payload and its serialisations                                       |
 | `spec/vitrina-phase-0-plan.md`    | Current work, the C ladder, and the delegation map                          |
+| `spec/vitrina-schema.md`          | Database schema, and §6 the canonical token-hashing rules                   |
+| `spec/vitrina-api-sketch.md`      | The HTTP API. Phase 1 and later — not Phase 0 work                          |
 
 They are not auto-imported. Read the ones relevant to the task at hand.
 
@@ -42,7 +44,15 @@ If a task appears to require breaking one of these, stop and say so rather than 
 
 ## When the spec is ambiguous
 
-It will be — it was written before implementation. Flag the ambiguity, propose what you think is right, and note it needs recording in the document. Never silently pick an interpretation. A spec that has drifted from the code is worse than no spec.
+It will be — it was written before implementation. Never silently pick an interpretation.
+
+**But documentation is closed as of 21 August 2026.** Track B produced five specification documents, a 77 KB API sketch and a citation checker while the envelope crate did not move past C.1. A spec change now happens only when it is:
+
+1. forced by something the implementation revealed,
+2. blocking implementation right now, or
+3. a correction of something demonstrably false.
+
+_"This could be more precise"_ is not a reason. If you notice imprecision with nothing blocked behind it, say so in one line and move on — do not write it up, do not propose wording, do not open a thread. Anything meeting 1–3 goes to me, not into a document. **Do not write summaries, changelogs or design notes.** If you are producing more prose than code in a session, stop and say so.
 
 ## Conventions that aren't guessable from the code
 
@@ -53,7 +63,16 @@ It will be — it was written before implementation. Flag the ambiguity, propose
 
 ## Before reporting anything done
 
-Run the relevant suite — `cargo test` for Rust, `pnpm test` for TypeScript. Do not describe work as complete against an unrun or red suite.
+Run the relevant checks. Do not describe work as complete against an unrun or red suite.
+
+```bash
+cargo test
+cargo clippy --all-targets -- -D warnings   # --all-targets matters: the narrow form does not lint test code
+pnpm test && pnpm lint
+pnpm check:citations                        # if spec/ was touched
+```
+
+`crates/envelope` is expected red until C.1's `to_bytes` exists. That is mine to write — report it and leave it.
 
 ## Scope
 
