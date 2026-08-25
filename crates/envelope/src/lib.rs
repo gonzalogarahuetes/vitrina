@@ -94,6 +94,60 @@ impl Header {
     }
 }
 
+#[derive(Debug)]
+pub enum LayoutError {
+    SizeOverflow,
+    ChunkIndexOutOfRange { index: u64, chunk_count: u64 },
+}
+
+impl Header {
+    pub fn ciphertext_chunk_size(&self) -> u64 {
+        self.chunk_size as u64 + 16
+    }
+    pub fn chunk_count(&self) -> u64 {
+        self.plaintext_length.div_ceil(self.chunk_size as u64)
+    }
+    pub fn last_chunk_plaintext(&self) -> u64 {
+        self.plaintext_length - (self.chunk_count() - 1) * self.chunk_size as u64
+    }
+    pub fn total_object_size(&self) -> Result<u64, LayoutError> {
+        let total_object_size: u64 = (self.chunk_count() - 1) // chunk_count MUST be at least 1, and it is div_ceil of a non-zero numerator, so it can't underflow
+            .checked_mul(self.ciphertext_chunk_size())
+            .and_then(|n: u64| n.checked_add(self.last_chunk_plaintext()))
+            .and_then(|n: u64| n.checked_add(80)) // 16 + 64
+            .ok_or(LayoutError::SizeOverflow)?;
+        Ok(total_object_size)
+    }
+    /// Implements §3.3. Half-open, unlike the spec's inclusive end(i)
+    pub fn chunk_range(&self, i: u64) -> Result<Range<u64>, LayoutError> {
+        let chunk_count: u64 = self.chunk_count();
+        let ciphertext_chunk_size: u64 = self.ciphertext_chunk_size();
+
+        // the index cannot be greater than the length
+        if i >= chunk_count {
+            return Err(LayoutError::ChunkIndexOutOfRange {
+                index: i,
+                chunk_count,
+            });
+        }
+
+        let start: u64 = i
+            .checked_mul(ciphertext_chunk_size)
+            .and_then(|n: u64| n.checked_add(64))
+            .ok_or(LayoutError::SizeOverflow)?;
+
+        let len: u64 = if i == chunk_count - 1 {
+            self.last_chunk_plaintext() + 16 // ≤ u32::MAX + 16, cannot overflow
+        } else {
+            ciphertext_chunk_size
+        };
+
+        let end: u64 = start.checked_add(len).ok_or(LayoutError::SizeOverflow)?;
+
+        Ok(start..end)
+    }
+}
+
 #[cfg(test)] // compile this block ONLY during `cargo test` — zero cost in a real build
 mod tests {
     // a submodule literally named `tests`
@@ -115,6 +169,13 @@ mod tests {
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00,             // 52  padding
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     ];
+
+    fn header_with(chunk_size: u32, plaintext_length: u64) -> Header {
+        let mut b: [u8; 64] = GOLDEN;
+        b[24..28].copy_from_slice(&chunk_size.to_le_bytes());
+        b[28..36].copy_from_slice(&plaintext_length.to_le_bytes());
+        Header::parse(&b).expect("template with valid sizes")
+    }
 
     #[test]
     fn parses_golden_header() {
@@ -260,11 +321,7 @@ mod tests {
             (u32::MAX, 1),
             (u32::MAX, u64::MAX),
         ] {
-            let mut b = GOLDEN;
-            b[24..28].copy_from_slice(&chunk_size.to_le_bytes());
-            b[28..36].copy_from_slice(&plaintext_length.to_le_bytes());
-
-            let h = Header::parse(&b).expect("extremes are valid per §8");
+            let h: Header = header_with(chunk_size, plaintext_length);
             assert_eq!(h.chunk_size, chunk_size);
             assert_eq!(h.plaintext_length, plaintext_length);
         }
@@ -288,58 +345,45 @@ mod tests {
             prop_assert_eq!(Header::to_bytes(&h), b);
         }
     }
-}
 
-#[derive(Debug)]
-pub enum LayoutError {
-    SizeOverflow,
-    ChunkIndexOutOfRange { index: u64, chunk_count: u64 },
-}
+    // Computing Methods Tests
+    // ----------------------------------------------------
+    const CS: u64 = 262_144;
 
-impl Header {
-    pub fn ciphertext_chunk_size(&self) -> u64 {
-        self.chunk_size as u64 + 16
-    }
-    pub fn chunk_count(&self) -> u64 {
-        self.plaintext_length.div_ceil(self.chunk_size as u64)
-    }
-    pub fn last_chunk_plaintext(&self) -> u64 {
-        self.plaintext_length - (self.chunk_count() - 1) * self.chunk_size as u64
-    }
-    pub fn total_object_size(&self) -> Result<u64, LayoutError> {
-        let total_object_size: u64 = (self.chunk_count() - 1) // chunk_count MUST be at least 1, and it is div_ceil of a non-zero numerator, so it can't underflow
-            .checked_mul(self.ciphertext_chunk_size())
-            .and_then(|n: u64| n.checked_add(self.last_chunk_plaintext()))
-            .and_then(|n: u64| n.checked_add(80)) // 16 + 64
-            .ok_or(LayoutError::SizeOverflow)?;
-        Ok(total_object_size)
-    }
-    /// Implements §3.3. Half-open, unlike the spec's inclusive end(i)
-    pub fn chunk_range(&self, i: u64) -> Result<Range<u64>, LayoutError> {
-        let chunk_count: u64 = self.chunk_count();
-        let ciphertext_chunk_size: u64 = self.ciphertext_chunk_size();
+    /*
+     * plaintext_length    |      chunk_count     |     last_chunk_plaintext    |    total_object_size   |
+     * ---------------------------------------------------------------------------------------------------
+     *       1             |          1           |              1              |           81
+     *   chunk_size - 1    |          1           |         chunk_size - 1      |         CS + 79
+     *    chunk_size       |          1           |          chunk_size         |         CS + 80
+     *   chunk_size + 1    |          2           |              1              |         CS + 97
+     *   2 * chunk_size    |          2           |          chunk_size         |       2 * CS + 96
+     *  2 * chunk_size + 1 |          3           |              1              |       2 * CS + 113
+     * ---------------------------------------------------------------------------------------------------
+     */
 
-        // the index cannot be greater than the length
-        if i >= chunk_count {
-            return Err(LayoutError::ChunkIndexOutOfRange {
-                index: i,
-                chunk_count,
-            });
+    #[test]
+    fn computes_chunk_count_object_size_and_last_chunk_plaintext_correctly() {
+        for (plaintext_length, case, expected_chunk_count, expected_last_chunk_plaintext) in [
+            (1, "1", 1, 1),
+            (CS - 1, "CS - 1", 1, CS - 1),
+            (CS, "CS", 1, CS),
+            (CS + 1, "CS + 1", 2, 1),
+            (CS * 2, "CS * 2", 2, CS),
+            (CS * 2 + 1, "CS * 2 + 1", 3, 1),
+        ] {
+            let h: Header = header_with(CS as u32, plaintext_length);
+            assert_eq!(h.chunk_count(), expected_chunk_count, "case {case}");
+            assert_eq!(
+                h.last_chunk_plaintext(),
+                expected_last_chunk_plaintext,
+                "case {case}"
+            );
+            let expected_count: u64 = plaintext_length / CS + u64::from(plaintext_length % CS != 0);
+            assert_eq!(
+                h.total_object_size().unwrap(),
+                64 + plaintext_length + 16 * expected_count
+            );
         }
-
-        let start: u64 = i
-            .checked_mul(ciphertext_chunk_size)
-            .and_then(|n: u64| n.checked_add(64))
-            .ok_or(LayoutError::SizeOverflow)?;
-
-        let len: u64 = if i == chunk_count - 1 {
-            self.last_chunk_plaintext() + 16 // ≤ u32::MAX + 16, cannot overflow
-        } else {
-            ciphertext_chunk_size
-        };
-
-        let end: u64 = start.checked_add(len).ok_or(LayoutError::SizeOverflow)?;
-
-        Ok(start..end)
     }
 }
