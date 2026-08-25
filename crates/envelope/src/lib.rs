@@ -512,4 +512,41 @@ mod tests {
                 );
             }
     }
+
+    proptest! {
+        #[test]
+        fn chunk_range_holds_at_any_index(
+            chunk_size in 1u32..,
+            plaintext_length in 1u64..,
+            seed in any::<u64>(),
+        ) {
+            let h = header_with(chunk_size, plaintext_length);
+            let cc = h.chunk_count();
+            let i = seed % cc;
+            let range_or_err = h.chunk_range(i);
+            let next_range_or_err = h.chunk_range(i + 1);
+            if let Ok(range_or_err) = &range_or_err {
+                let length = range_or_err.end - range_or_err.start;
+                let expected = if i == cc - 1 {
+                    h.last_chunk_plaintext() + 16
+                } else {
+                    h.ciphertext_chunk_size()
+                };
+                prop_assert_eq!(length, expected);
+            }
+            if i + 1 < cc  && let Ok(range_or_err) = &range_or_err && let Ok(next_range_or_err) = &next_range_or_err {
+                prop_assert_eq!(range_or_err.end, next_range_or_err.start);
+            }
+            if let Err(range_or_err) = range_or_err {
+                prop_assert_eq!(
+                    range_or_err,
+                    LayoutError::SizeOverflow
+                );
+            }
+            prop_assert_eq!(
+                h.chunk_range(cc).unwrap_err(),
+                LayoutError::ChunkIndexOutOfRange { index: cc, chunk_count: cc }
+            );
+        }
+    }
 }
