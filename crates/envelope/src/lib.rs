@@ -1,3 +1,4 @@
+use std::ops::Range;
 pub const EXPECTED_MAGIC: [u8; 4] = [0x56, 0x54, 0x52, 0x4E];
 
 #[derive(Debug)]
@@ -286,5 +287,59 @@ mod tests {
             let h = Header::parse(&b).unwrap();
             prop_assert_eq!(Header::to_bytes(&h), b);
         }
+    }
+}
+
+#[derive(Debug)]
+pub enum LayoutError {
+    SizeOverflow,
+    ChunkIndexOutOfRange { index: u64, chunk_count: u64 },
+}
+
+impl Header {
+    pub fn ciphertext_chunk_size(&self) -> u64 {
+        self.chunk_size as u64 + 16
+    }
+    pub fn chunk_count(&self) -> u64 {
+        self.plaintext_length.div_ceil(self.chunk_size as u64)
+    }
+    pub fn last_chunk_plaintext(&self) -> u64 {
+        self.plaintext_length - (self.chunk_count() - 1) * self.chunk_size as u64
+    }
+    pub fn total_object_size(&self) -> Result<u64, LayoutError> {
+        let total_object_size: u64 = (self.chunk_count() - 1) // chunk_count MUST be at least 1, and it is div_ceil of a non-zero numerator, so it can't underflow
+            .checked_mul(self.ciphertext_chunk_size())
+            .and_then(|n: u64| n.checked_add(self.last_chunk_plaintext()))
+            .and_then(|n: u64| n.checked_add(80)) // 16 + 64
+            .ok_or(LayoutError::SizeOverflow)?;
+        Ok(total_object_size)
+    }
+    /// Implements §3.3. Half-open, unlike the spec's inclusive end(i)
+    pub fn chunk_range(&self, i: u64) -> Result<Range<u64>, LayoutError> {
+        let chunk_count: u64 = self.chunk_count();
+        let ciphertext_chunk_size: u64 = self.ciphertext_chunk_size();
+
+        // the index cannot be greater than the length
+        if i >= chunk_count {
+            return Err(LayoutError::ChunkIndexOutOfRange {
+                index: i,
+                chunk_count,
+            });
+        }
+
+        let start: u64 = i
+            .checked_mul(ciphertext_chunk_size)
+            .and_then(|n: u64| n.checked_add(64))
+            .ok_or(LayoutError::SizeOverflow)?;
+
+        let len: u64 = if i == chunk_count - 1 {
+            self.last_chunk_plaintext() + 16 // ≤ u32::MAX + 16, cannot overflow
+        } else {
+            ciphertext_chunk_size
+        };
+
+        let end: u64 = start.checked_add(len).ok_or(LayoutError::SizeOverflow)?;
+
+        Ok(start..end)
     }
 }
