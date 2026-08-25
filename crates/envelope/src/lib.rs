@@ -153,6 +153,7 @@ mod tests {
     // a submodule literally named `tests`
     use super::*; // pull the parent module's items (Header, HeaderError, ...) into scope
     use proptest::prelude::*;
+    use std::io::{Cursor, Read, Seek, SeekFrom};
 
     #[rustfmt::skip]
     const GOLDEN: [u8; 64] = [
@@ -548,5 +549,20 @@ mod tests {
                 LayoutError::ChunkIndexOutOfRange { index: cc, chunk_count: cc }
             );
         }
+    }
+
+    #[test]
+    fn chunk_ranges_read_back_from_a_seekable_source() {
+        let h: Header = header_with(64, 200);
+        let chunk_count: u64 = h.chunk_count();
+        let total: u64 = h.total_object_size().unwrap();
+        let mut src: Cursor<Vec<u8>> = Cursor::new(vec![0u8; total as usize]);
+        for i in 0..chunk_count {
+            let r: Range<u64> = h.chunk_range(i).unwrap();
+            let mut buf: Vec<u8> = vec![0u8; (r.end - r.start) as usize];
+            src.seek(SeekFrom::Start(r.start)).unwrap();
+            src.read_exact(&mut buf).unwrap();
+        }
+        assert_eq!(src.position(), total);
     }
 }
