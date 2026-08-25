@@ -130,7 +130,7 @@ Two numbers in the spec are guesses that need evidence. Both are cheap to check 
 
 Phase 0 is done when all of the following are true. Not "mostly."
 
-- [ ] `crates/envelope` passes all ten vector categories from encryption spec §9, **including every negative case**
+- [ ] `crates/envelope` passes every vector category in encryption spec §9, **including every negative case**
 - [ ] Chunk _i_ decrypts given only the header and that chunk's bytes (C.7)
 - [ ] The WASM module loads in a browser and round-trips a 3 MB buffer
 - [ ] V.1 passes on real low-end Android hardware, or the spec has been amended

@@ -209,7 +209,7 @@ The server stores `salt`, the Argon2id parameters, `wrap_nonce`, and `wrapped`. 
 | `KEK`        | 32    | Argon2id output length                                                                    |
 | `wrapped`    | 48    | `K_album` (32) plus the Poly1305 tag (16)                                                 |
 
-The salt length needs enforcing in the crate, because **nothing else will enforce it.** RustCrypto's `argon2` accepts salts from 8 to 64 bytes, and since libsodium is not a dependency anywhere in Vitrina (brief §6 #4), no second implementation rejects a wrong length. Earlier revisions of this paragraph said the browser's libsodium would; that was written against a design that was never built. The 16 is kept because it is the value an external Argon2id vector uses (§9.2) and because it is already committed in the schema's `CHECK` — not because anything would reject an alternative.
+The salt length needs enforcing in the crate, because **nothing else will enforce it.** RustCrypto's `argon2` accepts salts from 8 to 64 bytes, and since libsodium is not a dependency anywhere in Vitrina (brief §6 #4), no second implementation rejects a wrong length. Earlier revisions of this paragraph said the browser's libsodium would; that was written against a design that was never built. The 16 is kept because it is `crypto_pwhash_SALTBYTES`, so any libsodium-based tool or future client interoperates, and because it is already committed in the schema's `CHECK` — changing it now would be a format change. Not because anything would reject an alternative.
 
 **Argon2id parameters for version 1:** memory 64 MiB, iterations 3, parallelism 1.
 
@@ -408,7 +408,7 @@ Implementations SHOULD additionally carry a property test asserting round-trip i
 
 **Corollary, and it can change a design rather than just test one: prefer the option whose byte-level agreement stays on one side of a client boundary.** A rule the relay applies alone is recoverable — it holds the inputs and can migrate. A rule four clients must apply identically, forever, is not. §6.6's rejection of email-derived salts turns on exactly this, and the same question is worth asking of any future construction before reaching for a vector to police it. Prose says what should happen; a vector says whether it did. Where the two disagree the failure is usually total and silent — an authentication tag that will not verify, a blob that will not unwrap, an invite that never works — with no diagnostic pointing at the cause.
 
-Four instances have already been found by review rather than by test, which is why this is now a rule rather than an observation:
+Every instance below was found by review rather than by test, which is why this is a rule rather than an observation:
 
 | Value                                           | How it fails                                                                                                        |
 | ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
@@ -420,6 +420,14 @@ Four instances have already been found by review rather than by test, which is w
 | Wrap AAD composition (§6.2)                     | `recipient_id` as 16 raw bytes versus 36-character text; opaque AEAD failure at unwrap                              |
 
 Only two of these are envelope concerns. The rest are protocol-adjacent and belong in `spec/vectors/` regardless, per the scope note above.
+
+**Required protocol vectors**, in addition to §9's envelope categories:
+
+1. A token in both forms — 32 raw bytes and its canonical 43-character base64url — with the expected SHA-256 of the raw bytes
+2. A non-canonical 43-character spelling of that same token, asserted to be **rejected** rather than accepted
+3. A passphrase containing diacritics, mixed case and irregular whitespace, with its normalised form and the expected KEK under a fixed salt and parameters
+4. A `recipient_id` with the expected 31-byte AAD, hex-encoded
+5. An Argon2id wrap using a 16-byte salt, asserted to succeed, and one using a 32-byte salt, asserted to be rejected before it reaches the KDF
 
 ### 9.2 Self-generated vectors cannot catch a wrong primitive
 
@@ -433,13 +441,7 @@ Two limits on what category 6 proves. It uses the streaming API, which for BLAKE
 
 **Category 6 must pass before category 5's vectors are generated.** Generating the set first and checking the primitive afterwards means discovering at C.10 that categories 1 through 5 all need regenerating.
 
-**Required protocol vectors**, in addition to §9's envelope categories:
-
-1. A token in both forms — 32 raw bytes and its canonical 43-character base64url — with the expected SHA-256 of the raw bytes
-2. A non-canonical 43-character spelling of that same token, asserted to be **rejected** rather than accepted
-3. A passphrase containing diacritics, mixed case and irregular whitespace, with its normalised form and the expected KEK under a fixed salt and parameters
-4. A `recipient_id` with the expected 31-byte AAD, hex-encoded
-5. An Argon2id wrap using a 16-byte salt, asserted to succeed, and one using a 32-byte salt, asserted to be rejected before it reaches the KDF
+**Argon2id needs an anchor too, and the risk is a different shape.** RFC 9106 publishes an Argon2id known-answer test — read its parameters, salt length and expected tag from the RFC itself rather than from this document. The asymmetry with BLAKE2b is worth understanding: BLAKE2b encodes key length and digest length into an internal parameter block, so it must be anchored at **Vitrina's exact 32/32 configuration**. Argon2's memory, time and parallelism are explicit inputs rather than hidden state, so an anchor at _any_ configuration establishes that the implementation is a correct Argon2id v1.3 — after which Vitrina's own parameters are just arguments. What an external anchor cannot establish either way is the salt-length interface difference in §6.2, which only the crate enforces.
 
 ---
 
