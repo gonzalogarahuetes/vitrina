@@ -11,7 +11,7 @@ pub struct Header {
     asset_id: [u8; 16],
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum HeaderError {
     BadMagic,
     WrongVersion(u8),
@@ -94,7 +94,7 @@ impl Header {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum LayoutError {
     SizeOverflow,
     ChunkIndexOutOfRange { index: u64, chunk_count: u64 },
@@ -349,6 +349,7 @@ mod tests {
     // Computing Methods Tests
     // ----------------------------------------------------
     const CS: u64 = 262_144;
+    // const CCS: u64 = 262_160;
 
     /*
      * plaintext_length    |      chunk_count     |     last_chunk_plaintext    |    total_object_size   |
@@ -364,6 +365,77 @@ mod tests {
 
     #[test]
     fn computes_chunk_count_object_size_and_last_chunk_plaintext_correctly() {
+        for (plaintext_length, case, expected_chunk_count, expected_last_chunk_plaintext) in [
+            (1, "1", 1, 1),
+            (CS - 1, "CS - 1", 1, CS - 1),
+            (CS, "CS", 1, CS),
+            (CS + 1, "CS + 1", 2, 1),
+            (CS * 2, "CS * 2", 2, CS),
+            (CS * 2 + 1, "CS * 2 + 1", 3, 1),
+        ] {
+            let h: Header = header_with(CS as u32, plaintext_length);
+            assert_eq!(h.chunk_count(), expected_chunk_count, "case {case}");
+            assert_eq!(
+                h.last_chunk_plaintext(),
+                expected_last_chunk_plaintext,
+                "case {case}"
+            );
+            let expected_count: u64 = plaintext_length / CS + u64::from(plaintext_length % CS != 0);
+            assert_eq!(
+                h.total_object_size().unwrap(),
+                64 + plaintext_length + 16 * expected_count
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_object_size_overflow() {
+        let h: Header = header_with(1, u64::MAX);
+        assert_eq!(h.total_object_size(), Err(LayoutError::SizeOverflow));
+    }
+
+    #[test]
+    fn rejects_chunk_range_index_equals_chunk_count() {
+        let h: Header = header_with(1, 1);
+        assert_eq!(
+            h.chunk_range(1).unwrap_err(),
+            LayoutError::ChunkIndexOutOfRange {
+                index: 1,
+                chunk_count: 1
+            }
+        );
+    }
+
+    #[test]
+    fn rejects_chunk_range_max_index() {
+        let h: Header = header_with(1, 1);
+        assert_eq!(
+            h.chunk_range(u64::MAX).unwrap_err(),
+            LayoutError::ChunkIndexOutOfRange {
+                index: u64::MAX,
+                chunk_count: 1
+            }
+        );
+    }
+
+    #[test]
+    fn rejects_chunk_range_beyond_u64() {
+        let h: Header = header_with(1, u64::MAX);
+        assert!(matches!(
+            h.chunk_range(u64::MAX - 1),
+            Err(LayoutError::SizeOverflow)
+        ));
+    }
+
+    #[test]
+    // The object as a whole exceeds u64, but chunk 0's range does not; chunk_range checks its own arithmetic and deliberately does not call total_object_size
+    fn succeeds_on_not_representable_object() {
+        let h: Header = header_with(1, u64::MAX);
+        assert_eq!(h.chunk_range(0).unwrap(), 64..81);
+    }
+
+    #[test]
+    fn computes_chunk_range_correctly() {
         for (plaintext_length, case, expected_chunk_count, expected_last_chunk_plaintext) in [
             (1, "1", 1, 1),
             (CS - 1, "CS - 1", 1, CS - 1),
