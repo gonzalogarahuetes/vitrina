@@ -458,4 +458,58 @@ mod tests {
             );
         }
     }
+
+    proptest! {
+        #[test]
+            fn chunk_ranges_tile_the_object(
+                chunk_size in 1u32..=64,
+                plaintext_length in 1u64..=1000,
+            ) {
+                let h = header_with(chunk_size, plaintext_length);
+                let chunk_count = h.chunk_count();
+                prop_assert_eq!(
+                    h.chunk_range(0).unwrap().start,
+                    64
+                );
+                let mut previous_end: u64 = 64;
+                for i in 0..chunk_count {
+                    let r = h.chunk_range(i).unwrap();
+                    // each range starts exactly where the previous ended
+                    prop_assert_eq!(
+                        r.start,
+                        previous_end
+                    );
+                    previous_end = r.end;
+                    // length is ciphertext_chunk_size for every i except the last, and last_chunk_plaintext + 16 for the last
+                    let length = r.end - r.start;
+                    if i == chunk_count - 1 {
+                        prop_assert_eq!(
+                            length,
+                            h.last_chunk_plaintext() + 16
+                        );
+                    } else {
+                        prop_assert_eq!(
+                            length,
+                            h.ciphertext_chunk_size()
+                        );
+                    }
+                }
+                prop_assert_eq!(
+                    h.chunk_range(chunk_count - 1).unwrap().end,
+                    h.total_object_size().unwrap()
+                );
+                prop_assert_eq!(
+                    h.chunk_range(chunk_count).unwrap_err(),
+                    LayoutError::ChunkIndexOutOfRange {
+                        index: chunk_count,
+                        chunk_count,
+                    }
+                );
+                let cs = chunk_size as u64;
+                prop_assert_eq!(
+                    chunk_count,
+                    plaintext_length / cs + u64::from(plaintext_length % cs != 0)
+                );
+            }
+    }
 }
