@@ -4,5 +4,6 @@
 //! §3.2, §3.3. Reader validation: §8. The format is permanent — see §0.
 
 mod header;
+mod keys;
 
 pub use header::{Header, HeaderError, LayoutError};
