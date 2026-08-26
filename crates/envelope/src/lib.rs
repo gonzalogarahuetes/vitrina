@@ -7,3 +7,4 @@ mod header;
 mod keys;
 
 pub use header::{Header, HeaderError, LayoutError};
+pub use keys::{AlbumKey, AssetKey, MetaKey, ThumbKey};

@@ -1,12 +1,11 @@
 use blake2::Blake2bMac;
 use blake2::digest::{FixedOutput, KeyInit, Update, consts::U32};
-use zeroize::{Zeroize, Zeroizing};
+use zeroize::Zeroizing;
 
 const ASSET_LABEL: &[u8; 16] = b"vitrina-asset-v1";
 const THUMB_LABEL: &[u8; 16] = b"vitrina-thumb-v1";
 const META_LABEL: &[u8; 15] = b"vitrina-meta-v1";
 
-// K_asset = keyed_hash(key = K_album, message = "vitrina-asset-v1" ‖ asset_id)
 /// keyed BLAKE2b, 32-byte key, 32-byte output, RFC 7693
 fn keyed_blake2b_256(key: &[u8; 32], msg: &[u8]) -> [u8; 32] {
     let mut hasher = Blake2bMac::<U32>::new_from_slice(key)
@@ -15,12 +14,14 @@ fn keyed_blake2b_256(key: &[u8; 32], msg: &[u8]) -> [u8; 32] {
     hasher.finalize_fixed().into()
 }
 
-// K_asset(id) = BLAKE2b-256(key = K_album, msg = "vitrina-asset-v1" ‖ asset_id)
-// K_thumb(id) = BLAKE2b-256(key = K_album, msg = "vitrina-thumb-v1" ‖ asset_id)
-// K_meta(id)  = BLAKE2b-256(key = K_album, msg = "vitrina-meta-v1"  ‖ asset_id)
 pub struct AlbumKey(Zeroizing<[u8; 32]>);
+// Dead until C.5, which is the first code that reads a derived key's bytes.
+// Remove this attribute when encrypt_chunk lands; do not widen its scope.
+#[allow(dead_code)]
 pub struct AssetKey(Zeroizing<[u8; 32]>);
+#[allow(dead_code)]
 pub struct ThumbKey(Zeroizing<[u8; 32]>);
+#[allow(dead_code)]
 pub struct MetaKey(Zeroizing<[u8; 32]>);
 
 impl AlbumKey {
@@ -28,7 +29,7 @@ impl AlbumKey {
     pub fn from_bytes(bytes: [u8; 32]) -> Self {
         AlbumKey(Zeroizing::new(bytes))
     }
-    pub fn expose_bytes(&self) -> &[u8; 32] {
+    pub(crate) fn expose_bytes(&self) -> &[u8; 32] {
         &self.0
     }
     pub fn derive_asset(&self, asset_id: &[u8; 16]) -> AssetKey {
@@ -46,6 +47,27 @@ impl AlbumKey {
         buf[..n].copy_from_slice(label);
         buf[n..n + 16].copy_from_slice(asset_id);
         keyed_blake2b_256(self.expose_bytes(), &buf[..n + 16])
+    }
+}
+
+#[allow(dead_code)]
+impl AssetKey {
+    pub(crate) fn expose_bytes(&self) -> &[u8; 32] {
+        &self.0
+    }
+}
+
+#[allow(dead_code)]
+impl ThumbKey {
+    pub(crate) fn expose_bytes(&self) -> &[u8; 32] {
+        &self.0
+    }
+}
+
+#[allow(dead_code)]
+impl MetaKey {
+    pub(crate) fn expose_bytes(&self) -> &[u8; 32] {
+        &self.0
     }
 }
 
@@ -92,5 +114,77 @@ mod tests {
         let (key, input) = libsodium_loop_case(I);
         let message = input.repeat(3);
         assert_eq!(hex(&keyed_blake2b_256(&key, &message)), GENERICHASH2_I31);
+    }
+
+    // Key Creation and Derivation Tests
+    // ----------------------------------------------------
+    #[rustfmt::skip]
+    const K_ALBUM: [u8; 32] = [
+        0xC0, 0xC1, 0xC2, 0xC3, 0xC4, 0xC5, 0xC6, 0xC7,
+        0xC8, 0xC9, 0xCA, 0xCB, 0xCC, 0xCD, 0xCE, 0xCF,
+        0xD0, 0xD1, 0xD2, 0xD3, 0xD4, 0xD5, 0xD6, 0xD7,
+        0xD8, 0xD9, 0xDA, 0xDB, 0xDC, 0xDD, 0xDE, 0xDF,
+    ];
+
+    #[rustfmt::skip]
+    const ASSET_ID: [u8; 16] = [
+        0xB0, 0xB1, 0xB2, 0xB3, 0xB4, 0xB5, 0xB6, 0xB7,
+        0xB8, 0xB9, 0xBA, 0xBB, 0xBC, 0xBD, 0xBE, 0xBF,
+    ];
+
+    fn derive_keys_from_bytes(
+        album_bytes: [u8; 32],
+        asset_id_bytes: [u8; 16],
+    ) -> (AssetKey, ThumbKey, MetaKey) {
+        let k_album: AlbumKey = AlbumKey::from_bytes(album_bytes);
+
+        let k_asset: AssetKey = k_album.derive_asset(&asset_id_bytes);
+        let k_thumb: ThumbKey = k_album.derive_thumb(&asset_id_bytes);
+        let k_meta: MetaKey = k_album.derive_meta(&asset_id_bytes);
+        (k_asset, k_thumb, k_meta)
+    }
+
+    #[test]
+    fn derives_different_keys_from_same_album_key() {
+        let (k_asset, k_thumb, k_meta) = derive_keys_from_bytes(K_ALBUM, ASSET_ID);
+
+        assert_ne!(k_asset.expose_bytes(), k_meta.expose_bytes());
+        assert_ne!(k_asset.expose_bytes(), k_thumb.expose_bytes());
+        assert_ne!(k_meta.expose_bytes(), k_thumb.expose_bytes());
+    }
+
+    #[test]
+    fn derives_keys_unequal_to_album_key() {
+        let (k_asset, k_thumb, k_meta) = derive_keys_from_bytes(K_ALBUM, ASSET_ID);
+
+        assert_ne!(k_asset.expose_bytes(), &K_ALBUM);
+        assert_ne!(k_thumb.expose_bytes(), &K_ALBUM);
+        assert_ne!(k_meta.expose_bytes(), &K_ALBUM);
+    }
+
+    #[test]
+    fn flipping_asset_id_derives_different_keys() {
+        let mut other: [u8; 16] = ASSET_ID;
+        other[0] ^= 1;
+
+        let (k_asset, k_thumb, k_meta) = derive_keys_from_bytes(K_ALBUM, ASSET_ID);
+        let (other_k_asset, other_k_thumb, other_k_meta) = derive_keys_from_bytes(K_ALBUM, other);
+
+        assert_ne!(k_asset.expose_bytes(), other_k_asset.expose_bytes());
+        assert_ne!(k_thumb.expose_bytes(), other_k_thumb.expose_bytes());
+        assert_ne!(k_meta.expose_bytes(), other_k_meta.expose_bytes());
+    }
+
+    #[test]
+    fn flipping_k_album_derives_different_keys() {
+        let mut other: [u8; 32] = K_ALBUM;
+        other[0] ^= 1;
+
+        let (k_asset, k_thumb, k_meta) = derive_keys_from_bytes(K_ALBUM, ASSET_ID);
+        let (other_k_asset, other_k_thumb, other_k_meta) = derive_keys_from_bytes(other, ASSET_ID);
+
+        assert_ne!(k_asset.expose_bytes(), other_k_asset.expose_bytes());
+        assert_ne!(k_thumb.expose_bytes(), other_k_thumb.expose_bytes());
+        assert_ne!(k_meta.expose_bytes(), other_k_meta.expose_bytes());
     }
 }
