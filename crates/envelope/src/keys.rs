@@ -1,5 +1,6 @@
 use blake2::Blake2bMac;
 use blake2::digest::{FixedOutput, KeyInit, Update, consts::U32};
+use zeroize::Zeroize;
 
 // K_asset = keyed_hash(key = K_album, message = "vitrina-asset-v1" ‖ asset_id)
 /// keyed BLAKE2b, 32-byte key, 32-byte output, RFC 7693
@@ -10,14 +11,18 @@ fn keyed_blake2b_256(key: &[u8; 32], msg: &[u8]) -> [u8; 32] {
     hasher.finalize_fixed().into()
 }
 
+// K_asset(id) = BLAKE2b-256(key = K_album, msg = "vitrina-asset-v1" ‖ asset_id)
+// K_thumb(id) = BLAKE2b-256(key = K_album, msg = "vitrina-thumb-v1" ‖ asset_id)
+// K_meta(id)  = BLAKE2b-256(key = K_album, msg = "vitrina-meta-v1"  ‖ asset_id)
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     const I: usize = 31;
 
-    /// libsodium 1.0.20, `test/default/generichash.exp`, line 32 — loop
-    /// iteration i = 31: 32-byte key, message fed once, 32-byte digest.
+    /// libsodium 1.0.20, `test/default/generichash.exp`, line 32 —
+    /// 32-byte key, message fed once, 32-byte digest.
     const GENERICHASH_I31: &str =
         "a9f51bb7f6a3e9cdb96ce652c07d177962a348a9cced1b92f948187e59b44463";
 
