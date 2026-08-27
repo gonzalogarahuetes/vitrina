@@ -584,4 +584,30 @@ mod tests {
         }
         assert_eq!(src.position(), total);
     }
+
+    // Nonce Derivation Tests
+    // ----------------------------------------------------
+    #[test]
+    fn derivates_nonce_correctly() {
+        let h: Header = header_with(1, 1);
+        let mut bytes_nonce: [u8; 24] = [0u8; 24];
+        let zero: u64 = 0;
+        let one: u64 = 1;
+        let serial: u64 = 0x0807060504030201;
+
+        bytes_nonce[0..16].copy_from_slice(&h.base_nonce);
+        bytes_nonce[16..24].fill(0);
+
+        assert_eq!(bytes_nonce, h.nonce(zero));
+
+        bytes_nonce[16] = 01;
+        bytes_nonce[17..24].fill(0);
+
+        assert_eq!(bytes_nonce, h.nonce(one));
+
+        let rest: [u8; 8] = [01, 02, 03, 04, 05, 06, 07, 08];
+        bytes_nonce[16..24].copy_from_slice(&rest);
+
+        assert_eq!(bytes_nonce, h.nonce(serial));
+    }
 }
