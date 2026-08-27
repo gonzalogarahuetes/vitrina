@@ -150,6 +150,22 @@ impl Header {
 
         Ok(start..end)
     }
+    /// §4. Infallible: `i` is validated by `chunk_range`, and §4 defines this
+    /// unconditionally. Nothing here can overflow.
+    /// §4.1's requirement that `base_nonce` be freshly CSPRNG-generated per asset
+    /// binds whoever writes the header, not this method — `parse` accepts whatever
+    /// 16 bytes it is given. See C.6.
+    // Dead until C.5, which is the first code that reads a derived key's bytes.
+    // Remove this attribute when encrypt_chunk lands; do not widen its scope.
+    #[allow(dead_code)]
+    pub(crate) fn nonce(&self, i: u64) -> [u8; 24] {
+        let mut bytes_nonce: [u8; 24] = [0u8; 24];
+
+        bytes_nonce[0..16].copy_from_slice(&self.base_nonce);
+        bytes_nonce[16..24].copy_from_slice(&i.to_le_bytes());
+
+        bytes_nonce
+    }
 }
 
 #[cfg(test)]
@@ -567,5 +583,53 @@ mod tests {
             src.read_exact(&mut buf).unwrap();
         }
         assert_eq!(src.position(), total);
+    }
+
+    // Nonce Derivation Tests
+    // ----------------------------------------------------
+    #[test]
+    fn nonce_counter_is_little_endian() {
+        let h: Header = header_with(1, 1);
+
+        for (i, tail) in [
+            (0u64, [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]),
+            (1, [0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]),
+            (
+                0x0807060504030201,
+                [0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08],
+            ),
+        ] {
+            let mut expected = [0u8; 24];
+            expected[0..16].copy_from_slice(&h.base_nonce);
+            expected[16..24].copy_from_slice(&tail);
+            assert_eq!(h.nonce(i), expected, "i = {i:#x}");
+        }
+    }
+
+    #[test]
+    fn succeeds_in_derivate_nonce_from_chunk_count() {
+        // `nonce` deliberately does not validate `i` — index checking lives in
+        // `chunk_range`. This pins that an out-of-range index still yields the
+        // §4 nonce rather than a clamped or sentinel value.
+        let h: Header = header_with(64, 200); // chunk_count == 4
+        let mut expected: [u8; 24] = [0u8; 24];
+        expected[0..16].copy_from_slice(&h.base_nonce);
+        expected[16..24].copy_from_slice(&4u64.to_le_bytes());
+        assert_eq!(h.nonce(h.chunk_count()), expected);
+    }
+
+    proptest! {
+        #[test]
+        fn nonce_is_base_nonce_followed_by_le_counter(i in any::<u64>(), j in any::<u64>()) {
+            let h = header_with(64, 200);
+            let n = h.nonce(i);
+
+            prop_assert_eq!(&n[0..16], &h.base_nonce[..]);
+            prop_assert_eq!(u64::from_le_bytes(n[16..24].try_into().unwrap()), i);
+
+            if i != j {
+                prop_assert_ne!(h.nonce(i), h.nonce(j));
+            }
+        }
     }
 }
