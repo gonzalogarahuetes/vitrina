@@ -610,4 +610,23 @@ mod tests {
 
         assert_eq!(bytes_nonce, h.nonce(serial));
     }
+
+    #[test]
+    fn derivates_nonce_correctly_from_mutating_buffer() {
+        let h: Header = header_with(1, 1);
+
+        for (i, tail) in [
+            (0u64, [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]),
+            (1, [0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]),
+            (
+                0x0807060504030201,
+                [0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08],
+            ),
+        ] {
+            let mut expected = [0u8; 24];
+            expected[0..16].copy_from_slice(&h.base_nonce);
+            expected[16..24].copy_from_slice(&tail);
+            assert_eq!(h.nonce(i), expected, "i = {i:#x}");
+        }
+    }
 }
