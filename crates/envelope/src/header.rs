@@ -617,4 +617,19 @@ mod tests {
         expected[16..24].copy_from_slice(&4u64.to_le_bytes());
         assert_eq!(h.nonce(h.chunk_count()), expected);
     }
+
+    proptest! {
+        #[test]
+        fn nonce_is_base_nonce_followed_by_le_counter(i in any::<u64>(), j in any::<u64>()) {
+            let h = header_with(64, 200);
+            let n = h.nonce(i);
+
+            prop_assert_eq!(&n[0..16], &h.base_nonce[..]);
+            prop_assert_eq!(u64::from_le_bytes(n[16..24].try_into().unwrap()), i);
+
+            if i != j {
+                prop_assert_ne!(h.nonce(i), h.nonce(j));
+            }
+        }
+    }
 }
