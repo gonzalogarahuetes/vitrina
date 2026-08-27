@@ -25,7 +25,7 @@ pub struct ThumbKey(Zeroizing<[u8; 32]>);
 pub struct MetaKey(Zeroizing<[u8; 32]>);
 
 impl AlbumKey {
-    // [u8; 32] is Copy, so the caller still has their own copy on the stack and that one isn't wiped. Zeroizing protects the copy the key owns, nothing more
+    /// [u8; 32] is Copy, so the caller still has their own copy on the stack and that one isn't wiped. Zeroizing protects the copy the key owns, nothing more
     pub fn from_bytes(bytes: [u8; 32]) -> Self {
         AlbumKey(Zeroizing::new(bytes))
     }
@@ -132,6 +132,16 @@ mod tests {
         0xB8, 0xB9, 0xBA, 0xBB, 0xBC, 0xBD, 0xBE, 0xBF,
     ];
 
+    /// Derived by this implementation from K_ALBUM ‖ ASSET_ID above. Self-generated
+    /// is sound here because category 6 anchors the primitive externally (§9.2).
+    /// These pin the three domain strings in §2 — changing a label changes these.
+    const K_ASSET_EXPECTED: &str =
+        "ee01f1e9ceb261ba0267781177c5a76aa47152739b460786986599ce3a9c4936";
+    const K_THUMB_EXPECTED: &str =
+        "0be27b741ef3546f40926f75a5b309ecfa930f3be69777a1ca085f2dc73caa44";
+    const K_META_EXPECTED: &str =
+        "0b9b93a0679c2ef5a2d02dac49d8dc00304c636bcf518ba012d891f866ca6ce1";
+
     fn derive_keys_from_bytes(
         album_bytes: [u8; 32],
         asset_id_bytes: [u8; 16],
@@ -142,6 +152,15 @@ mod tests {
         let k_thumb: ThumbKey = k_album.derive_thumb(&asset_id_bytes);
         let k_meta: MetaKey = k_album.derive_meta(&asset_id_bytes);
         (k_asset, k_thumb, k_meta)
+    }
+
+    #[test]
+    fn catches_label_change() {
+        let (k_asset, k_thumb, k_meta) = derive_keys_from_bytes(K_ALBUM, ASSET_ID);
+
+        assert_eq!(hex(k_asset.expose_bytes()), K_ASSET_EXPECTED);
+        assert_eq!(hex(k_thumb.expose_bytes()), K_THUMB_EXPECTED);
+        assert_eq!(hex(k_meta.expose_bytes()), K_META_EXPECTED);
     }
 
     #[test]
