@@ -588,31 +588,7 @@ mod tests {
     // Nonce Derivation Tests
     // ----------------------------------------------------
     #[test]
-    fn derivates_nonce_correctly() {
-        let h: Header = header_with(1, 1);
-        let mut bytes_nonce: [u8; 24] = [0u8; 24];
-        let zero: u64 = 0;
-        let one: u64 = 1;
-        let serial: u64 = 0x0807060504030201;
-
-        bytes_nonce[0..16].copy_from_slice(&h.base_nonce);
-        bytes_nonce[16..24].fill(0);
-
-        assert_eq!(bytes_nonce, h.nonce(zero));
-
-        bytes_nonce[16] = 01;
-        bytes_nonce[17..24].fill(0);
-
-        assert_eq!(bytes_nonce, h.nonce(one));
-
-        let rest: [u8; 8] = [01, 02, 03, 04, 05, 06, 07, 08];
-        bytes_nonce[16..24].copy_from_slice(&rest);
-
-        assert_eq!(bytes_nonce, h.nonce(serial));
-    }
-
-    #[test]
-    fn derivates_nonce_correctly_from_mutating_buffer() {
+    fn nonce_counter_is_little_endian() {
         let h: Header = header_with(1, 1);
 
         for (i, tail) in [
@@ -628,5 +604,17 @@ mod tests {
             expected[16..24].copy_from_slice(&tail);
             assert_eq!(h.nonce(i), expected, "i = {i:#x}");
         }
+    }
+
+    #[test]
+    fn succeeds_in_derivate_nonce_from_chunk_count() {
+        // `nonce` deliberately does not validate `i` — index checking lives in
+        // `chunk_range`. This pins that an out-of-range index still yields the
+        // §4 nonce rather than a clamped or sentinel value.
+        let h: Header = header_with(64, 200); // chunk_count == 4
+        let mut expected: [u8; 24] = [0u8; 24];
+        expected[0..16].copy_from_slice(&h.base_nonce);
+        expected[16..24].copy_from_slice(&4u64.to_le_bytes());
+        assert_eq!(h.nonce(h.chunk_count()), expected);
     }
 }
