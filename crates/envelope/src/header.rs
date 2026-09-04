@@ -166,6 +166,9 @@ impl Header {
 
         bytes_nonce
     }
+    // pub(crate) fn aad(&self, i: u64) -> [u8; 72] {
+    //     let mut header_bytes: [u8; 64] = self.to_bytes();
+    // }
 }
 
 #[cfg(test)]
