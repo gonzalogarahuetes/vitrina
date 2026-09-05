@@ -1,5 +1,7 @@
 use blake2::Blake2bMac;
 use blake2::digest::{FixedOutput, KeyInit, Update, consts::U32};
+use chacha20poly1305::KeyInit as _;
+use chacha20poly1305::XChaCha20Poly1305;
 use zeroize::Zeroizing;
 
 const ASSET_LABEL: &[u8; 16] = b"vitrina-asset-v1";
@@ -14,8 +16,12 @@ fn keyed_blake2b_256(key: &[u8; 32], msg: &[u8]) -> [u8; 32] {
     hasher.finalize_fixed().into()
 }
 
+pub(crate) fn cipher_for(key: &[u8; 32]) -> XChaCha20Poly1305 {
+    XChaCha20Poly1305::new_from_slice(key).expect("key is 32 bytes by type")
+}
+
 pub struct AlbumKey(Zeroizing<[u8; 32]>);
-// Dead until C.5, which is the first code that reads a derived key's bytes.
+// Dead until C.6, which is the first code that reads a derived key's bytes.
 // Remove this attribute when encrypt_chunk lands; do not widen its scope.
 #[allow(dead_code)]
 pub struct AssetKey(Zeroizing<[u8; 32]>);
@@ -23,6 +29,28 @@ pub struct AssetKey(Zeroizing<[u8; 32]>);
 pub struct ThumbKey(Zeroizing<[u8; 32]>);
 #[allow(dead_code)]
 pub struct MetaKey(Zeroizing<[u8; 32]>);
+
+pub(crate) trait ChunkKey {
+    fn cipher(&self) -> XChaCha20Poly1305;
+}
+
+impl ChunkKey for AssetKey {
+    fn cipher(&self) -> XChaCha20Poly1305 {
+        cipher_for(self.expose_bytes())
+    }
+}
+
+impl ChunkKey for ThumbKey {
+    fn cipher(&self) -> XChaCha20Poly1305 {
+        cipher_for(self.expose_bytes())
+    }
+}
+
+impl ChunkKey for MetaKey {
+    fn cipher(&self) -> XChaCha20Poly1305 {
+        cipher_for(self.expose_bytes())
+    }
+}
 
 impl AlbumKey {
     /// [u8; 32] is Copy, so the caller still has their own copy on the stack and that one isn't wiped. Zeroizing protects the copy the key owns, nothing more
@@ -74,6 +102,7 @@ impl MetaKey {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_fixtures::{ASSET_ID, K_ALBUM, hex};
 
     const I: usize = 31;
 
@@ -97,12 +126,6 @@ mod tests {
         (key, input)
     }
 
-    /// Mirrors the `printf("%02x", ...)` the .exp files were generated with, so
-    /// a failure prints something greppable against the source file.
-    fn hex(bytes: &[u8]) -> String {
-        bytes.iter().map(|b: &u8| format!("{b:02x}")).collect()
-    }
-
     #[test]
     fn matches_libsodium_generichash_iteration_31() {
         let (key, input) = libsodium_loop_case(I);
@@ -118,19 +141,6 @@ mod tests {
 
     // Key Creation and Derivation Tests
     // ----------------------------------------------------
-    #[rustfmt::skip]
-    const K_ALBUM: [u8; 32] = [
-        0xC0, 0xC1, 0xC2, 0xC3, 0xC4, 0xC5, 0xC6, 0xC7,
-        0xC8, 0xC9, 0xCA, 0xCB, 0xCC, 0xCD, 0xCE, 0xCF,
-        0xD0, 0xD1, 0xD2, 0xD3, 0xD4, 0xD5, 0xD6, 0xD7,
-        0xD8, 0xD9, 0xDA, 0xDB, 0xDC, 0xDD, 0xDE, 0xDF,
-    ];
-
-    #[rustfmt::skip]
-    const ASSET_ID: [u8; 16] = [
-        0xB0, 0xB1, 0xB2, 0xB3, 0xB4, 0xB5, 0xB6, 0xB7,
-        0xB8, 0xB9, 0xBA, 0xBB, 0xBC, 0xBD, 0xBE, 0xBF,
-    ];
 
     /// Derived by this implementation from K_ALBUM ‖ ASSET_ID above. Self-generated
     /// is sound here because category 6 anchors the primitive externally (§9.2).

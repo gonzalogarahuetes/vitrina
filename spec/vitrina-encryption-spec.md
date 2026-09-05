@@ -392,11 +392,12 @@ Required coverage:
 4. Multiple full chunks plus a partial final chunk
 5. Key derivation: `K_album` + `asset_id` → each of `K_asset`, `K_thumb`, `K_meta`
 6. **The keyed BLAKE2b primitive itself, at 32-byte key and 32-byte output, against an external anchor.** See §9.2 — category 5 cannot substitute for this.
-7. Argon2id wrap and unwrap round trip with fixed salt and parameters
-8. **Negative:** tampered ciphertext byte → decryption fails
-9. **Negative:** chunks 0 and 1 swapped → decryption fails
-10. **Negative:** final chunk removed and `plaintext_length` adjusted → decryption fails
-11. **Negative:** `version` byte altered → rejected
+7. **The XChaCha20-Poly1305 construction against an external anchor**, with a non-empty AAD. See §9.2 — every category from 1 to 4 depends on it.
+8. Argon2id wrap and unwrap round trip with fixed salt and parameters
+9. **Negative:** tampered ciphertext byte → decryption fails
+10. **Negative:** chunks 0 and 1 swapped → decryption fails
+11. **Negative:** final chunk removed and `plaintext_length` adjusted → decryption fails
+12. **Negative:** `version` byte altered → rejected
 
 The negative cases matter as much as the positive ones. An implementation that accepts reordered chunks will pass every positive test and be broken.
 
@@ -440,6 +441,12 @@ This is the one place §9.1's rule needs a stronger form: **at least one vector 
 Two limits on what category 6 proves. It uses the streaming API, which for BLAKE2b agrees with one-shot for the same total input — so it still exercises the parameter block, but the message must be assembled identically (that test feeds its message three times). And it proves the _primitive_ matches libsodium; it says nothing about whether the domain-separation strings in §2 are right. Those remain category 5's job.
 
 **Category 6 must pass before category 5's vectors are generated.** Generating the set first and checking the primitive afterwards means discovering at C.10 that categories 1 through 5 all need regenerating.
+
+**XChaCha20-Poly1305 needs the same treatment, and it is the most consequential of the three.** Categories 1 through 4 all encrypt with it, so a construction difference makes the entire envelope vector set self-consistent and wrong. The risk is not a hidden parameter block but the construction itself: HChaCha20 derives a subkey from the key and the first 16 nonce bytes, the remaining 8 bytes are prefixed with four NUL bytes to form the ChaCha20 nonce, and the AEAD mode starts its block counter at **1** rather than 0 because block 0 produces the one-time Poly1305 key. Each of those is a place to differ, and each difference yields a working cipher whose output no other implementation reproduces.
+
+**The anchor: `draft-irtf-cfrg-xchacha-03`, Appendix A.1**, which states the key, 24-byte nonce, 114-byte plaintext, 12-byte AAD and expected ciphertext inline. **Draft-03 specifically** — earlier drafts disagree on the initial block counter, and -03 is what implementations cite as their compliance target. libsodium's `test/default/aead_xchacha20poly1305.c` uses the identical inputs, so it is the same vector rather than a second source; prefer the draft because libsodium's expected values live in a `.exp` file interleaved with `_ietf` sub-tests, where picking the wrong line anchors you silently to the wrong answer. If both can be read confidently, agreeing is a free cross-check.
+
+The AAD must be non-empty. Vitrina's AAD is never empty (§5), and AAD length encoding in the Poly1305 input is precisely where a construction difference would hide.
 
 **Argon2id needs an anchor too, and the risk is a different shape.** RFC 9106 publishes an Argon2id known-answer test — read its parameters, salt length and expected tag from the RFC itself rather than from this document. The asymmetry with BLAKE2b is worth understanding: BLAKE2b encodes key length and digest length into an internal parameter block, so it must be anchored at **Vitrina's exact 32/32 configuration**. Argon2's memory, time and parallelism are explicit inputs rather than hidden state, so an anchor at _any_ configuration establishes that the implementation is a correct Argon2id v1.3 — after which Vitrina's own parameters are just arguments. What an external anchor cannot establish either way is the salt-length interface difference in §6.2, which only the crate enforces.
 

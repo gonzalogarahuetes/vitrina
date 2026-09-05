@@ -155,7 +155,7 @@ impl Header {
     /// §4.1's requirement that `base_nonce` be freshly CSPRNG-generated per asset
     /// binds whoever writes the header, not this method — `parse` accepts whatever
     /// 16 bytes it is given. See C.6.
-    // Dead until C.5, which is the first code that reads a derived key's bytes.
+    // Dead until C.6, which is the first code that reads a derived key's bytes.
     // Remove this attribute when encrypt_chunk lands; do not widen its scope.
     #[allow(dead_code)]
     pub(crate) fn nonce(&self, i: u64) -> [u8; 24] {
@@ -166,36 +166,22 @@ impl Header {
 
         bytes_nonce
     }
+    pub(crate) fn aad(&self, i: u64) -> [u8; 72] {
+        let mut bytes_aad: [u8; 72] = [0u8; 72];
+
+        bytes_aad[0..64].copy_from_slice(&self.to_bytes());
+        bytes_aad[64..72].copy_from_slice(&i.to_le_bytes());
+
+        bytes_aad
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_fixtures::{GOLDEN, header_with};
     use proptest::prelude::*;
     use std::io::{Cursor, Read, Seek, SeekFrom};
-
-    #[rustfmt::skip]
-    const GOLDEN: [u8; 64] = [
-        0x56, 0x54, 0x52, 0x4E,                         //  0  magic  VTRN
-        0x01,                                           //  4  version
-        0x01,                                           //  5  cipher
-        0x00, 0x00,                                     //  6  reserved
-        0xA0, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5, 0xA6, 0xA7, //  8  base_nonce
-        0xA8, 0xA9, 0xAA, 0xAB, 0xAC, 0xAD, 0xAE, 0xAF,
-        0x00, 0x00, 0x04, 0x00,                         // 24  chunk_size       262144
-        0x01, 0x00, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, // 28  plaintext_length 262145
-        0xB0, 0xB1, 0xB2, 0xB3, 0xB4, 0xB5, 0xB6, 0xB7, // 36  asset_id
-        0xB8, 0xB9, 0xBA, 0xBB, 0xBC, 0xBD, 0xBE, 0xBF,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00,             // 52  padding
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    ];
-
-    fn header_with(chunk_size: u32, plaintext_length: u64) -> Header {
-        let mut b: [u8; 64] = GOLDEN;
-        b[24..28].copy_from_slice(&chunk_size.to_le_bytes());
-        b[28..36].copy_from_slice(&plaintext_length.to_le_bytes());
-        Header::parse(&b).expect("template with valid sizes")
-    }
 
     #[test]
     fn parses_golden_header() {
@@ -607,7 +593,7 @@ mod tests {
     }
 
     #[test]
-    fn succeeds_in_derivate_nonce_from_chunk_count() {
+    fn nonce_does_not_validate_index() {
         // `nonce` deliberately does not validate `i` — index checking lives in
         // `chunk_range`. This pins that an out-of-range index still yields the
         // §4 nonce rather than a clamped or sentinel value.
@@ -630,6 +616,30 @@ mod tests {
             if i != j {
                 prop_assert_ne!(h.nonce(i), h.nonce(j));
             }
+        }
+    }
+
+    // AAD Derivation Tests
+    // -----------------------------------------------------
+    #[test]
+    fn aad_matches_golden_header_at_index_zero() {
+        let i: u64 = 0;
+        let h: Header = Header::parse(&GOLDEN).unwrap();
+
+        let mut expected: [u8; 72] = [0u8; 72];
+        expected[0..64].copy_from_slice(&GOLDEN);
+
+        assert_eq!(h.aad(i), expected);
+    }
+
+    proptest! {
+        #[test]
+        fn aad_is_header_bytes_followed_by_le_counter(i in any::<u64>()) {
+            let h = header_with(64, 200);
+            let aad = h.aad(i);
+
+            prop_assert_eq!(&aad[0..64], h.to_bytes());
+            prop_assert_eq!(u64::from_le_bytes(aad[64..72].try_into().unwrap()), i);
         }
     }
 }
