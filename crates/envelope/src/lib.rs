@@ -7,6 +7,7 @@
 // public envelope API. Remove this when that lands — do not widen it further.
 #[allow(dead_code)]
 mod chunk;
+mod envelope;
 mod header;
 mod keys;
 #[cfg(test)]

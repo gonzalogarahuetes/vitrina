@@ -101,6 +101,12 @@ impl Header {
 }
 
 impl Header {
+    pub(crate) fn chunk_size(&self) -> u32 {
+        self.chunk_size
+    }
+    pub(crate) fn plaintext_length(&self) -> u64 {
+        self.plaintext_length
+    }
     pub fn ciphertext_chunk_size(&self) -> u64 {
         self.chunk_size as u64 + 16
     }
