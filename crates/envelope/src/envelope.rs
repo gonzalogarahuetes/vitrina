@@ -1,6 +1,6 @@
 use crate::{
     Header, HeaderError, LayoutError,
-    chunk::{ChunkError, encrypt_chunk},
+    chunk::{ChunkError, decrypt_chunk, encrypt_chunk},
     keys::ChunkKey,
 };
 
@@ -71,6 +71,40 @@ pub(crate) fn encrypt_with_header<K: ChunkKey>(
         ));
     }
     debug_assert_eq!(out.len() as u64, total);
+    Ok(out)
+}
+
+pub(crate) fn decrypt<K: ChunkKey>(key: &K, object: &[u8]) -> Result<Vec<u8>, EnvelopeError> {
+    let header: Header = Header::parse(object)?;
+    let total: u64 = header.total_object_size()?;
+
+    // These two guards MUST run before the allocation below. `plaintext_length`
+    // comes from the header, which is attacker-controlled, and a failed
+    // allocation aborts the process rather than returning an error. Because the
+    // guards establish `object.len() == total`, the capacity requested below is
+    // bounded by input the caller already holds in memory.
+    if object.len() < total as usize {
+        return Err(EnvelopeError::ObjectTooShort {
+            expected: total,
+            got: object.len(),
+        });
+    }
+
+    if object.len() > total as usize {
+        return Err(EnvelopeError::TrailingBytes {
+            expected: total,
+            got: object.len(),
+        });
+    }
+
+    let mut out: Vec<u8> = Vec::with_capacity(header.plaintext_length() as usize);
+    for i in 0..header.chunk_count() {
+        let r: std::ops::Range<u64> = header.chunk_range(i)?;
+        let chunk: &[u8] = &object[r.start as usize..r.end as usize];
+        out.extend_from_slice(&decrypt_chunk(key, &header, i, chunk)?);
+    }
+
+    debug_assert_eq!(out.len() as u64, header.plaintext_length());
     Ok(out)
 }
 
@@ -150,6 +184,129 @@ mod tests {
                 expected: plaintext_length as u64,
                 got: 65
             }
+        )
+    }
+
+    #[test]
+    fn decrypts_to_original_plaintext() {
+        for (chunk_size, plaintext_length, chunk_count) in [
+            (64u32, 64u64, 1),
+            (64u32, 65u64, 2),
+            (64u32, (64u64 * 2), 2),
+            (64u32, (64u64 * 2 + 1), 3),
+        ] {
+            let k: crate::AssetKey = asset_key();
+            let plaintext: Vec<u8> = (0..plaintext_length)
+                .map(|b: u64| b as u8)
+                .collect::<Vec<u8>>();
+            let header: Header =
+                Header::new(ASSET_ID, BASE_NONCE, chunk_size, plaintext_length).unwrap();
+
+            let ciphertext: Vec<u8> = encrypt_with_header(&k, &header, &plaintext).unwrap();
+            let decrypted: Vec<u8> = decrypt(&k, &ciphertext).unwrap();
+
+            assert_eq!(header.chunk_count(), chunk_count);
+            assert_eq!(decrypted.len() as u64, plaintext_length);
+            assert_eq!(decrypted, plaintext);
+        }
+    }
+
+    #[test]
+    fn rejects_ciphertext_shorter_than_total_object_size() {
+        let plaintext_length: u64 = 64;
+        let chunk_size: u32 = 64;
+        let k: crate::AssetKey = asset_key();
+        let plaintext: Vec<u8> = (0..plaintext_length)
+            .map(|b: u64| b as u8)
+            .collect::<Vec<u8>>();
+        let header: Header =
+            Header::new(ASSET_ID, BASE_NONCE, chunk_size, plaintext_length).unwrap();
+
+        let mut ciphertext: Vec<u8> = encrypt_with_header(&k, &header, &plaintext).unwrap();
+        ciphertext.pop();
+
+        assert_eq!(
+            decrypt(&k, &ciphertext).unwrap_err(),
+            EnvelopeError::ObjectTooShort {
+                expected: header.total_object_size().unwrap(),
+                got: 143
+            }
+        )
+    }
+
+    #[test]
+    fn rejects_ciphertext_longer_than_total_object_size() {
+        let plaintext_length: u64 = 64;
+        let chunk_size: u32 = 64;
+        let k: crate::AssetKey = asset_key();
+        let plaintext: Vec<u8> = (0..plaintext_length)
+            .map(|b: u64| b as u8)
+            .collect::<Vec<u8>>();
+        let header: Header =
+            Header::new(ASSET_ID, BASE_NONCE, chunk_size, plaintext_length).unwrap();
+
+        let mut ciphertext: Vec<u8> = encrypt_with_header(&k, &header, &plaintext).unwrap();
+        ciphertext.push(0);
+
+        assert_eq!(
+            decrypt(&k, &ciphertext).unwrap_err(),
+            EnvelopeError::TrailingBytes {
+                expected: header.total_object_size().unwrap(),
+                got: 145
+            }
+        )
+    }
+
+    #[test]
+    fn rejects_ciphertext_with_swapped_chunks() {
+        let plaintext_length: u64 = 128;
+        let chunk_size: u32 = 64;
+        let k: crate::AssetKey = asset_key();
+        let plaintext: Vec<u8> = (0..plaintext_length)
+            .map(|b: u64| b as u8)
+            .collect::<Vec<u8>>();
+        let header: Header =
+            Header::new(ASSET_ID, BASE_NONCE, chunk_size, plaintext_length).unwrap();
+
+        let ciphertext: Vec<u8> = encrypt_with_header(&k, &header, &plaintext).unwrap();
+
+        let r0: std::ops::Range<u64> = header.chunk_range(0).unwrap();
+        let r1: std::ops::Range<u64> = header.chunk_range(1).unwrap();
+        assert_eq!(
+            r0.end - r0.start,
+            r1.end - r1.start,
+            "swap requires equal chunks"
+        );
+
+        let mut swapped: Vec<u8> = Vec::with_capacity(ciphertext.len());
+        swapped.extend_from_slice(&ciphertext[0..64]); // header, unchanged
+        swapped.extend_from_slice(&ciphertext[r1.start as usize..r1.end as usize]); // chunk 1
+        swapped.extend_from_slice(&ciphertext[r0.start as usize..r0.end as usize]); // chunk 0
+
+        assert_eq!(
+            decrypt(&k, &swapped).unwrap_err(),
+            EnvelopeError::AuthenticationFailed
+        )
+    }
+
+    #[test]
+    fn rejects_truncated_object_with_adjusted_length() {
+        let plaintext_length: u64 = 128;
+        let chunk_size: u32 = 64;
+        let k: crate::AssetKey = asset_key();
+        let plaintext: Vec<u8> = (0..plaintext_length)
+            .map(|b: u64| b as u8)
+            .collect::<Vec<u8>>();
+        let header: Header =
+            Header::new(ASSET_ID, BASE_NONCE, chunk_size, plaintext_length).unwrap();
+
+        let ciphertext: Vec<u8> = encrypt_with_header(&k, &header, &plaintext).unwrap();
+        let mut truncated: Vec<u8> = ciphertext[0..144].to_vec();
+        truncated[28..36].copy_from_slice(&64u64.to_le_bytes()); // §3.1: plaintext_length
+
+        assert_eq!(
+            decrypt(&k, &truncated).unwrap_err(),
+            EnvelopeError::AuthenticationFailed
         )
     }
 }
