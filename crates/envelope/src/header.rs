@@ -174,12 +174,41 @@ impl Header {
 
         bytes_aad
     }
+    /// Constructs a header for writing. §8: writers always write the current
+    /// version, so `version` and `cipher` are not parameters.
+    ///
+    /// `base_nonce` is a parameter only so tests and C.9's vector generator can be
+    /// deterministic. §4.1 requires it to be freshly CSPRNG-generated per asset and
+    /// never derived from content — `encrypt` is what enforces that, which is why
+    /// this constructor is `pub(crate)` and unreachable from a binding.
+    pub(crate) fn new(
+        asset_id: [u8; 16],
+        base_nonce: [u8; 16],
+        chunk_size: u32,
+        plaintext_length: u64,
+    ) -> Result<Header, HeaderError> {
+        if chunk_size == 0 {
+            return Err(HeaderError::ChunkSizeZero);
+        }
+        if plaintext_length == 0 {
+            return Err(HeaderError::PlaintextLengthZero);
+        }
+
+        Ok(Header {
+            version: 0x01,
+            cipher: 0x01,
+            base_nonce,
+            chunk_size,
+            plaintext_length,
+            asset_id,
+        })
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_fixtures::{GOLDEN, header_with};
+    use crate::test_fixtures::{ASSET_ID, BASE_NONCE, GOLDEN, header_with};
     use proptest::prelude::*;
     use std::io::{Cursor, Read, Seek, SeekFrom};
 
@@ -641,5 +670,38 @@ mod tests {
             prop_assert_eq!(&aad[0..64], h.to_bytes());
             prop_assert_eq!(u64::from_le_bytes(aad[64..72].try_into().unwrap()), i);
         }
+    }
+
+    // Header Creation Tests
+    // ----------------------------------------------------
+    #[test]
+    fn reconstruct_golden_from_its_parts() {
+        let chunk_size: u32 = 262144;
+        let plaintext_length: u64 = 262145;
+        let header: Header =
+            Header::new(ASSET_ID, BASE_NONCE, chunk_size, plaintext_length).unwrap();
+        assert_eq!(header.to_bytes(), GOLDEN);
+    }
+
+    #[test]
+    fn rejects_new_header_with_zero_chunk_size() {
+        let chunk_size: u32 = 0;
+        let plaintext_length: u64 = 262145;
+
+        assert_eq!(
+            Header::new(ASSET_ID, BASE_NONCE, chunk_size, plaintext_length).unwrap_err(),
+            HeaderError::ChunkSizeZero
+        );
+    }
+
+    #[test]
+    fn rejects_new_header_with_zero_plaintext_length() {
+        let chunk_size: u32 = 262144;
+        let plaintext_length: u64 = 0;
+
+        assert_eq!(
+            Header::new(ASSET_ID, BASE_NONCE, chunk_size, plaintext_length).unwrap_err(),
+            HeaderError::PlaintextLengthZero
+        );
     }
 }

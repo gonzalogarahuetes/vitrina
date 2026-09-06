@@ -41,6 +41,12 @@ pub(crate) fn header_with(chunk_size: u32, plaintext_length: u64) -> Header {
     ];
 
 #[rustfmt::skip]
+    pub(crate) const BASE_NONCE: [u8; 16] = [
+            0xA0, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5, 0xA6, 0xA7, 0xA8, 0xA9, 0xAA, 0xAB, 0xAC, 0xAD,
+            0xAE, 0xAF,
+        ];
+
+#[rustfmt::skip]
     pub(crate) const PLAINTEXT: &[u8] = b"Sometimes it is useful to have default behavior for some or all of the methods in a trait instead of requiring implementations for all methods on every type.";
 
 /// Mirrors the `printf("%02x", ...)` the .exp files were generated with, so
