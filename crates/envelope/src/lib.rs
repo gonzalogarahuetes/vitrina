@@ -9,6 +9,7 @@ mod header;
 mod keys;
 #[cfg(test)]
 pub(crate) mod test_fixtures;
+mod wrap;
 
 pub use envelope::{
     CHUNK_SIZE, EnvelopeError, decrypt_asset, decrypt_meta, decrypt_thumb, encrypt_asset,
