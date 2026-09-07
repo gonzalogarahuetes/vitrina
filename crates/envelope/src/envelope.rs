@@ -1,5 +1,5 @@
 use crate::{
-    Header, HeaderError, LayoutError,
+    AlbumKey, Header, HeaderError, LayoutError,
     chunk::{ChunkError, decrypt_chunk, encrypt_chunk},
     keys::ChunkKey,
 };
@@ -12,6 +12,7 @@ pub enum EnvelopeError {
     Header(HeaderError),
     Layout(LayoutError),
     AuthenticationFailed,
+    RandomnessUnavailable,
 }
 
 impl From<LayoutError> for EnvelopeError {
@@ -40,6 +41,67 @@ impl From<ChunkError> for EnvelopeError {
 /// §3.1: version 1 writers MUST write 262144 (256 KiB). `encrypt` takes no
 /// chunk size, so a caller cannot express a non-conforming one.
 pub const CHUNK_SIZE: u32 = 262_144;
+
+pub(crate) fn encrypt_object<K: ChunkKey>(
+    key: &K,
+    asset_id: &[u8; 16],
+    plaintext: &[u8],
+) -> Result<Vec<u8>, EnvelopeError> {
+    let mut base_nonce: [u8; 16] = [0u8; 16];
+    getrandom::fill(&mut base_nonce).map_err(|_| EnvelopeError::RandomnessUnavailable)?;
+
+    let header: Header = Header::new(*asset_id, base_nonce, CHUNK_SIZE, plaintext.len() as u64)?;
+
+    encrypt_with_header(key, &header, plaintext)
+}
+
+pub fn encrypt_asset(
+    album: &AlbumKey,
+    asset_id: &[u8; 16],
+    plaintext: &[u8],
+) -> Result<Vec<u8>, EnvelopeError> {
+    encrypt_object(&album.derive_asset(asset_id), asset_id, plaintext)
+}
+
+pub fn encrypt_thumb(
+    album: &AlbumKey,
+    asset_id: &[u8; 16],
+    plaintext: &[u8],
+) -> Result<Vec<u8>, EnvelopeError> {
+    encrypt_object(&album.derive_thumb(asset_id), asset_id, plaintext)
+}
+
+pub fn encrypt_meta(
+    album: &AlbumKey,
+    asset_id: &[u8; 16],
+    plaintext: &[u8],
+) -> Result<Vec<u8>, EnvelopeError> {
+    encrypt_object(&album.derive_meta(asset_id), asset_id, plaintext)
+}
+
+pub fn decrypt_asset(
+    album: &AlbumKey,
+    asset_id: &[u8; 16],
+    object: &[u8],
+) -> Result<Vec<u8>, EnvelopeError> {
+    decrypt(&album.derive_asset(asset_id), object)
+}
+
+pub fn decrypt_thumb(
+    album: &AlbumKey,
+    asset_id: &[u8; 16],
+    object: &[u8],
+) -> Result<Vec<u8>, EnvelopeError> {
+    decrypt(&album.derive_thumb(asset_id), object)
+}
+
+pub fn decrypt_meta(
+    album: &AlbumKey,
+    asset_id: &[u8; 16],
+    object: &[u8],
+) -> Result<Vec<u8>, EnvelopeError> {
+    decrypt(&album.derive_meta(asset_id), object)
+}
 
 pub(crate) fn encrypt_with_header<K: ChunkKey>(
     key: &K,
@@ -113,7 +175,7 @@ mod tests {
     use super::*;
     use crate::Header;
     use crate::chunk::decrypt_chunk;
-    use crate::test_fixtures::{ASSET_ID, BASE_NONCE, asset_key};
+    use crate::test_fixtures::{ASSET_ID, BASE_NONCE, PLAINTEXT, album_key, asset_key};
 
     #[test]
     fn encrypts_to_expected_layout() {
@@ -308,5 +370,70 @@ mod tests {
             decrypt(&k, &truncated).unwrap_err(),
             EnvelopeError::AuthenticationFailed
         )
+    }
+
+    // Public API Tests
+    // -----------------------------------------------------
+
+    #[test]
+    fn encrypts_and_decrypts_an_asset() {
+        let album: AlbumKey = album_key();
+        let object: Vec<u8> = encrypt_asset(&album, &ASSET_ID, PLAINTEXT).unwrap();
+        let plaintext: Vec<u8> = decrypt_asset(&album, &ASSET_ID, &object).unwrap();
+        assert_eq!(plaintext, PLAINTEXT);
+    }
+
+    #[test]
+    fn encrypts_and_decrypts_a_thumbnail() {
+        let album: AlbumKey = album_key();
+        let object: Vec<u8> = encrypt_thumb(&album, &ASSET_ID, PLAINTEXT).unwrap();
+        let plaintext: Vec<u8> = decrypt_thumb(&album, &ASSET_ID, &object).unwrap();
+        assert_eq!(plaintext, PLAINTEXT);
+    }
+
+    #[test]
+    fn encrypts_and_decrypts_metadata() {
+        let album: AlbumKey = album_key();
+        let object: Vec<u8> = encrypt_meta(&album, &ASSET_ID, PLAINTEXT).unwrap();
+        let plaintext: Vec<u8> = decrypt_meta(&album, &ASSET_ID, &object).unwrap();
+        assert_eq!(plaintext, PLAINTEXT);
+    }
+
+    #[test]
+    fn rejects_asset_object_decrypted_as_thumb() {
+        let album: AlbumKey = album_key();
+        let object: Vec<u8> = encrypt_asset(&album, &ASSET_ID, PLAINTEXT).unwrap();
+        assert_eq!(
+            decrypt_thumb(&album, &ASSET_ID, &object).unwrap_err(),
+            EnvelopeError::AuthenticationFailed
+        );
+    }
+
+    #[test]
+    fn rejects_thumb_object_decrypted_as_meta() {
+        let album: AlbumKey = album_key();
+        let object: Vec<u8> = encrypt_thumb(&album, &ASSET_ID, PLAINTEXT).unwrap();
+        assert_eq!(
+            decrypt_meta(&album, &ASSET_ID, &object).unwrap_err(),
+            EnvelopeError::AuthenticationFailed
+        );
+    }
+
+    #[test]
+    fn rejects_meta_object_decrypted_as_asset() {
+        let album: AlbumKey = album_key();
+        let object: Vec<u8> = encrypt_meta(&album, &ASSET_ID, PLAINTEXT).unwrap();
+        assert_eq!(
+            decrypt_asset(&album, &ASSET_ID, &object).unwrap_err(),
+            EnvelopeError::AuthenticationFailed
+        );
+    }
+
+    #[test]
+    fn creates_new_base_nonce_for_every_encryption() {
+        let album: AlbumKey = album_key();
+        let a: Vec<u8> = encrypt_asset(&album, &ASSET_ID, PLAINTEXT).unwrap();
+        let b: Vec<u8> = encrypt_asset(&album, &ASSET_ID, PLAINTEXT).unwrap();
+        assert_ne!(a[8..24], b[8..24]);
     }
 }

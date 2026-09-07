@@ -156,14 +156,7 @@ impl Header {
 
         Ok(start..end)
     }
-    /// §4. Infallible: `i` is validated by `chunk_range`, and §4 defines this
-    /// unconditionally. Nothing here can overflow.
-    /// §4.1's requirement that `base_nonce` be freshly CSPRNG-generated per asset
-    /// binds whoever writes the header, not this method — `parse` accepts whatever
-    /// 16 bytes it is given. See C.6.
-    // Dead until C.6, which is the first code that reads a derived key's bytes.
-    // Remove this attribute when encrypt_chunk lands; do not widen its scope.
-    #[allow(dead_code)]
+
     pub(crate) fn nonce(&self, i: u64) -> [u8; 24] {
         let mut bytes_nonce: [u8; 24] = [0u8; 24];
 

@@ -7,7 +7,6 @@ use zeroize::Zeroizing;
 const ASSET_LABEL: &[u8; 16] = b"vitrina-asset-v1";
 const THUMB_LABEL: &[u8; 16] = b"vitrina-thumb-v1";
 const META_LABEL: &[u8; 15] = b"vitrina-meta-v1";
-
 /// keyed BLAKE2b, 32-byte key, 32-byte output, RFC 7693
 fn keyed_blake2b_256(key: &[u8; 32], msg: &[u8]) -> [u8; 32] {
     let mut hasher = Blake2bMac::<U32>::new_from_slice(key)
@@ -21,13 +20,9 @@ pub(crate) fn cipher_for(key: &[u8; 32]) -> XChaCha20Poly1305 {
 }
 
 pub struct AlbumKey(Zeroizing<[u8; 32]>);
-// Dead until C.6, which is the first code that reads a derived key's bytes.
-// Remove this attribute when encrypt_chunk lands; do not widen its scope.
-#[allow(dead_code)]
+
 pub struct AssetKey(Zeroizing<[u8; 32]>);
-#[allow(dead_code)]
 pub struct ThumbKey(Zeroizing<[u8; 32]>);
-#[allow(dead_code)]
 pub struct MetaKey(Zeroizing<[u8; 32]>);
 
 pub(crate) trait ChunkKey {
@@ -78,21 +73,18 @@ impl AlbumKey {
     }
 }
 
-#[allow(dead_code)]
 impl AssetKey {
     pub(crate) fn expose_bytes(&self) -> &[u8; 32] {
         &self.0
     }
 }
 
-#[allow(dead_code)]
 impl ThumbKey {
     pub(crate) fn expose_bytes(&self) -> &[u8; 32] {
         &self.0
     }
 }
 
-#[allow(dead_code)]
 impl MetaKey {
     pub(crate) fn expose_bytes(&self) -> &[u8; 32] {
         &self.0

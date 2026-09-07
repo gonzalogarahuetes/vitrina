@@ -62,3 +62,7 @@ pub(crate) fn asset_key() -> AssetKey {
 pub(crate) fn thumb_key() -> ThumbKey {
     AlbumKey::from_bytes(K_ALBUM).derive_thumb(&ASSET_ID)
 }
+
+pub(crate) fn album_key() -> AlbumKey {
+    AlbumKey::from_bytes(K_ALBUM)
+}
