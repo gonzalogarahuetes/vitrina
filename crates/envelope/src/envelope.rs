@@ -1,6 +1,7 @@
 use crate::{
-    AlbumKey, Header, HeaderError, LayoutError,
+    AlbumKey, HeaderError, LayoutError,
     chunk::{ChunkError, decrypt_chunk, encrypt_chunk},
+    header::Header,
     keys::ChunkKey,
 };
 
@@ -173,8 +174,8 @@ pub(crate) fn decrypt<K: ChunkKey>(key: &K, object: &[u8]) -> Result<Vec<u8>, En
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::Header;
     use crate::chunk::decrypt_chunk;
+    use crate::header::Header;
     use crate::test_fixtures::{ASSET_ID, BASE_NONCE, PLAINTEXT, album_key, asset_key};
 
     #[test]
@@ -185,7 +186,7 @@ mod tests {
             (64u32, (64u64 * 2), 2),
             (64u32, (64u64 * 2 + 1), 3),
         ] {
-            let k: crate::AssetKey = asset_key();
+            let k: crate::keys::AssetKey = asset_key();
             let plaintext: Vec<u8> = (0..plaintext_length).map(|b| b as u8).collect::<Vec<u8>>();
             let header: Header =
                 Header::new(ASSET_ID, BASE_NONCE, chunk_size, plaintext_length).unwrap();
@@ -214,17 +215,16 @@ mod tests {
     #[test]
     fn rejects_plaintext_shorter_than_header() {
         let plaintext_length: u64 = 64u64;
-        let k: crate::AssetKey = asset_key();
+        let k: crate::keys::AssetKey = asset_key();
         let mut plaintext: Vec<u8> = (0..plaintext_length)
             .map(|b: u64| b as u8)
             .collect::<Vec<u8>>();
         plaintext.pop();
-        let header: Header =
-            Header::new(ASSET_ID, BASE_NONCE, 64u32, plaintext_length as u64).unwrap();
+        let header: Header = Header::new(ASSET_ID, BASE_NONCE, 64u32, plaintext_length).unwrap();
         assert_eq!(
             encrypt_with_header(&k, &header, &plaintext).unwrap_err(),
             EnvelopeError::PlaintextLengthMismatch {
-                expected: plaintext_length as u64,
+                expected: plaintext_length,
                 got: 63
             }
         )
@@ -233,17 +233,16 @@ mod tests {
     #[test]
     fn rejects_plaintext_longer_than_header() {
         let plaintext_length: u64 = 64u64;
-        let k: crate::AssetKey = asset_key();
+        let k: crate::keys::AssetKey = asset_key();
         let mut plaintext: Vec<u8> = (0..plaintext_length)
             .map(|b: u64| b as u8)
             .collect::<Vec<u8>>();
         plaintext.push(0);
-        let header: Header =
-            Header::new(ASSET_ID, BASE_NONCE, 64u32, plaintext_length as u64).unwrap();
+        let header: Header = Header::new(ASSET_ID, BASE_NONCE, 64u32, plaintext_length).unwrap();
         assert_eq!(
             encrypt_with_header(&k, &header, &plaintext).unwrap_err(),
             EnvelopeError::PlaintextLengthMismatch {
-                expected: plaintext_length as u64,
+                expected: plaintext_length,
                 got: 65
             }
         )
@@ -257,7 +256,7 @@ mod tests {
             (64u32, (64u64 * 2), 2),
             (64u32, (64u64 * 2 + 1), 3),
         ] {
-            let k: crate::AssetKey = asset_key();
+            let k: crate::keys::AssetKey = asset_key();
             let plaintext: Vec<u8> = (0..plaintext_length)
                 .map(|b: u64| b as u8)
                 .collect::<Vec<u8>>();
@@ -277,7 +276,7 @@ mod tests {
     fn rejects_ciphertext_shorter_than_total_object_size() {
         let plaintext_length: u64 = 64;
         let chunk_size: u32 = 64;
-        let k: crate::AssetKey = asset_key();
+        let k: crate::keys::AssetKey = asset_key();
         let plaintext: Vec<u8> = (0..plaintext_length)
             .map(|b: u64| b as u8)
             .collect::<Vec<u8>>();
@@ -300,7 +299,7 @@ mod tests {
     fn rejects_ciphertext_longer_than_total_object_size() {
         let plaintext_length: u64 = 64;
         let chunk_size: u32 = 64;
-        let k: crate::AssetKey = asset_key();
+        let k: crate::keys::AssetKey = asset_key();
         let plaintext: Vec<u8> = (0..plaintext_length)
             .map(|b: u64| b as u8)
             .collect::<Vec<u8>>();
@@ -323,7 +322,7 @@ mod tests {
     fn rejects_ciphertext_with_swapped_chunks() {
         let plaintext_length: u64 = 128;
         let chunk_size: u32 = 64;
-        let k: crate::AssetKey = asset_key();
+        let k: crate::keys::AssetKey = asset_key();
         let plaintext: Vec<u8> = (0..plaintext_length)
             .map(|b: u64| b as u8)
             .collect::<Vec<u8>>();
@@ -355,7 +354,7 @@ mod tests {
     fn rejects_truncated_object_with_adjusted_length() {
         let plaintext_length: u64 = 128;
         let chunk_size: u32 = 64;
-        let k: crate::AssetKey = asset_key();
+        let k: crate::keys::AssetKey = asset_key();
         let plaintext: Vec<u8> = (0..plaintext_length)
             .map(|b: u64| b as u8)
             .collect::<Vec<u8>>();

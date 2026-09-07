@@ -55,13 +55,13 @@ impl AlbumKey {
     pub(crate) fn expose_bytes(&self) -> &[u8; 32] {
         &self.0
     }
-    pub fn derive_asset(&self, asset_id: &[u8; 16]) -> AssetKey {
+    pub(crate) fn derive_asset(&self, asset_id: &[u8; 16]) -> AssetKey {
         AssetKey(Zeroizing::new(self.derive(ASSET_LABEL, asset_id)))
     }
-    pub fn derive_thumb(&self, asset_id: &[u8; 16]) -> ThumbKey {
+    pub(crate) fn derive_thumb(&self, asset_id: &[u8; 16]) -> ThumbKey {
         ThumbKey(Zeroizing::new(self.derive(THUMB_LABEL, asset_id)))
     }
-    pub fn derive_meta(&self, asset_id: &[u8; 16]) -> MetaKey {
+    pub(crate) fn derive_meta(&self, asset_id: &[u8; 16]) -> MetaKey {
         MetaKey(Zeroizing::new(self.derive(META_LABEL, asset_id)))
     }
     fn derive(&self, label: &[u8], asset_id: &[u8; 16]) -> [u8; 32] {

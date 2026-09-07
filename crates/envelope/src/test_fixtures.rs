@@ -1,7 +1,7 @@
 use crate::AlbumKey;
-use crate::AssetKey;
-use crate::Header;
-use crate::ThumbKey;
+use crate::header::Header;
+use crate::keys::AssetKey;
+use crate::keys::ThumbKey;
 
 #[rustfmt::skip]
     pub(crate) const GOLDEN: [u8; 64] = [

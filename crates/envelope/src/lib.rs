@@ -14,5 +14,5 @@ pub use envelope::{
     CHUNK_SIZE, EnvelopeError, decrypt_asset, decrypt_meta, decrypt_thumb, encrypt_asset,
     encrypt_meta, encrypt_thumb,
 };
-pub use header::{Header, HeaderError, LayoutError};
-pub use keys::{AlbumKey, AssetKey, MetaKey, ThumbKey};
+pub use header::{HeaderError, LayoutError};
+pub use keys::AlbumKey;
