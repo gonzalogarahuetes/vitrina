@@ -1,4 +1,4 @@
-use crate::Header;
+use crate::header::Header;
 use crate::keys::ChunkKey;
 use chacha20poly1305::{
     XChaCha20Poly1305, XNonce,
@@ -88,7 +88,7 @@ pub(crate) enum ChunkError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::keys::cipher_for;
+    use crate::keys::{AssetKey, ThumbKey, cipher_for};
     use crate::test_fixtures::{
         ASSET_ID, GOLDEN, PLAINTEXT, asset_key, header_with, hex, thumb_key,
     };
@@ -158,7 +158,7 @@ mod tests {
     #[test]
     fn different_index_gives_different_ciphertext() {
         let header: Header = header_with(64, 200);
-        let k: crate::AssetKey = asset_key();
+        let k: AssetKey = asset_key();
         let ciphertext_on_zero: Vec<u8> = encrypt_chunk(&k, &header, 0, PLAINTEXT);
         let ciphertext_on_one: Vec<u8> = encrypt_chunk(&k, &header, 1, PLAINTEXT);
         assert_ne!(ciphertext_on_one, ciphertext_on_zero);
@@ -171,7 +171,7 @@ mod tests {
             p in proptest::collection::vec(any::<u8>(), 1..=1024),
         ) {
             let h: Header = header_with(64, 200);
-            let k: crate::AssetKey = asset_key();
+            let k: AssetKey = asset_key();
 
             let ct = encrypt_chunk(&k, &h, i, &p);
             prop_assert_eq!(ct.len(), p.len() + 16);
@@ -185,7 +185,7 @@ mod tests {
     #[test]
     fn rejects_decrypt_with_different_i() {
         let header: Header = header_with(64, 200);
-        let k: crate::AssetKey = asset_key();
+        let k: AssetKey = asset_key();
 
         let ciphertext: Vec<u8> = encrypt_chunk(&k, &header, 0, PLAINTEXT);
         assert_eq!(
@@ -198,7 +198,7 @@ mod tests {
     fn rejects_decrypt_with_different_plaintext_length() {
         let header: Header = header_with(64, 200);
         let header_2: Header = header_with(64, 180);
-        let k: crate::AssetKey = asset_key();
+        let k: AssetKey = asset_key();
 
         let ciphertext: Vec<u8> = encrypt_chunk(&k, &header, 0, PLAINTEXT);
         assert_eq!(
@@ -211,7 +211,7 @@ mod tests {
     fn rejects_decrypt_with_different_asset_id() {
         let mut other: [u8; 16] = ASSET_ID;
         other[0] ^= 1;
-        let k: crate::AssetKey = asset_key();
+        let k: AssetKey = asset_key();
         let ct: Vec<u8> = encrypt_chunk(&k, &Header::parse(&GOLDEN).unwrap(), 0, PLAINTEXT);
 
         let mut bytes: [u8; 64] = GOLDEN;
@@ -230,7 +230,7 @@ mod tests {
         // `parse` reject a bad version byte, so no `Header` with one can exist.
         // The AAD is the backstop against an attacker who bypasses the parser,
         // so the test bypasses it too.
-        let key: crate::AssetKey = asset_key();
+        let key: AssetKey = asset_key();
         let header: Header = Header::parse(&GOLDEN).unwrap();
         let i: u64 = 0u64;
 
@@ -255,7 +255,7 @@ mod tests {
     #[test]
     fn rejects_tampered_ciphertext_body() {
         let header: Header = header_with(64, 200);
-        let k: crate::AssetKey = asset_key();
+        let k: AssetKey = asset_key();
 
         let mut ct: Vec<u8> = encrypt_chunk(&k, &header, 1, PLAINTEXT);
         ct[0] ^= 1;
@@ -268,7 +268,7 @@ mod tests {
     #[test]
     fn rejects_forged_tag() {
         let header: Header = header_with(64, 200);
-        let k: crate::AssetKey = asset_key();
+        let k: AssetKey = asset_key();
 
         let mut ct: Vec<u8> = encrypt_chunk(&k, &header, 1, PLAINTEXT);
         // the last 16 bytes are the tag, and a forged tag must not verify.
@@ -283,7 +283,7 @@ mod tests {
     #[test]
     fn rejects_truncated_ciphertext() {
         let header: Header = header_with(64, 200);
-        let k: crate::AssetKey = asset_key();
+        let k: AssetKey = asset_key();
 
         let mut ct: Vec<u8> = encrypt_chunk(&k, &header, 1, PLAINTEXT);
         ct.pop();
@@ -297,7 +297,7 @@ mod tests {
     // the input comes from an untrusted relay and a panic would be a denial of service
     fn rejects_ciphertext_shorter_than_tag() {
         let header: Header = header_with(64, 200);
-        let k: crate::AssetKey = asset_key();
+        let k: AssetKey = asset_key();
         assert_eq!(
             decrypt_chunk(&k, &header, 0, &[0u8; 5]).unwrap_err(),
             ChunkError::AuthenticationFailed
@@ -309,8 +309,8 @@ mod tests {
     #[test]
     fn rejects_decrypt_with_sibling_key() {
         let header: Header = header_with(64, 200);
-        let k: crate::AssetKey = asset_key();
-        let thumb_k: crate::ThumbKey = thumb_key();
+        let k: AssetKey = asset_key();
+        let thumb_k: ThumbKey = thumb_key();
 
         let ciphertext: Vec<u8> = encrypt_chunk(&k, &header, 1, PLAINTEXT);
         assert_eq!(
