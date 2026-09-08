@@ -1,5 +1,5 @@
-use argon2::{Params, ParamsBuilder};
-
+use argon2::Params;
+use unicode_normalization::{UnicodeNormalization, char::is_combining_mark};
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct WrapParams {
     t_cost: u32,
@@ -44,10 +44,18 @@ enum WrapError {
     },
 }
 
-// pub fn wrap(params: WrapParams) {}
+pub(crate) fn normalize_passphrase(s: &str) -> String {
+    let folded: String = s
+        .nfkd()
+        .filter(|c| !is_combining_mark(*c))
+        .flat_map(|c| c.to_lowercase())
+        .collect();
+    folded.split_whitespace().collect::<Vec<_>>().join(" ")
+}
 
 #[cfg(test)]
 mod tests {
+    use crate::wrap::normalize_passphrase;
     use crate::{
         test_fixtures::hex,
         wrap::{WrapError, WrapParams},
@@ -115,5 +123,40 @@ mod tests {
                 m_cost: 8
             }
         );
+    }
+
+    #[test]
+    fn normalizes_passphrase_to_expected_values() {
+        for (input, expected_output) in [
+            ("Café  Roble ", "cafe roble"), // 	§6.3's own example, all four steps at once
+            ("\u{FB01}n", "fin"), // NFKD, not NFD. NFD leaves ﬁ intact; this is the only test that distinguishes them
+            ("a\u{00A0}b", "a b"), // NFKD maps NBSP to a plain space, which then collapses
+            ("\u{1D2C}", "a"),    // the step order itself; fails if you lowercase first
+            ("a\t\nb", "a b"),    // tabs and newlines are whitespace too
+        ] {
+            assert_eq!(normalize_passphrase(input), expected_output);
+        }
+    }
+
+    #[test]
+    fn decompose_and_precompose_agree() {
+        assert_eq!(
+            normalize_passphrase("cafe"),
+            normalize_passphrase("caf\u{00E9}")
+        )
+    }
+
+    #[test]
+    fn folds_diacritics_to_base_letters() {
+        assert_eq!(normalize_passphrase("pap\u{00E1}"), "papa")
+    }
+
+    #[test]
+    fn normalizes_with_idempotence() {
+        assert_eq!(
+            normalize_passphrase(&normalize_passphrase("Café  Roble ")),
+            normalize_passphrase("Café  Roble ")
+        );
+        assert_eq!(normalize_passphrase("cafe roble"), "cafe roble")
     }
 }
