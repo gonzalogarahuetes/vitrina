@@ -1,6 +1,57 @@
+use argon2::{Params, ParamsBuilder};
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct WrapParams {
+    t_cost: u32,
+    p_cost: u32,
+    m_cost_kib: u32,
+}
+
+const KEK_LEN: usize = 32;
+
+impl WrapParams {
+    pub const V1: WrapParams = WrapParams {
+        m_cost_kib: 65_536,
+        t_cost: 3,
+        p_cost: 1,
+    };
+    fn argon2_params(&self) -> Result<Params, WrapError> {
+        Params::new(self.m_cost_kib, self.t_cost, self.p_cost, Some(KEK_LEN)).map_err(|_| {
+            WrapError::InvalidParams {
+                t_cost: self.t_cost,
+                p_cost: self.p_cost,
+                m_cost: self.m_cost_kib,
+            }
+        })
+    }
+    pub fn new(m_cost_kib: u32, t_cost: u32, p_cost: u32) -> Result<Self, WrapError> {
+        let candidate = WrapParams {
+            t_cost,
+            m_cost_kib,
+            p_cost,
+        };
+        candidate.argon2_params()?;
+        Ok(candidate)
+    }
+}
+
+#[derive(Debug, PartialEq)]
+enum WrapError {
+    InvalidParams {
+        t_cost: u32,
+        p_cost: u32,
+        m_cost: u32,
+    },
+}
+
+// pub fn wrap(params: WrapParams) {}
+
 #[cfg(test)]
 mod tests {
-    use crate::test_fixtures::hex;
+    use crate::{
+        test_fixtures::hex,
+        wrap::{WrapError, WrapParams},
+    };
     use argon2::{Algorithm, Argon2, AssociatedData, ParamsBuilder, Version};
 
     const RFC_9106_ARGON2ID_TAG: &str =
@@ -31,5 +82,38 @@ mod tests {
             .unwrap();
 
         assert_eq!(hex(&out), RFC_9106_ARGON2ID_TAG);
+    }
+
+    #[test]
+    fn v1_memory_cost_is_64_mib() {
+        assert_eq!(WrapParams::V1.m_cost_kib, 64 * 1024)
+    }
+
+    #[test]
+    fn v1_params_are_accepted_by_argon2() {
+        assert!(WrapParams::V1.argon2_params().is_ok())
+    }
+
+    #[test]
+    fn new_accepts_v1_values() {
+        let params = WrapParams::new(
+            WrapParams::V1.m_cost_kib,
+            WrapParams::V1.t_cost,
+            WrapParams::V1.p_cost,
+        );
+        assert!(params.is_ok());
+        assert_eq!(params.unwrap(), WrapParams::V1);
+    }
+
+    #[test]
+    fn rejects_m_cost_below_eight_times_p_cost() {
+        assert_eq!(
+            WrapParams::new(8, 3, 4).unwrap_err(),
+            WrapError::InvalidParams {
+                t_cost: 3,
+                p_cost: 4,
+                m_cost: 8
+            }
+        );
     }
 }
