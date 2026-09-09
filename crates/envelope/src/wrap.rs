@@ -1,5 +1,7 @@
-use argon2::Params;
+use crate::keys::Kek;
+use argon2::{Algorithm, Argon2, Params, Version};
 use unicode_normalization::{UnicodeNormalization, char::is_combining_mark};
+use zeroize::Zeroizing;
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct WrapParams {
     t_cost: u32,
@@ -36,12 +38,13 @@ impl WrapParams {
 }
 
 #[derive(Debug, PartialEq)]
-enum WrapError {
+pub(crate) enum WrapError {
     InvalidParams {
         t_cost: u32,
         p_cost: u32,
         m_cost: u32,
     },
+    HashingFailed,
 }
 
 pub(crate) fn normalize_passphrase(s: &str) -> String {
@@ -53,17 +56,48 @@ pub(crate) fn normalize_passphrase(s: &str) -> String {
     folded.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
+pub(crate) fn derive_kek(
+    passphrase: &str,
+    params: WrapParams,
+    salt: &[u8; 16],
+) -> Result<Kek, WrapError> {
+    let pwd = normalize_passphrase(passphrase);
+    let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, params.argon2_params()?);
+
+    let mut out = Zeroizing::new([0u8; KEK_LEN]);
+
+    argon2
+        .hash_password_into(pwd.as_bytes(), salt, &mut out[..])
+        .map_err(|_| WrapError::HashingFailed)?;
+
+    Ok(Kek::from_bytes(out))
+}
+
 #[cfg(test)]
 mod tests {
-    use crate::wrap::normalize_passphrase;
+    use crate::wrap::{derive_kek, normalize_passphrase};
     use crate::{
         test_fixtures::hex,
         wrap::{WrapError, WrapParams},
     };
     use argon2::{Algorithm, Argon2, AssociatedData, ParamsBuilder, Version};
+    use zeroize::Zeroizing;
 
     const RFC_9106_ARGON2ID_TAG: &str =
         "0d640df58d78766c08c037a34a8b53c9d01ef0452d75b65eb52520e96b01e659";
+
+    const SALT: [u8; 16] = [
+        0x8f, 0x2c, 0x41, 0xd7, 0x05, 0xba, 0x63, 0x19, 0xe4, 0x7a, 0x2f, 0x90, 0xc8, 0x11, 0x5d,
+        0x36,
+    ];
+    const OTHER_SALT: [u8; 16] = [
+        0x8f, 0x2c, 0x41, 0xd7, 0x05, 0xba, 0x63, 0x19, 0xe4, 0x7a, 0x2f, 0x90, 0xc8, 0x11, 0x5d,
+        0x37,
+    ];
+
+    fn low_params() -> WrapParams {
+        WrapParams::new(8, 1, 1).unwrap()
+    }
 
     #[test]
     fn matches_rfc9106_argon2id_vector() {
@@ -158,5 +192,112 @@ mod tests {
             normalize_passphrase("Café  Roble ")
         );
         assert_eq!(normalize_passphrase("cafe roble"), "cafe roble")
+    }
+
+    // KEK Derivation Tests
+    // ----------------------------------------------------
+
+    #[test]
+    fn creates_same_kek_with_same_inputs() {
+        assert_eq!(
+            derive_kek("Café Roble", low_params(), &SALT)
+                .unwrap()
+                .expose_bytes(),
+            derive_kek("Café Roble", low_params(), &SALT)
+                .unwrap()
+                .expose_bytes()
+        );
+    }
+
+    #[test]
+    fn creates_same_kek_with_normalized_passphrase() {
+        assert_eq!(
+            derive_kek("Café Roble ", low_params(), &SALT)
+                .unwrap()
+                .expose_bytes(),
+            derive_kek("cafe roble", low_params(), &SALT)
+                .unwrap()
+                .expose_bytes()
+        );
+    }
+
+    #[test]
+    fn derives_kek_at_v1_params() {
+        assert!(derive_kek("Café Roble", WrapParams::V1, &SALT).is_ok());
+    }
+
+    #[test]
+    fn creates_different_kek_with_different_salt() {
+        assert_ne!(
+            derive_kek("Café Roble", low_params(), &SALT)
+                .unwrap()
+                .expose_bytes(),
+            derive_kek("Café Roble", low_params(), &OTHER_SALT)
+                .unwrap()
+                .expose_bytes()
+        );
+    }
+
+    #[test]
+    fn creates_different_kek_with_different_passphrase() {
+        assert_ne!(
+            derive_kek("Café Roble", low_params(), &SALT)
+                .unwrap()
+                .expose_bytes(),
+            derive_kek("Café Sauce", low_params(), &SALT)
+                .unwrap()
+                .expose_bytes()
+        );
+    }
+
+    #[test]
+    fn creates_different_kek_with_different_params() {
+        assert_ne!(
+            derive_kek("Café Roble", low_params(), &SALT)
+                .unwrap()
+                .expose_bytes(),
+            derive_kek("Café Roble", WrapParams::new(16, 1, 1).unwrap(), &SALT)
+                .unwrap()
+                .expose_bytes()
+        );
+    }
+
+    #[test]
+    fn derive_kek_uses_argon2id() {
+        let argon2id = Argon2::new(
+            Algorithm::Argon2id,
+            Version::V0x13,
+            low_params().argon2_params().unwrap(),
+        );
+
+        let argon2i = Argon2::new(
+            Algorithm::Argon2i,
+            Version::V0x13,
+            low_params().argon2_params().unwrap(),
+        );
+
+        let mut out_argon2id = Zeroizing::new([0u8; 32]);
+
+        argon2id
+            .hash_password_into("cafe roble".as_bytes(), &SALT, &mut out_argon2id[..])
+            .unwrap();
+
+        let mut out_argon2i = Zeroizing::new([0u8; 32]);
+        argon2i
+            .hash_password_into("cafe roble".as_bytes(), &SALT, &mut out_argon2i[..])
+            .unwrap();
+
+        // Argon2id and Argon2i genuinely differ at these inputs, so the
+        // equality below cannot pass vacuously.
+        assert_ne!(&out_argon2id[..], &out_argon2i[..]);
+
+        // derive_kek's output IS the Argon2id computation — this is what pins
+        // the algorithm, the version, the params and the normalisation at once.
+        assert_eq!(
+            derive_kek("Café Roble", low_params(), &SALT)
+                .unwrap()
+                .expose_bytes(),
+            &*out_argon2id
+        );
     }
 }

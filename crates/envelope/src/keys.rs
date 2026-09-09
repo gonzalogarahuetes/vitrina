@@ -29,6 +29,8 @@ pub(crate) trait ChunkKey {
     fn cipher(&self) -> XChaCha20Poly1305;
 }
 
+pub(crate) struct Kek(Zeroizing<[u8; 32]>);
+
 impl ChunkKey for AssetKey {
     fn cipher(&self) -> XChaCha20Poly1305 {
         cipher_for(self.expose_bytes())
@@ -88,6 +90,15 @@ impl ThumbKey {
 impl MetaKey {
     pub(crate) fn expose_bytes(&self) -> &[u8; 32] {
         &self.0
+    }
+}
+
+impl Kek {
+    pub(crate) fn expose_bytes(&self) -> &[u8; 32] {
+        &self.0
+    }
+    pub(crate) fn from_bytes(bytes: Zeroizing<[u8; 32]>) -> Kek {
+        Kek(bytes)
     }
 }
 
