@@ -73,9 +73,20 @@ pub(crate) fn derive_kek(
     Ok(Kek::from_bytes(out))
 }
 
+const WRAP_AAD_LABEL: &[u8; 15] = b"vitrina-wrap-v1";
+
+pub(crate) fn wrap_aad(recipient_id: &[u8; 16]) -> [u8; 31] {
+    let mut bytes_aad: [u8; 31] = [0u8; 31];
+
+    bytes_aad[..15].copy_from_slice(WRAP_AAD_LABEL);
+    bytes_aad[15..].copy_from_slice(recipient_id);
+
+    bytes_aad
+}
+
 #[cfg(test)]
 mod tests {
-    use crate::wrap::{derive_kek, normalize_passphrase};
+    use crate::wrap::{derive_kek, normalize_passphrase, wrap_aad};
     use crate::{
         test_fixtures::hex,
         wrap::{WrapError, WrapParams},
@@ -98,6 +109,19 @@ mod tests {
     fn low_params() -> WrapParams {
         WrapParams::new(8, 1, 1).unwrap()
     }
+
+    /// `recipient_id` for the AAD fixture. A real UUIDv4 —
+    /// 3f2a91c7-8b4e-4d16-9f05-c2a7d81e6b34 — so the version nibble (4)
+    /// and variant bits (10xx) are where §2 says they are.
+    const RECIPIENT_ID: [u8; 16] = [
+        0x3f, 0x2a, 0x91, 0xc7, 0x8b, 0x4e, 0x4d, 0x16, 0x9f, 0x05, 0xc2, 0xa7, 0xd8, 0x1e, 0x6b,
+        0x34,
+    ];
+
+    /// §6.2's AAD for RECIPIENT_ID: the 15 ASCII bytes of "vitrina-wrap-v1"
+    /// with no terminator and no length prefix, then the 16 raw UUID bytes.
+    /// The first 30 hex characters are the label; everything after is the id.
+    const WRAP_AAD: &str = "76697472696e612d777261702d76313f2a91c78b4e4d169f05c2a7d81e6b34";
 
     #[test]
     fn matches_rfc9106_argon2id_vector() {
@@ -299,5 +323,17 @@ mod tests {
                 .expose_bytes(),
             &*out_argon2id
         );
+    }
+
+    // AAD Concatenation Tests
+    // ----------------------------------------------------
+    #[test]
+    fn concatenated_aad_matches_hex_literal() {
+        assert_eq!(hex(&wrap_aad(&RECIPIENT_ID)), WRAP_AAD);
+    }
+
+    #[test]
+    fn concatenated_aad_length_matches_expected() {
+        assert_eq!(wrap_aad(&RECIPIENT_ID).len(), 31)
     }
 }
