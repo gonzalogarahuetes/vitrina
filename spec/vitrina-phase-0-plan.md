@@ -106,11 +106,15 @@ No Rust, no crypto. Heavily delegable.
 | C.7  | **Random-access decrypt of chunk _i_** given only `K_asset`, the header, and that chunk's bytes | The property Phase 3 depends on                 | Yes     |
 | C.8  | Argon2id wrap and unwrap                                                                        | Password hashing vs hashing                     | Yes     |
 | C.9  | Test vector generation, exported as JSON to `spec/vectors/`                                     | —                                               | —       |
-| C.10 | `wasm-bindgen` binding + TypeScript smoke test                                                  | The FFI boundary                                | —       |
+| C.10 | `wasm-bindgen` binding + TypeScript smoke test **+ length validation at the boundary**          | The FFI boundary                                | —       |
 
 **C.2's edge cases are where the bugs live.** Plaintext exactly `chunk_size`; exactly `chunk_size + 1`; a final chunk of one byte. Write those tests before the code.
 
 **C.7 is the conformance gate, not a nice-to-have.** If you cannot decrypt chunk 400 of a video without having touched chunks 0–399, seeking is impossible and the whole chunked design was pointless. Test it explicitly and deliberately, by loading _only_ the header and one chunk's byte range from disk.
+
+**C.10 is where every type-level invariant has to be re-established as a runtime check.** Every `[u8; N]` in the crate — keys, nonces, `asset_id`, salts, wrapped blobs — is a compile-time guarantee that evaporates at the boundary: from JavaScript they are all `Uint8Array` of arbitrary length. So the binding must validate every length it accepts and return an error rather than panicking, and the harness must assert that a wrong-length input is rejected.
+
+The exit criterion below — loads in a browser, round-trips a 3 MB buffer — does **not** cover this. A binding that accepts a 20-byte key and panics inside the crate passes it. Note also that a Rust `panic!` across `wasm-bindgen` surfaces as an unhelpful JavaScript exception with no diagnostic, which is why the check belongs at the boundary rather than being left to the crate's own asserts. _Added 21 August 2026, surfaced by C.8's salt typing: the crate's `&[u8; 16]` makes a wrong-length salt unrepresentable in Rust and says nothing about what arrives from JS._
 
 **C.9's negative vectors matter as much as the positive ones.** Tampered byte, swapped chunks, truncated asset with adjusted `plaintext_length`, altered version byte. An implementation that accepts reordered chunks passes every positive test and is broken.
 
@@ -133,6 +137,7 @@ Phase 0 is done when all of the following are true. Not "mostly."
 - [ ] `crates/envelope` passes every vector category in encryption spec §9, **including every negative case**
 - [ ] Chunk _i_ decrypts given only the header and that chunk's bytes (C.7)
 - [ ] The WASM module loads in a browser and round-trips a 3 MB buffer
+- [ ] The binding validates every length it accepts and errors rather than panicking, with a harness assertion per wrong-length input (§7, C.10)
 - [ ] V.1 passes on real low-end Android hardware, or the spec has been amended
 - [ ] V.2 passes on real iOS Safari, or the chunk size has been amended
 - [ ] The encryption spec has been corrected to match the implementation exactly, with every ambiguity found during C.1–C.8 resolved in the document
