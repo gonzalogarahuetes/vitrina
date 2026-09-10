@@ -1,0 +1,61 @@
+{
+  "source": "spec/vitrina-encryption-spec.md §9 and §9.1",
+  "envelope_version": 1,
+  "envelope": [
+    {
+      "category": 1,
+      "name": "single chunk, plaintext shorter than chunk_size",
+      "k_album": "c0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedf",
+      "asset_id": "b0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+      "base_nonce": "a0a1a2a3a4a5a6a7a8a9aaabacadaead",
+      "chunk_size": 262144,
+      "plaintext": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f60616263",
+      "object": "5654524e01010000a0a1a2a3a4a5a6a7a8a9aaabacadaead000004006400000000000000b0b1b2b3b4b5b6b7b8b9babbbcbdbebf00000000000000000000000075abfa6d1f67bf78e7fd1c83f11cccf3d41afca80188e941c4134c23e86db4328328c1579804da95c31451ee05785c8678676ebe4ae9a046ce89e77c6baed58c93de83951d313a7fc91301cfd396016c42db1d80b6fa066ceb50d6ba96216c241fe504e896247917fcfb90b34b8ea404fa6a27e2",
+      "expect": "accept"
+    },
+    {
+      "category": 2,
+      "name": "plaintext exactly chunk_size",
+      "k_album": "c0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedf",
+      "asset_id": "b0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+      "base_nonce": "a0a1a2a3a4a5a6a7a8a9aaabacadaeae",
+      "chunk_size": 64,
+      "plaintext": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f",
+      "object": "5654524e01010000a0a1a2a3a4a5a6a7a8a9aaabacadaeae400000004000000000000000b0b1b2b3b4b5b6b7b8b9babbbcbdbebf000000000000000000000000fdd320d97ac9e72efcfb2f6b9a273de3f122c183d2bd90cc584de368f99786992c8def1137248c164591962449a1f25149fff58ec5dc1dfcb893aaa7ceecdf39b5d6e765d911d0feba7980e8874898cd",
+      "expect": "accept"
+    },
+    {
+      "category": 3,
+      "name": "plaintext exactly chunk_size + 1",
+      "k_album": "c0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedf",
+      "asset_id": "b0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+      "base_nonce": "a0a1a2a3a4a5a6a7a8a9aaabacadaeaf",
+      "chunk_size": 64,
+      "plaintext": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f40",
+      "object": "5654524e01010000a0a1a2a3a4a5a6a7a8a9aaabacadaeaf400000004100000000000000b0b1b2b3b4b5b6b7b8b9babbbcbdbebf000000000000000000000000928301e29c278da2388ceb0a6d2c899ccce96d7f0d3df9189ec325c28fbd0d76956206aee01bce1fb25da71b81d238bf57c33f5bc200f6aa261cdeefb78cb32494cc419c54159c0b002af3c4a06aa116cf2d8e418d74bff9feb72b43ea4a9e2324",
+      "expect": "accept"
+    },
+    {
+      "category": 4,
+      "name": "three full chunks plus an 8-byte final chunk",
+      "k_album": "c0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedf",
+      "asset_id": "b0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+      "base_nonce": "a0a1a2a3a4a5a6a7a8a9aaabacadaeb0",
+      "chunk_size": 64,
+      "plaintext": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0c1c2c3c4c5c6c7",
+      "object": "5654524e01010000a0a1a2a3a4a5a6a7a8a9aaabacadaeb040000000c800000000000000b0b1b2b3b4b5b6b7b8b9babbbcbdbebf000000000000000000000000e9a9370967bf90d1e3c7dce5143bcbed35e25bc518e116808b95f30f95cb7b8e6f3cc4427cf395d679649ea819af3b846634efb95c7ad3f059239556bed79f6ac382797f0cd730f1788fe2ede29cf5290fd4313dfd746dd4e1f81550322ad4c965e19b6c15df90df3bf854c0b6de4e280d92abc25c7fcac5e0a38ebbdcdc5660fe422af663e799cd2bad6315f63abda5cf6af06bbffdb3ff7c56de094f944c6ea3111ce106a2b01f37f2309ccb11e006f621b0feeb5e245d8d98e0efa9f85f65d4177dbcc8861b85188f1dbdd726bfb062c3f87e94ea6303f43543fdd7c30c791a2ed5c68e6d4183c79cb090658b6911b3d5c6a4bb53d54ff12970be47b6e0047dcafcc14499a086",
+      "expect": "accept"
+    }
+  ],
+  "key_derivation": [
+    {
+      "category": 5,
+      "name": "K_album + asset_id -> K_asset, K_thumb, K_meta",
+      "k_album": "c0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedf",
+      "asset_id": "b0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+      "k_asset": "ee01f1e9ceb261ba0267781177c5a76aa47152739b460786986599ce3a9c4936",
+      "k_thumb": "0be27b741ef3546f40926f75a5b309ecfa930f3be69777a1ca085f2dc73caa44",
+      "k_meta": "0b9b93a0679c2ef5a2d02dac49d8dc00304c636bcf518ba012d891f866ca6ce1"
+    }
+  ]
+}
