@@ -10,7 +10,10 @@ use crate::test_fixtures::{ASSET_ID, BASE_NONCE, K_ALBUM, album_key, hex};
 use crate::wrap::{derive_kek, normalize_passphrase, wrap_aad, wrap_with_salt_and_nonce};
 use crate::{AlbumKey, CHUNK_SIZE, RecipientId, Salt, WrapParams};
 use argon2::{Algorithm, Argon2, AssociatedData, ParamsBuilder, Version};
+use base64::Engine;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::fs;
 
 const PATH: &str = concat!(
@@ -96,9 +99,30 @@ struct WrapVector {
 /// §9.1's required protocol vectors, keyed by name in §9.1's order.
 #[derive(Serialize, Deserialize)]
 struct Protocol {
+    token: TokenVector,
+    token_noncanonical: TokenSpellingVector,
     passphrase_normalisation: PassphraseVector,
     wrap_aad: WrapAadVector,
     wrap_salt_length: Vec<SaltLengthVector>,
+}
+
+/// vitrina-schema.md §6: the hash is over the 32 raw bytes, never the string.
+#[derive(Serialize, Deserialize)]
+struct TokenVector {
+    vector: u8,
+    token_raw: String,
+    token_base64url: String,
+    sha256: String,
+    expect: Expect,
+}
+
+/// Same 32 bytes, non-canonical spelling: the spare two bits of the final
+/// character are non-zero. Schema §6 rule 3 rejects it at the boundary.
+#[derive(Serialize, Deserialize)]
+struct TokenSpellingVector {
+    vector: u8,
+    token_base64url: String,
+    expect: Expect,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -393,7 +417,55 @@ fn salt_length_vector(
     }
 }
 
+const TOKEN_RAW: [u8; 32] = [
+    0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f,
+    0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x29, 0x2a, 0x2b, 0x2c, 0x2d, 0x2e, 0x2f,
+];
+const BASE64URL_ALPHABET: &[u8; 64] =
+    b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+
+/// Schema §6 rule 3, in full: 43 characters, decodes to 32 bytes, and
+/// re-encodes to the same string.
+fn strict_decode_token(s: &str) -> Option<[u8; 32]> {
+    if s.len() != 43 {
+        return None;
+    }
+    let bytes: [u8; 32] = URL_SAFE_NO_PAD.decode(s).ok()?.try_into().ok()?;
+    (URL_SAFE_NO_PAD.encode(bytes) == s).then_some(bytes)
+}
+
+fn token_vectors() -> (TokenVector, TokenSpellingVector) {
+    let canonical: String = URL_SAFE_NO_PAD.encode(TOKEN_RAW);
+    assert_eq!(strict_decode_token(&canonical), Some(TOKEN_RAW));
+
+    let mut spelling: Vec<u8> = canonical.clone().into_bytes();
+    let last: usize = BASE64URL_ALPHABET
+        .iter()
+        .position(|&c| c == spelling[42])
+        .unwrap();
+    assert_eq!(last & 0b11, 0, "canonical spelling has zero spare bits");
+    spelling[42] = BASE64URL_ALPHABET[last | 0b01];
+    let noncanonical: String = String::from_utf8(spelling).unwrap();
+    assert_eq!(strict_decode_token(&noncanonical), None);
+
+    (
+        TokenVector {
+            vector: 1,
+            token_raw: hex(&TOKEN_RAW),
+            token_base64url: canonical,
+            sha256: hex(&Sha256::digest(TOKEN_RAW)),
+            expect: Expect::Accept,
+        },
+        TokenSpellingVector {
+            vector: 2,
+            token_base64url: noncanonical,
+            expect: Expect::Reject,
+        },
+    )
+}
+
 fn protocol() -> Protocol {
+    let (token, token_noncanonical) = token_vectors();
     let normalized: String = normalize_passphrase(MESSY_PASSPHRASE);
     assert_eq!(normalized, "cafe roble nandu");
     let kek = derive_kek(
@@ -404,6 +476,8 @@ fn protocol() -> Protocol {
     .unwrap();
 
     Protocol {
+        token,
+        token_noncanonical,
         passphrase_normalisation: PassphraseVector {
             vector: 3,
             passphrase: MESSY_PASSPHRASE.to_string(),

@@ -157,6 +157,18 @@
     }
   ],
   "protocol": {
+    "token": {
+      "vector": 1,
+      "token_raw": "101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f",
+      "token_base64url": "EBESExQVFhcYGRobHB0eHyAhIiMkJSYnKCkqKywtLi8",
+      "sha256": "89c7460452eddff119fea0419e785c74de2ffb139dbe74323aca4a01e198a5dc",
+      "expect": "accept"
+    },
+    "token_noncanonical": {
+      "vector": 2,
+      "token_base64url": "EBESExQVFhcYGRobHB0eHyAhIiMkJSYnKCkqKywtLi9",
+      "expect": "reject"
+    },
     "passphrase_normalisation": {
       "vector": 3,
       "passphrase": "  Café  ROBLE\tÑandú ",
