@@ -66,7 +66,9 @@ The domain-separation strings are ASCII, without a null terminator, and are part
 
 ### 2.2 What the server never sees
 
-`K_album` and every derived key MUST NEVER be transmitted to the relay, in any form, by any path. This includes error reports, crash dumps, telemetry, analytics, and log lines. Implementations SHOULD make key material a type that does not implement debug-printing (in Rust, a newtype without `Debug`; in TypeScript, avoid placing keys on objects that get serialized).
+`K_album` and every derived key MUST NEVER be transmitted to the relay, in any form, by any path. This includes error reports, crash dumps, telemetry, analytics, and log lines. Implementations MUST make key material a type that cannot print its bytes. The requirement is the **property**, not a particular mechanism: in Rust either a newtype without `Debug`, or one whose `Debug` prints a redaction such as `AlbumKey(<redacted>)`; in TypeScript, avoid placing keys on objects that get serialized.
+
+A redacting `Debug` is usually preferable to its absence, because it keeps `#[derive(Debug)]` safe on any struct that later holds a key — whereas with no `Debug` at all, someone wanting one on a containing type must hand-write it, which is where bytes escape. Note the cost of the absent form, since it is not obvious from the rule: `Result::unwrap_err` requires `Debug` on the `Ok` type, so every negative test on a key-returning function must use `.err()` instead.
 
 ---
 
@@ -127,6 +129,10 @@ end(i)   = start(i) + (i == chunk_count-1
                        ? last_chunk_plaintext + 16
                        : ciphertext_chunk_size) - 1
 ```
+
+**`end(i)` is INCLUSIVE** — hence the `- 1`. This is stated because an HTTP `Range: bytes=start-end` header is inclusive while every language's native range type is half-open (Rust's `Range`, a JavaScript `slice`), so both conventions appear in the same fetch path. Carrying the `- 1` across wrongly yields a chunk one byte short, which surfaces as an authentication failure pointing at nothing.
+
+Implementations SHOULD expose the half-open form internally and convert only where an HTTP header is written, so the inclusive convention exists at exactly one place. The derived quantity an implementation actually wants is the byte range of chunk _i_; this document specifies the arithmetic and deliberately does not name the function.
 
 This is what makes an HTTP `Range` request sufficient to fetch and independently decrypt any chunk of an asset stored as a **single** object. It is why video seeking in Phase 3 requires no format change, and why storage is one object per asset rather than one per chunk.
 
@@ -200,14 +206,18 @@ wrapped = XChaCha20-Poly1305(
 
 The server stores `salt`, the Argon2id parameters, `wrap_nonce`, and `wrapped`. It never sees the passphrase or `KEK`.
 
+**Argon2id's own `secret` and `associatedData` inputs are both EMPTY.** Argon2 accepts them independently of the password and salt, as length-prefixed fields in its initial hash, and Vitrina uses neither. This is stated because the notation above invites the mistake: `aad = "vitrina-wrap-v1" ‖ recipient_id` appears two lines from the KDF call, and it belongs to the **AEAD wrap**, not to Argon2. Feeding it to Argon2 — or feeding Argon2's data to the AEAD — yields a different `H0`, a different KEK, and a blob that will not unwrap, with no diagnostic. It happened twice during C.8, in both directions.
+
+**The passphrase reaches Argon2id as the UTF-8 encoding of its normalised form** (§6.3). Currently latent: Spanish and Catalan normalise to ASCII, because step 2's mark removal turns `ñ` into `n` and `ç` into `c`. §6.3 admits any language meeting the wordlist bar, and the first one normalising to non-ASCII makes an unstated encoding a silent KEK mismatch.
+
 **Exact lengths for version 1.** Every one of these is fixed, and a reader or a database MAY enforce them:
 
-| Value        | Bytes | Why                                                                                       |
-| ------------ | ----- | ----------------------------------------------------------------------------------------- |
-| `salt`       | 16    | `crypto_pwhash_SALTBYTES`, so an external Argon2id vector exists to anchor against (§9.2) |
-| `wrap_nonce` | 24    | XChaCha20-Poly1305 nonce                                                                  |
-| `KEK`        | 32    | Argon2id output length                                                                    |
-| `wrapped`    | 48    | `K_album` (32) plus the Poly1305 tag (16)                                                 |
+| Value        | Bytes | Why                                                               |
+| ------------ | ----- | ----------------------------------------------------------------- |
+| `salt`       | 16    | `crypto_pwhash_SALTBYTES`. Enforced only by the crate — see below |
+| `wrap_nonce` | 24    | XChaCha20-Poly1305 nonce                                          |
+| `KEK`        | 32    | Argon2id output length                                            |
+| `wrapped`    | 48    | `K_album` (32) plus the Poly1305 tag (16)                         |
 
 The salt length needs enforcing in the crate, because **nothing else will enforce it.** RustCrypto's `argon2` accepts salts from 8 to 64 bytes, and since libsodium is not a dependency anywhere in Vitrina (brief §6 #4), no second implementation rejects a wrong length. Earlier revisions of this paragraph said the browser's libsodium would; that was written against a design that was never built. The 16 is kept because it is `crypto_pwhash_SALTBYTES`, so any libsodium-based tool or future client interoperates, and because it is already committed in the schema's `CHECK` — changing it now would be a format change. Not because anything would reject an alternative.
 
@@ -224,7 +234,9 @@ Because the server stores `wrapped`, anyone with database access can mount an of
 - The user MUST NOT be permitted to supply their own
 - Words MUST come from a wordlist in the **recipient's** language, selected per invite by the owner (brief §15.2) — a grandparent reading a passphrase aloud over the phone transcribes their own language reliably and a foreign one badly. This is a correctness concern, not a localisation nicety.
 
-**Wordlist construction is constrained beyond word count.** A list MUST contain no homophones and no pairs of words differing only by a diacritic, because the normalisation below collapses both. EFF's English long list has these properties by construction; a scraped frequency list does not. A language without a list meeting this bar MUST NOT be offered for passphrases, even if the UI is translated into it.
+**Wordlist construction is constrained beyond word count.** A list MUST contain no homophones and no pairs of words differing only by a diacritic, because the normalisation below collapses both.
+
+**In Spanish and Catalan this excludes more than it first appears.** Mark removal turns `ñ` into `n` and `ç` into `c`, so `año`/`ano` and `caça`/`caca` collide as surely as `café`/`cafe`. Checkable at wordlist-build time: normalise every candidate and reject the list if any two normalise identically. EFF's English long list has these properties by construction; a scraped frequency list does not. A language without a list meeting this bar MUST NOT be offered for passphrases, even if the UI is translated into it.
 
 **Normalisation is normative and identical on both sides.** The generator and the entry path MUST apply the same transformation before the string reaches Argon2id:
 
@@ -391,13 +403,16 @@ Required coverage:
 3. Plaintext exactly `chunk_size + 1` (two chunks, second is 1 byte)
 4. Multiple full chunks plus a partial final chunk
 5. Key derivation: `K_album` + `asset_id` → each of `K_asset`, `K_thumb`, `K_meta`
-6. **The keyed BLAKE2b primitive itself, at 32-byte key and 32-byte output, against an external anchor.** See §9.2 — category 5 cannot substitute for this.
-7. **The XChaCha20-Poly1305 construction against an external anchor**, with a non-empty AAD. See §9.2 — every category from 1 to 4 depends on it.
-8. Argon2id wrap and unwrap round trip with fixed salt and parameters
-9. **Negative:** tampered ciphertext byte → decryption fails
-10. **Negative:** chunks 0 and 1 swapped → decryption fails
-11. **Negative:** final chunk removed and `plaintext_length` adjusted → decryption fails
-12. **Negative:** `version` byte altered → rejected
+6. **External anchor — keyed BLAKE2b**, at 32-byte key and 32-byte output. §9.2; category 5 cannot substitute for it.
+7. **External anchor — XChaCha20-Poly1305**, with a non-empty AAD. §9.2; categories 1–4 all depend on it.
+8. **External anchor — Argon2id.** §9.2; category 9 cannot substitute for it.
+9. Argon2id wrap and unwrap round trip with fixed salt and parameters
+10. **Negative:** tampered ciphertext byte → decryption fails
+11. **Negative:** chunks 0 and 1 swapped → decryption fails
+12. **Negative:** final chunk removed and `plaintext_length` adjusted → decryption fails
+13. **Negative:** `version` byte altered → rejected
+
+Categories 6, 7 and 8 are one per §1 primitive, deliberately contiguous — every primitive gets its own external anchor, and a missing one is visible as a gap in the sequence.
 
 The negative cases matter as much as the positive ones. An implementation that accepts reordered chunks will pass every positive test and be broken.
 
@@ -440,7 +455,7 @@ This is the one place §9.1's rule needs a stronger form: **at least one vector 
 
 Two limits on what category 6 proves. It uses the streaming API, which for BLAKE2b agrees with one-shot for the same total input — so it still exercises the parameter block, but the message must be assembled identically (that test feeds its message three times). And it proves the _primitive_ matches libsodium; it says nothing about whether the domain-separation strings in §2 are right. Those remain category 5's job.
 
-**Category 6 must pass before category 5's vectors are generated.** Generating the set first and checking the primitive afterwards means discovering at C.10 that categories 1 through 5 all need regenerating.
+**Every external anchor must pass before any self-generated vector that depends on it is produced.** Categories 6, 7 and 8 gate the rest: 6 gates category 5, 7 gates categories 1–4 and 10–13, 8 gates category 9. Generating the set first and checking the primitives afterwards means discovering at C.10 that most of the file needs regenerating. The rule was written about category 6 and applied three times during C.1–C.8, which is why it is stated generally here.
 
 **XChaCha20-Poly1305 needs the same treatment, and it is the most consequential of the three.** Categories 1 through 4 all encrypt with it, so a construction difference makes the entire envelope vector set self-consistent and wrong. The risk is not a hidden parameter block but the construction itself: HChaCha20 derives a subkey from the key and the first 16 nonce bytes, the remaining 8 bytes are prefixed with four NUL bytes to form the ChaCha20 nonce, and the AEAD mode starts its block counter at **1** rather than 0 because block 0 produces the one-time Poly1305 key. Each of those is a place to differ, and each difference yields a working cipher whose output no other implementation reproduces.
 
@@ -448,7 +463,9 @@ Two limits on what category 6 proves. It uses the streaming API, which for BLAKE
 
 The AAD must be non-empty. Vitrina's AAD is never empty (§5), and AAD length encoding in the Poly1305 input is precisely where a construction difference would hide.
 
-**Argon2id needs an anchor too, and the risk is a different shape.** RFC 9106 publishes an Argon2id known-answer test — read its parameters, salt length and expected tag from the RFC itself rather than from this document. The asymmetry with BLAKE2b is worth understanding: BLAKE2b encodes key length and digest length into an internal parameter block, so it must be anchored at **Vitrina's exact 32/32 configuration**. Argon2's memory, time and parallelism are explicit inputs rather than hidden state, so an anchor at _any_ configuration establishes that the implementation is a correct Argon2id v1.3 — after which Vitrina's own parameters are just arguments. What an external anchor cannot establish either way is the salt-length interface difference in §6.2, which only the crate enforces.
+**Argon2id's anchor is RFC 9106 §5.3**, and the risk is a different shape. Its parameters are a 32-byte password of `0x01`, a 16-byte salt of `0x02`, an 8-byte secret of `0x03`, 12 bytes of associated data of `0x04`, m = 32 KiB, t = 3, p = 4, and a 32-byte tag. **Read the expected tag from the RFC, not from this document** — it reproduces against RustCrypto `argon2` 0.6, verified during C.8. The asymmetry with BLAKE2b is worth understanding: BLAKE2b encodes key length and digest length into an internal parameter block, so it must be anchored at **Vitrina's exact 32/32 configuration**. Argon2's memory, time and parallelism are explicit inputs rather than hidden state, so an anchor at _any_ configuration establishes that the implementation is a correct Argon2id v1.3 — after which Vitrina's own parameters are just arguments. What an external anchor cannot establish either way is the salt-length interface difference in §6.2, which only the crate enforces.
+
+**And note what RFC 9106's vector does not exercise.** It supplies a non-empty secret and non-empty associated data; Vitrina supplies neither (§6.2). Those are length-prefixed fields in Argon2's initial hash, so passing this vector proves the implementation handles them _present_ and says nothing about the zero-length case Vitrina actually uses. Category 9's round trip covers that composition — self-generated, so per this section it establishes agreement rather than correctness.
 
 ---
 
