@@ -47,6 +47,40 @@
       "expect": "accept"
     }
   ],
+  "envelope_negative": [
+    {
+      "category": 10,
+      "name": "tampered ciphertext byte in chunk 1",
+      "k_album": "c0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedf",
+      "asset_id": "b0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+      "object": "5654524e01010000a0a1a2a3a4a5a6a7a8a9aaabacadaeb040000000c800000000000000b0b1b2b3b4b5b6b7b8b9babbbcbdbebf000000000000000000000000e9a9370967bf90d1e3c7dce5143bcbed35e25bc518e116808b95f30f95cb7b8e6f3cc4427cf395d679649ea819af3b846634efb95c7ad3f059239556bed79f6ac382797f0cd730f1788fe2ede29cf5290fd4313dfd756dd4e1f81550322ad4c965e19b6c15df90df3bf854c0b6de4e280d92abc25c7fcac5e0a38ebbdcdc5660fe422af663e799cd2bad6315f63abda5cf6af06bbffdb3ff7c56de094f944c6ea3111ce106a2b01f37f2309ccb11e006f621b0feeb5e245d8d98e0efa9f85f65d4177dbcc8861b85188f1dbdd726bfb062c3f87e94ea6303f43543fdd7c30c791a2ed5c68e6d4183c79cb090658b6911b3d5c6a4bb53d54ff12970be47b6e0047dcafcc14499a086",
+      "expect": "reject"
+    },
+    {
+      "category": 11,
+      "name": "chunks 0 and 1 swapped",
+      "k_album": "c0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedf",
+      "asset_id": "b0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+      "object": "5654524e01010000a0a1a2a3a4a5a6a7a8a9aaabacadaeb040000000c800000000000000b0b1b2b3b4b5b6b7b8b9babbbcbdbebf0000000000000000000000000fd4313dfd746dd4e1f81550322ad4c965e19b6c15df90df3bf854c0b6de4e280d92abc25c7fcac5e0a38ebbdcdc5660fe422af663e799cd2bad6315f63abda5cf6af06bbffdb3ff7c56de094f944c6ee9a9370967bf90d1e3c7dce5143bcbed35e25bc518e116808b95f30f95cb7b8e6f3cc4427cf395d679649ea819af3b846634efb95c7ad3f059239556bed79f6ac382797f0cd730f1788fe2ede29cf529a3111ce106a2b01f37f2309ccb11e006f621b0feeb5e245d8d98e0efa9f85f65d4177dbcc8861b85188f1dbdd726bfb062c3f87e94ea6303f43543fdd7c30c791a2ed5c68e6d4183c79cb090658b6911b3d5c6a4bb53d54ff12970be47b6e0047dcafcc14499a086",
+      "expect": "reject"
+    },
+    {
+      "category": 12,
+      "name": "final chunk removed and plaintext_length adjusted",
+      "k_album": "c0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedf",
+      "asset_id": "b0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+      "object": "5654524e01010000a0a1a2a3a4a5a6a7a8a9aaabacadaeb040000000c000000000000000b0b1b2b3b4b5b6b7b8b9babbbcbdbebf000000000000000000000000e9a9370967bf90d1e3c7dce5143bcbed35e25bc518e116808b95f30f95cb7b8e6f3cc4427cf395d679649ea819af3b846634efb95c7ad3f059239556bed79f6ac382797f0cd730f1788fe2ede29cf5290fd4313dfd746dd4e1f81550322ad4c965e19b6c15df90df3bf854c0b6de4e280d92abc25c7fcac5e0a38ebbdcdc5660fe422af663e799cd2bad6315f63abda5cf6af06bbffdb3ff7c56de094f944c6ea3111ce106a2b01f37f2309ccb11e006f621b0feeb5e245d8d98e0efa9f85f65d4177dbcc8861b85188f1dbdd726bfb062c3f87e94ea6303f43543fdd7c30c791a2ed5c68e6d4183c79cb090658b6911",
+      "expect": "reject"
+    },
+    {
+      "category": 13,
+      "name": "version byte altered",
+      "k_album": "c0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedf",
+      "asset_id": "b0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+      "object": "5654524e02010000a0a1a2a3a4a5a6a7a8a9aaabacadaeb040000000c800000000000000b0b1b2b3b4b5b6b7b8b9babbbcbdbebf000000000000000000000000e9a9370967bf90d1e3c7dce5143bcbed35e25bc518e116808b95f30f95cb7b8e6f3cc4427cf395d679649ea819af3b846634efb95c7ad3f059239556bed79f6ac382797f0cd730f1788fe2ede29cf5290fd4313dfd746dd4e1f81550322ad4c965e19b6c15df90df3bf854c0b6de4e280d92abc25c7fcac5e0a38ebbdcdc5660fe422af663e799cd2bad6315f63abda5cf6af06bbffdb3ff7c56de094f944c6ea3111ce106a2b01f37f2309ccb11e006f621b0feeb5e245d8d98e0efa9f85f65d4177dbcc8861b85188f1dbdd726bfb062c3f87e94ea6303f43543fdd7c30c791a2ed5c68e6d4183c79cb090658b6911b3d5c6a4bb53d54ff12970be47b6e0047dcafcc14499a086",
+      "expect": "reject"
+    }
+  ],
   "key_derivation": [
     {
       "category": 5,

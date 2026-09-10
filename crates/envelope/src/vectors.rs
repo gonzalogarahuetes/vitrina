@@ -62,6 +62,7 @@ struct VectorFile {
     source: String,
     envelope_version: u8,
     envelope: Vec<EnvelopeVector>,
+    envelope_negative: Vec<NegativeVector>,
     key_derivation: Vec<KeyDerivationVector>,
 }
 
@@ -75,6 +76,18 @@ struct EnvelopeVector {
     base_nonce: String,
     chunk_size: u32,
     plaintext: String,
+    object: String,
+    expect: Expect,
+}
+
+/// §9 categories 10–13. The mutated bytes are stored, never the mutation,
+/// so no implementation has to interpret an instruction (§9.1).
+#[derive(Serialize, Deserialize)]
+struct NegativeVector {
+    category: u8,
+    name: String,
+    k_album: String,
+    asset_id: String,
     object: String,
     expect: Expect,
 }
@@ -144,6 +157,58 @@ fn envelope_vectors() -> Vec<EnvelopeVector> {
     ]
 }
 
+fn negative_vector(category: u8, name: &str, object: Vec<u8>) -> NegativeVector {
+    NegativeVector {
+        category,
+        name: name.to_string(),
+        k_album: hex(&K_ALBUM),
+        asset_id: hex(&ASSET_ID),
+        object: hex(&object),
+        expect: Expect::Reject,
+    }
+}
+
+/// All four derive from category 4: 200 bytes at chunk_size 64, so chunks 0
+/// and 1 are both 80 ciphertext bytes and the final chunk is 8 + 16.
+fn negative_vectors(source: &EnvelopeVector) -> Vec<NegativeVector> {
+    assert_eq!(source.category, 4);
+    let object: Vec<u8> = unhex(&source.object);
+    let header: Header = Header::parse(&object).unwrap();
+    let r0 = header.chunk_range(0).unwrap();
+    let r1 = header.chunk_range(1).unwrap();
+    let last = header.chunk_range(header.chunk_count() - 1).unwrap();
+    let (r0, r1) = (
+        r0.start as usize..r0.end as usize,
+        r1.start as usize..r1.end as usize,
+    );
+
+    let mut tampered: Vec<u8> = object.clone();
+    tampered[r1.start + 5] ^= 0x01;
+
+    let mut swapped: Vec<u8> = object[..64].to_vec();
+    swapped.extend_from_slice(&object[r1.clone()]);
+    swapped.extend_from_slice(&object[r0]);
+    swapped.extend_from_slice(&object[r1.end..]);
+
+    let mut truncated: Vec<u8> = object[..last.start as usize].to_vec();
+    let shortened: u64 = header.plaintext_length() - header.last_chunk_plaintext();
+    truncated[28..36].copy_from_slice(&shortened.to_le_bytes());
+
+    let mut downgraded: Vec<u8> = object.clone();
+    downgraded[4] = 0x02;
+
+    vec![
+        negative_vector(10, "tampered ciphertext byte in chunk 1", tampered),
+        negative_vector(11, "chunks 0 and 1 swapped", swapped),
+        negative_vector(
+            12,
+            "final chunk removed and plaintext_length adjusted",
+            truncated,
+        ),
+        negative_vector(13, "version byte altered", downgraded),
+    ]
+}
+
 fn key_derivation_vectors() -> Vec<KeyDerivationVector> {
     let album: AlbumKey = album_key();
     vec![KeyDerivationVector {
@@ -169,10 +234,13 @@ fn write_file(file: &VectorFile) {
 #[ignore]
 fn generate_vectors() {
     assert_eq!(Params::V1.wrap_params(), WrapParams::V1);
+    let envelope: Vec<EnvelopeVector> = envelope_vectors();
+    let envelope_negative: Vec<NegativeVector> = negative_vectors(&envelope[3]);
     write_file(&VectorFile {
         source: "spec/vitrina-encryption-spec.md §9 and §9.1".to_string(),
         envelope_version: 1,
-        envelope: envelope_vectors(),
+        envelope,
+        envelope_negative,
         key_derivation: key_derivation_vectors(),
     });
 }
