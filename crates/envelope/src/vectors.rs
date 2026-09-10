@@ -3,12 +3,16 @@
 //! reads it back under plain `cargo test`.
 
 use crate::aead::aead_encrypt;
+use crate::chunk::decrypt_chunk;
 use crate::envelope::encrypt_with_header;
 use crate::header::Header;
 use crate::keys::{cipher_for, keyed_blake2b_256};
 use crate::test_fixtures::{ASSET_ID, BASE_NONCE, K_ALBUM, album_key, hex};
 use crate::wrap::{derive_kek, normalize_passphrase, wrap_aad, wrap_with_salt_and_nonce};
-use crate::{AlbumKey, CHUNK_SIZE, RecipientId, Salt, WrapParams};
+use crate::{
+    AlbumKey, CHUNK_SIZE, RecipientId, Salt, WrapParams, WrappedKey, decrypt_asset,
+    unwrap_album_key,
+};
 use argon2::{Algorithm, Argon2, AssociatedData, ParamsBuilder, Version};
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -79,6 +83,44 @@ struct VectorFile {
     anchors: Anchors,
     wrap: Vec<WrapVector>,
     protocol: Protocol,
+}
+
+/// §9 categories 1–4. Inputs per §9's list; `object` is the full envelope.
+#[derive(Serialize, Deserialize)]
+struct EnvelopeVector {
+    category: u8,
+    name: String,
+    k_album: String,
+    asset_id: String,
+    base_nonce: String,
+    chunk_size: u32,
+    plaintext: String,
+    object: String,
+    expect: Expect,
+}
+
+/// §9 categories 10–13. The mutated bytes are stored, never the mutation,
+/// so no implementation has to interpret an instruction (§9.1).
+#[derive(Serialize, Deserialize)]
+struct NegativeVector {
+    category: u8,
+    name: String,
+    k_album: String,
+    asset_id: String,
+    object: String,
+    expect: Expect,
+}
+
+/// §9 category 5, pinning §2's three domain strings.
+#[derive(Serialize, Deserialize)]
+struct KeyDerivationVector {
+    category: u8,
+    name: String,
+    k_album: String,
+    asset_id: String,
+    k_asset: String,
+    k_thumb: String,
+    k_meta: String,
 }
 
 /// §9 category 9. Two parameter sets, because one cannot tell a reader that
@@ -196,44 +238,6 @@ struct Argon2idAnchor {
     associated_data: String,
     params: Params,
     tag: String,
-}
-
-/// §9 categories 1–4. Inputs per §9's list; `object` is the full envelope.
-#[derive(Serialize, Deserialize)]
-struct EnvelopeVector {
-    category: u8,
-    name: String,
-    k_album: String,
-    asset_id: String,
-    base_nonce: String,
-    chunk_size: u32,
-    plaintext: String,
-    object: String,
-    expect: Expect,
-}
-
-/// §9 categories 10–13. The mutated bytes are stored, never the mutation,
-/// so no implementation has to interpret an instruction (§9.1).
-#[derive(Serialize, Deserialize)]
-struct NegativeVector {
-    category: u8,
-    name: String,
-    k_album: String,
-    asset_id: String,
-    object: String,
-    expect: Expect,
-}
-
-/// §9 category 5, pinning §2's three domain strings.
-#[derive(Serialize, Deserialize)]
-struct KeyDerivationVector {
-    category: u8,
-    name: String,
-    k_album: String,
-    asset_id: String,
-    k_asset: String,
-    k_thumb: String,
-    k_meta: String,
 }
 
 // External anchor values, copied from their sources rather than computed.
@@ -621,22 +625,26 @@ fn key_derivation_vectors() -> Vec<KeyDerivationVector> {
     }]
 }
 
-fn write_file(file: &VectorFile) {
+fn to_json(file: &VectorFile) -> String {
     let mut json = serde_json::to_string_pretty(file).expect("serialisable");
     json.push('\n');
-    fs::write(PATH, json).expect("write spec/vectors");
+    json
 }
 
-/// Run on demand: `cargo test -p vitrina-envelope generate_vectors -- --ignored`.
-/// Output is deterministic; a second run must produce no diff.
-#[test]
-#[ignore]
-fn generate_vectors() {
+fn write_file(file: &VectorFile) {
+    fs::write(PATH, to_json(file)).expect("write spec/vectors");
+}
+
+fn read_committed() -> String {
+    fs::read_to_string(PATH).expect("spec/vectors/vitrina-vectors.json is committed")
+}
+
+fn build() -> VectorFile {
     assert_eq!(Params::V1.wrap_params(), WrapParams::V1);
     let anchors: Anchors = anchors();
     let envelope: Vec<EnvelopeVector> = envelope_vectors();
     let envelope_negative: Vec<NegativeVector> = negative_vectors(&envelope[3]);
-    write_file(&VectorFile {
+    VectorFile {
         source: "spec/vitrina-encryption-spec.md §9 and §9.1".to_string(),
         envelope_version: 1,
         envelope,
@@ -645,7 +653,259 @@ fn generate_vectors() {
         anchors,
         wrap: wrap_vectors(),
         protocol: protocol(),
-    });
+    }
+}
+
+/// Run on demand: `cargo test -p vitrina-envelope generate_vectors -- --ignored`.
+/// Output is deterministic; a second run must produce no diff.
+#[test]
+#[ignore]
+fn generate_vectors() {
+    write_file(&build());
+}
+
+/// Any drift between generator and file — a value, a field, the order — fails
+/// here rather than waiting for the next regeneration.
+#[test]
+fn generator_reproduces_committed_file() {
+    assert_eq!(to_json(&build()), read_committed());
+}
+
+// Verification: the committed file, read back through the crate's reader paths.
+// ---------------------------------------------------------------------------
+
+fn album_from(v: &str) -> AlbumKey {
+    AlbumKey::from_bytes(unhex_array(v))
+}
+
+fn verify_envelope(v: &EnvelopeVector) {
+    assert_eq!(v.expect, Expect::Accept, "category {}", v.category);
+    let album: AlbumKey = album_from(&v.k_album);
+    let asset_id: [u8; 16] = unhex_array(&v.asset_id);
+    let plaintext: Vec<u8> = unhex(&v.plaintext);
+    let object: Vec<u8> = unhex(&v.object);
+
+    let header: Header = Header::new(
+        asset_id,
+        unhex_array(&v.base_nonce),
+        v.chunk_size,
+        plaintext.len() as u64,
+    )
+    .unwrap();
+    let key = album.derive_asset(&asset_id);
+    assert_eq!(
+        hex(&encrypt_with_header(&key, &header, &plaintext).unwrap()),
+        v.object,
+        "category {}: encrypt",
+        v.category
+    );
+    assert_eq!(
+        decrypt_asset(&album, &asset_id, &object).unwrap(),
+        plaintext,
+        "category {}: decrypt",
+        v.category
+    );
+
+    // §3.3: every chunk from the header and that chunk's bytes alone.
+    let parsed: Header = Header::parse(&object).unwrap();
+    assert_eq!(parsed.chunk_size(), v.chunk_size);
+    let cs: usize = v.chunk_size as usize;
+    for i in 0..parsed.chunk_count() {
+        let r = parsed.chunk_range(i).unwrap();
+        let chunk: &[u8] = &object[r.start as usize..r.end as usize];
+        let (start, end) = (
+            i as usize * cs,
+            ((i as usize + 1) * cs).min(plaintext.len()),
+        );
+        assert_eq!(
+            decrypt_chunk(&key, &parsed, i, chunk).unwrap(),
+            &plaintext[start..end],
+            "category {}: chunk {i}",
+            v.category
+        );
+    }
+}
+
+fn verify_negative(v: &NegativeVector) {
+    assert_eq!(v.expect, Expect::Reject, "category {}", v.category);
+    let album: AlbumKey = album_from(&v.k_album);
+    let asset_id: [u8; 16] = unhex_array(&v.asset_id);
+    assert!(
+        decrypt_asset(&album, &asset_id, &unhex(&v.object)).is_err(),
+        "category {}: accepted a rejected object",
+        v.category
+    );
+}
+
+fn verify_key_derivation(v: &KeyDerivationVector) {
+    let album: AlbumKey = album_from(&v.k_album);
+    let asset_id: [u8; 16] = unhex_array(&v.asset_id);
+    assert_eq!(hex(album.derive_asset(&asset_id).expose_bytes()), v.k_asset);
+    assert_eq!(hex(album.derive_thumb(&asset_id).expose_bytes()), v.k_thumb);
+    assert_eq!(hex(album.derive_meta(&asset_id).expose_bytes()), v.k_meta);
+}
+
+fn verify_anchors(a: &Anchors) {
+    assert_eq!(
+        (
+            a.blake2b_keyed.category,
+            a.xchacha20poly1305.category,
+            a.argon2id.category
+        ),
+        (6, 7, 8)
+    );
+    assert_eq!(
+        hex(&keyed_blake2b_256(
+            &unhex_array(&a.blake2b_keyed.key),
+            &unhex(&a.blake2b_keyed.message)
+        )),
+        a.blake2b_keyed.digest
+    );
+    let x = &a.xchacha20poly1305;
+    assert_eq!(
+        hex(&aead_encrypt(
+            &cipher_for(&unhex_array(&x.key)),
+            &unhex_array(&x.nonce),
+            &unhex(&x.aad),
+            &unhex(&x.plaintext),
+        )),
+        x.ciphertext_and_tag
+    );
+    let r = &a.argon2id;
+    assert_eq!(
+        hex(&rfc9106_argon2id(
+            &unhex(&r.password),
+            &unhex(&r.salt),
+            &unhex(&r.secret),
+            &unhex(&r.associated_data),
+            r.params,
+        )),
+        r.tag
+    );
+}
+
+fn verify_wrap(
+    k_album: &str,
+    passphrase: &str,
+    salt: &str,
+    params: Params,
+    recipient_id: &str,
+    wrap_nonce: &str,
+    wrapped: &str,
+) {
+    let album: AlbumKey = album_from(k_album);
+    let salt: Salt = Salt::from_bytes(unhex_array(salt));
+    let recipient: RecipientId = RecipientId::from_bytes(unhex_array(recipient_id));
+    let wrap_nonce: [u8; 24] = unhex_array(wrap_nonce);
+    let got: [u8; 48] = wrap_with_salt_and_nonce(
+        &album,
+        passphrase,
+        salt,
+        params.wrap_params(),
+        &recipient,
+        &wrap_nonce,
+    )
+    .unwrap();
+    assert_eq!(hex(&got), wrapped);
+
+    let stored = WrappedKey {
+        wrapped: got,
+        wrap_nonce,
+        kdf_salt: salt,
+    };
+    let unwrapped: AlbumKey =
+        unwrap_album_key(passphrase, params.wrap_params(), recipient, &stored).unwrap();
+    assert_eq!(unwrapped.expose_bytes(), album.expose_bytes());
+}
+
+fn verify_protocol(p: &Protocol) {
+    let t = &p.token;
+    assert_eq!((t.vector, t.expect), (1, Expect::Accept));
+    let raw: [u8; 32] = unhex_array(&t.token_raw);
+    assert_eq!(hex(&Sha256::digest(raw)), t.sha256);
+    assert_eq!(URL_SAFE_NO_PAD.encode(raw), t.token_base64url);
+    assert_eq!(strict_decode_token(&t.token_base64url), Some(raw));
+
+    let n = &p.token_noncanonical;
+    assert_eq!((n.vector, n.expect), (2, Expect::Reject));
+    assert_ne!(n.token_base64url, t.token_base64url);
+    assert_eq!(strict_decode_token(&n.token_base64url), None);
+
+    let pn = &p.passphrase_normalisation;
+    assert_eq!(pn.vector, 3);
+    assert_eq!(normalize_passphrase(&pn.passphrase), pn.normalized);
+    let salt: Salt = Salt::from_bytes(unhex_array(&pn.salt));
+    let kek = derive_kek(&pn.passphrase, pn.params.wrap_params(), salt).unwrap();
+    assert_eq!(hex(kek.expose_bytes()), pn.kek);
+    let kek_from_normalized = derive_kek(&pn.normalized, pn.params.wrap_params(), salt).unwrap();
+    assert_eq!(kek_from_normalized.expose_bytes(), kek.expose_bytes());
+
+    let a = &p.wrap_aad;
+    assert_eq!(a.vector, 4);
+    assert_eq!(
+        hex(&wrap_aad(&RecipientId::from_bytes(unhex_array(
+            &a.recipient_id
+        )))),
+        a.aad
+    );
+
+    assert_eq!(p.wrap_salt_length.len(), 2);
+    for v in &p.wrap_salt_length {
+        assert_eq!(v.vector, 5);
+        match (v.expect, unhex(&v.salt).len(), &v.wrapped) {
+            (Expect::Accept, 16, Some(wrapped)) => verify_wrap(
+                &v.k_album,
+                &v.passphrase,
+                &v.salt,
+                v.params,
+                &v.recipient_id,
+                &v.wrap_nonce,
+                wrapped,
+            ),
+            // Salt is [u8; 16]: a 32-byte salt is unrepresentable here, so this
+            // case polices non-Rust implementations and is skipped, not checked.
+            (Expect::Reject, 32, None) => {}
+            other => panic!("unexpected salt-length vector shape: {other:?}"),
+        }
+    }
+}
+
+#[test]
+fn committed_vectors_verify() {
+    let file: VectorFile =
+        serde_json::from_str(&read_committed()).expect("well-formed vector file");
+    assert_eq!(file.envelope_version, 1);
+
+    let categories: Vec<u8> = file.envelope.iter().map(|v| v.category).collect();
+    assert_eq!(categories, [1, 2, 3, 4]);
+    file.envelope.iter().for_each(verify_envelope);
+
+    let categories: Vec<u8> = file.envelope_negative.iter().map(|v| v.category).collect();
+    assert_eq!(categories, [10, 11, 12, 13]);
+    file.envelope_negative.iter().for_each(verify_negative);
+
+    assert_eq!(file.key_derivation.len(), 1);
+    assert_eq!(file.key_derivation[0].category, 5);
+    verify_key_derivation(&file.key_derivation[0]);
+
+    verify_anchors(&file.anchors);
+
+    let params: Vec<Params> = file.wrap.iter().map(|v| v.params).collect();
+    assert_eq!(params, [Params::V1, Params::LOW]);
+    for v in &file.wrap {
+        assert_eq!(v.category, 9);
+        verify_wrap(
+            &v.k_album,
+            &v.passphrase,
+            &v.salt,
+            v.params,
+            &v.recipient_id,
+            &v.wrap_nonce,
+            &v.wrapped,
+        );
+    }
+
+    verify_protocol(&file.protocol);
 }
 
 #[test]
