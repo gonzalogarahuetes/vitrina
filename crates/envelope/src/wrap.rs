@@ -1,6 +1,7 @@
 use crate::{
     AlbumKey,
     aead::{AeadError, aead_decrypt, aead_encrypt},
+    ids::{RecipientId, Salt},
     keys::{Kek, cipher_for},
 };
 use argon2::{Algorithm, Argon2, Params, Version};
@@ -53,6 +54,7 @@ pub enum WrapError {
     RandomnessUnavailable,
     UnexpectedKeyLength,
     AuthenticationFailed,
+    EmptyPassphrase,
 }
 
 impl From<AeadError> for WrapError {
@@ -80,6 +82,10 @@ pub(crate) fn derive_kek(
     salt: Salt,
 ) -> Result<Kek, WrapError> {
     let pwd = normalize_passphrase(passphrase);
+    if pwd.is_empty() {
+        return Err(WrapError::EmptyPassphrase);
+    }
+
     let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, params.argon2_params()?);
 
     let mut out = Zeroizing::new([0u8; KEK_LEN]);
@@ -100,34 +106,6 @@ pub(crate) fn wrap_aad(recipient_id: &RecipientId) -> [u8; 31] {
     bytes_aad[15..].copy_from_slice(recipient_id.as_bytes());
 
     bytes_aad
-}
-
-// C.8.5 — Wrap and unwrap, taking wrap_nonce as a parameter. Same split you used at C.6:
-// a nonce-taking inner function so vectors are reproducible, and a public wrapper that generates 24 random bytes from getrandom
-// and returns them alongside wrapped — the server stores it (§6.2), so it has to come back out.
-// Round trip, and wrapped.len() == 48.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Salt([u8; 16]);
-
-impl Salt {
-    pub fn from_bytes(bytes: [u8; 16]) -> Self {
-        Salt(bytes)
-    }
-    pub fn as_bytes(&self) -> &[u8; 16] {
-        &self.0
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct RecipientId([u8; 16]);
-
-impl RecipientId {
-    pub fn from_bytes(bytes: [u8; 16]) -> Self {
-        RecipientId(bytes)
-    }
-    pub fn as_bytes(&self) -> &[u8; 16] {
-        &self.0
-    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -487,6 +465,30 @@ mod tests {
         );
     }
 
+    #[test]
+    fn rejects_with_empty_passphrase() {
+        assert_eq!(
+            derive_kek("", low_params(), Salt::from_bytes(SALT)).err(),
+            Some(WrapError::EmptyPassphrase)
+        );
+    }
+
+    #[test]
+    fn rejects_whitespace_only_passphrase() {
+        assert_eq!(
+            derive_kek("   ", low_params(), Salt::from_bytes(SALT)).err(),
+            Some(WrapError::EmptyPassphrase)
+        );
+    }
+
+    #[test]
+    fn rejects_passphrase_that_normalizes_to_empty() {
+        assert_eq!(
+            derive_kek("\u{0301}", low_params(), Salt::from_bytes(SALT)).err(),
+            Some(WrapError::EmptyPassphrase)
+        );
+    }
+
     // AAD Concatenation Tests
     // ----------------------------------------------------
     #[test]
@@ -579,6 +581,42 @@ mod tests {
         .unwrap();
 
         assert_eq!(&album_key().expose_bytes(), &wrapped_low.expose_bytes());
+    }
+
+    #[test]
+    fn rejects_wraps_with_passphrase_that_normalizes_to_empty() {
+        assert_eq!(
+            wrap_album_key(
+                &album_key(),
+                "\u{0301}",
+                low_params(),
+                RecipientId::from_bytes(RECIPIENT_ID),
+            )
+            .err(),
+            Some(WrapError::EmptyPassphrase)
+        );
+    }
+
+    #[test]
+    fn rejects_unwraps_with_passphrase_that_normalize_to_empty() {
+        let wrapped = wrap_album_key(
+            &album_key(),
+            "Café Roble ",
+            low_params(),
+            RecipientId::from_bytes(RECIPIENT_ID),
+        )
+        .unwrap();
+
+        assert_eq!(
+            unwrap_album_key(
+                "    ",
+                low_params(),
+                RecipientId::from_bytes(RECIPIENT_ID),
+                &wrapped
+            )
+            .err(),
+            Some(WrapError::EmptyPassphrase)
+        );
     }
 
     #[test]

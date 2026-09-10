@@ -7,6 +7,7 @@ mod aead;
 mod chunk;
 mod envelope;
 mod header;
+mod ids;
 mod keys;
 #[cfg(test)]
 pub(crate) mod test_fixtures;
@@ -19,7 +20,6 @@ pub use envelope::{
     encrypt_meta, encrypt_thumb,
 };
 pub use header::{HeaderError, LayoutError};
+pub use ids::{AssetId, RecipientId, Salt};
 pub use keys::AlbumKey;
-pub use wrap::{
-    RecipientId, Salt, WrapError, WrapParams, WrappedKey, unwrap_album_key, wrap_album_key,
-};
+pub use wrap::{WrapError, WrapParams, WrappedKey, unwrap_album_key, wrap_album_key};
