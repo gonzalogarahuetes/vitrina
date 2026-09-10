@@ -2,10 +2,13 @@
 //! `generate_vectors` (ignored) writes the file; `committed_vectors_verify`
 //! reads it back under plain `cargo test`.
 
+use crate::aead::aead_encrypt;
 use crate::envelope::encrypt_with_header;
 use crate::header::Header;
+use crate::keys::{cipher_for, keyed_blake2b_256};
 use crate::test_fixtures::{ASSET_ID, BASE_NONCE, K_ALBUM, album_key, hex};
 use crate::{AlbumKey, CHUNK_SIZE, WrapParams};
+use argon2::{Algorithm, Argon2, AssociatedData, ParamsBuilder, Version};
 use serde::{Deserialize, Serialize};
 use std::fs;
 
@@ -64,6 +67,47 @@ struct VectorFile {
     envelope: Vec<EnvelopeVector>,
     envelope_negative: Vec<NegativeVector>,
     key_derivation: Vec<KeyDerivationVector>,
+    anchors: Anchors,
+}
+
+/// §9 categories 6–8: one external anchor per §1 primitive, keyed by name.
+#[derive(Serialize, Deserialize)]
+struct Anchors {
+    blake2b_keyed: Blake2bAnchor,
+    xchacha20poly1305: XChaChaAnchor,
+    argon2id: Argon2idAnchor,
+}
+
+#[derive(Serialize, Deserialize)]
+struct Blake2bAnchor {
+    category: u8,
+    source: String,
+    key: String,
+    message: String,
+    digest: String,
+}
+
+#[derive(Serialize, Deserialize)]
+struct XChaChaAnchor {
+    category: u8,
+    source: String,
+    key: String,
+    nonce: String,
+    aad: String,
+    plaintext: String,
+    ciphertext_and_tag: String,
+}
+
+#[derive(Serialize, Deserialize)]
+struct Argon2idAnchor {
+    category: u8,
+    source: String,
+    password: String,
+    salt: String,
+    secret: String,
+    associated_data: String,
+    params: Params,
+    tag: String,
 }
 
 /// §9 categories 1–4. Inputs per §9's list; `object` is the full envelope.
@@ -102,6 +146,115 @@ struct KeyDerivationVector {
     k_asset: String,
     k_thumb: String,
     k_meta: String,
+}
+
+// External anchor values, copied from their sources rather than computed.
+// ---------------------------------------------------------------------------
+
+/// libsodium 1.0.20, test/default/generichash2.exp line 32 — loop i = 31:
+/// key 0x00..=0x1f, message 0x00..0x1e fed three times, 32-byte digest.
+const GENERICHASH2_I31: &str = "0e5625d74ada70b8a3b23ca76894e9a0f9dee88f5e3e370e27ad25061ea9dd6f";
+
+/// draft-irtf-cfrg-xchacha-03, Appendix A.3.1.
+const XCHACHA_AAD: [u8; 12] = [
+    0x50, 0x51, 0x52, 0x53, 0xc0, 0xc1, 0xc2, 0xc3, 0xc4, 0xc5, 0xc6, 0xc7,
+];
+const XCHACHA_KEY: [u8; 32] = [
+    0x80, 0x81, 0x82, 0x83, 0x84, 0x85, 0x86, 0x87, 0x88, 0x89, 0x8a, 0x8b, 0x8c, 0x8d, 0x8e, 0x8f,
+    0x90, 0x91, 0x92, 0x93, 0x94, 0x95, 0x96, 0x97, 0x98, 0x99, 0x9a, 0x9b, 0x9c, 0x9d, 0x9e, 0x9f,
+];
+const XCHACHA_IV: [u8; 24] = [
+    0x40, 0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47, 0x48, 0x49, 0x4a, 0x4b, 0x4c, 0x4d, 0x4e, 0x4f,
+    0x50, 0x51, 0x52, 0x53, 0x54, 0x55, 0x56, 0x57,
+];
+const XCHACHA_PLAINTEXT: &[u8; 114] = b"Ladies and Gentlemen of the class of '99: If I could offer you only one tip for the future, sunscreen would be it.";
+const XCHACHA_CIPHERTEXT_AND_TAG: &str = "bd6d179d3e83d43b9576579493c0e939572a1700252bfaccbed2902c21396cbb731c7f1b0b4aa6440bf3a82f4eda7e39ae64c6708c54c216cb96b72e1213b4522f8c9ba40db5d945b11b69b982c1bb9e3f3fac2bc369488f76b2383565d3fff921f9664c97637da9768812f615c68b13b52ec0875924c1c7987947deafd8780acf49";
+
+/// RFC 9106 §5.3, Argon2id.
+const RFC_9106_ARGON2ID_TAG: &str =
+    "0d640df58d78766c08c037a34a8b53c9d01ef0452d75b65eb52520e96b01e659";
+
+/// Each anchor is recomputed and asserted here, so the generator cannot emit
+/// a self-generated vector on top of a primitive that fails its anchor (§9.2).
+fn anchors() -> Anchors {
+    let key: [u8; 32] = std::array::from_fn(|h| h as u8);
+    let message: Vec<u8> = ascending(31).repeat(3);
+    let digest: [u8; 32] = keyed_blake2b_256(&key, &message);
+    assert_eq!(hex(&digest), GENERICHASH2_I31);
+
+    let ciphertext_and_tag: Vec<u8> = aead_encrypt(
+        &cipher_for(&XCHACHA_KEY),
+        &XCHACHA_IV,
+        &XCHACHA_AAD,
+        XCHACHA_PLAINTEXT,
+    );
+    assert_eq!(hex(&ciphertext_and_tag), XCHACHA_CIPHERTEXT_AND_TAG);
+
+    let (password, salt, secret, associated_data) =
+        ([0x01u8; 32], [0x02u8; 16], [0x03u8; 8], [0x04u8; 12]);
+    let params = Params {
+        m_cost_kib: 32,
+        t_cost: 3,
+        p_cost: 4,
+    };
+    let tag: [u8; 32] = rfc9106_argon2id(&password, &salt, &secret, &associated_data, params);
+    assert_eq!(hex(&tag), RFC_9106_ARGON2ID_TAG);
+
+    Anchors {
+        blake2b_keyed: Blake2bAnchor {
+            category: 6,
+            source: "libsodium 1.0.20 test/default/generichash2.exp line 32 (i = 31)".to_string(),
+            key: hex(&key),
+            message: hex(&message),
+            digest: hex(&digest),
+        },
+        xchacha20poly1305: XChaChaAnchor {
+            category: 7,
+            source: "draft-irtf-cfrg-xchacha-03 Appendix A.3.1".to_string(),
+            key: hex(&XCHACHA_KEY),
+            nonce: hex(&XCHACHA_IV),
+            aad: hex(&XCHACHA_AAD),
+            plaintext: hex(XCHACHA_PLAINTEXT),
+            ciphertext_and_tag: hex(&ciphertext_and_tag),
+        },
+        argon2id: Argon2idAnchor {
+            category: 8,
+            source: "RFC 9106 §5.3".to_string(),
+            password: hex(&password),
+            salt: hex(&salt),
+            secret: hex(&secret),
+            associated_data: hex(&associated_data),
+            params,
+            tag: hex(&tag),
+        },
+    }
+}
+
+/// The RFC vector carries a secret and associated data, which `derive_kek`
+/// deliberately cannot supply (§6.2), so the anchor calls the primitive directly.
+fn rfc9106_argon2id(
+    password: &[u8],
+    salt: &[u8],
+    secret: &[u8],
+    associated_data: &[u8],
+    params: Params,
+) -> [u8; 32] {
+    let mut b = ParamsBuilder::new();
+    b.m_cost(params.m_cost_kib)
+        .t_cost(params.t_cost)
+        .p_cost(params.p_cost)
+        .output_len(32)
+        .data(AssociatedData::new(associated_data).unwrap());
+    let argon = Argon2::new_with_secret(
+        secret,
+        Algorithm::Argon2id,
+        Version::V0x13,
+        b.build().unwrap(),
+    )
+    .unwrap();
+    let mut out = [0u8; 32];
+    argon.hash_password_into(password, salt, &mut out).unwrap();
+    out
 }
 
 fn ascending(len: u64) -> Vec<u8> {
@@ -234,6 +387,7 @@ fn write_file(file: &VectorFile) {
 #[ignore]
 fn generate_vectors() {
     assert_eq!(Params::V1.wrap_params(), WrapParams::V1);
+    let anchors: Anchors = anchors();
     let envelope: Vec<EnvelopeVector> = envelope_vectors();
     let envelope_negative: Vec<NegativeVector> = negative_vectors(&envelope[3]);
     write_file(&VectorFile {
@@ -242,6 +396,7 @@ fn generate_vectors() {
         envelope,
         envelope_negative,
         key_derivation: key_derivation_vectors(),
+        anchors,
     });
 }
 

@@ -8,7 +8,7 @@ const ASSET_LABEL: &[u8; 16] = b"vitrina-asset-v1";
 const THUMB_LABEL: &[u8; 16] = b"vitrina-thumb-v1";
 const META_LABEL: &[u8; 15] = b"vitrina-meta-v1";
 /// keyed BLAKE2b, 32-byte key, 32-byte output, RFC 7693
-fn keyed_blake2b_256(key: &[u8; 32], msg: &[u8]) -> [u8; 32] {
+pub(crate) fn keyed_blake2b_256(key: &[u8; 32], msg: &[u8]) -> [u8; 32] {
     let mut hasher = Blake2bMac::<U32>::new_from_slice(key)
         .expect("key is 32 bytes by type; BLAKE2b accepts up to 64");
     hasher.update(msg);
