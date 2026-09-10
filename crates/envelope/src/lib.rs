@@ -10,6 +10,8 @@ mod header;
 mod keys;
 #[cfg(test)]
 pub(crate) mod test_fixtures;
+#[cfg(test)]
+mod vectors;
 mod wrap;
 
 pub use envelope::{
