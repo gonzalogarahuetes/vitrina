@@ -1,4 +1,5 @@
 use crate::AlbumKey;
+use crate::AssetId;
 use crate::header::Header;
 use crate::keys::AssetKey;
 use crate::keys::ThumbKey;
@@ -56,11 +57,11 @@ pub(crate) fn hex(bytes: &[u8]) -> String {
 }
 
 pub(crate) fn asset_key() -> AssetKey {
-    AlbumKey::from_bytes(K_ALBUM).derive_asset(&ASSET_ID)
+    AlbumKey::from_bytes(K_ALBUM).derive_asset(&AssetId::from_bytes(ASSET_ID))
 }
 
 pub(crate) fn thumb_key() -> ThumbKey {
-    AlbumKey::from_bytes(K_ALBUM).derive_thumb(&ASSET_ID)
+    AlbumKey::from_bytes(K_ALBUM).derive_thumb(&AssetId::from_bytes(ASSET_ID))
 }
 
 pub(crate) fn album_key() -> AlbumKey {

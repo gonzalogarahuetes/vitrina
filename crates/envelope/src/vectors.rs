@@ -10,7 +10,7 @@ use crate::keys::{cipher_for, keyed_blake2b_256};
 use crate::test_fixtures::{ASSET_ID, BASE_NONCE, K_ALBUM, album_key, hex};
 use crate::wrap::{derive_kek, normalize_passphrase, wrap_aad, wrap_with_salt_and_nonce};
 use crate::{
-    AlbumKey, CHUNK_SIZE, RecipientId, Salt, WrapParams, WrappedKey, decrypt_asset,
+    AlbumKey, AssetId, CHUNK_SIZE, RecipientId, Salt, WrapParams, WrappedKey, decrypt_asset,
     unwrap_album_key,
 };
 use argon2::{Algorithm, Argon2, AssociatedData, ParamsBuilder, Version};
@@ -528,9 +528,19 @@ fn envelope_vector(
 ) -> EnvelopeVector {
     let base_nonce: [u8; 16] = base_nonce_for(category);
     let plaintext: Vec<u8> = ascending(plaintext_length);
-    let header: Header = Header::new(ASSET_ID, base_nonce, chunk_size, plaintext_length).unwrap();
-    let object: Vec<u8> =
-        encrypt_with_header(&album_key().derive_asset(&ASSET_ID), &header, &plaintext).unwrap();
+    let header: Header = Header::new(
+        AssetId::from_bytes(ASSET_ID),
+        base_nonce,
+        chunk_size,
+        plaintext_length,
+    )
+    .unwrap();
+    let object: Vec<u8> = encrypt_with_header(
+        &album_key().derive_asset(&AssetId::from_bytes(ASSET_ID)),
+        &header,
+        &plaintext,
+    )
+    .unwrap();
     EnvelopeVector {
         category,
         name: name.to_string(),
@@ -619,9 +629,15 @@ fn key_derivation_vectors() -> Vec<KeyDerivationVector> {
         name: "K_album + asset_id -> K_asset, K_thumb, K_meta".to_string(),
         k_album: hex(&K_ALBUM),
         asset_id: hex(&ASSET_ID),
-        k_asset: hex(album.derive_asset(&ASSET_ID).expose_bytes()),
-        k_thumb: hex(album.derive_thumb(&ASSET_ID).expose_bytes()),
-        k_meta: hex(album.derive_meta(&ASSET_ID).expose_bytes()),
+        k_asset: hex(album
+            .derive_asset(&AssetId::from_bytes(ASSET_ID))
+            .expose_bytes()),
+        k_thumb: hex(album
+            .derive_thumb(&AssetId::from_bytes(ASSET_ID))
+            .expose_bytes()),
+        k_meta: hex(album
+            .derive_meta(&AssetId::from_bytes(ASSET_ID))
+            .expose_bytes()),
     }]
 }
 
@@ -686,7 +702,7 @@ fn album_from(v: &str) -> AlbumKey {
 fn verify_envelope(v: &EnvelopeVector) {
     assert_eq!(v.expect, Expect::Accept, "category {}", v.category);
     let album: AlbumKey = album_from(&v.k_album);
-    let asset_id: [u8; 16] = unhex_array(&v.asset_id);
+    let asset_id: AssetId = AssetId::from_bytes(unhex_array(&v.asset_id));
     let plaintext: Vec<u8> = unhex(&v.plaintext);
     let object: Vec<u8> = unhex(&v.object);
 
@@ -734,7 +750,7 @@ fn verify_envelope(v: &EnvelopeVector) {
 fn verify_negative(v: &NegativeVector) {
     assert_eq!(v.expect, Expect::Reject, "category {}", v.category);
     let album: AlbumKey = album_from(&v.k_album);
-    let asset_id: [u8; 16] = unhex_array(&v.asset_id);
+    let asset_id: AssetId = AssetId::from_bytes(unhex_array(&v.asset_id));
     assert!(
         decrypt_asset(&album, &asset_id, &unhex(&v.object)).is_err(),
         "category {}: accepted a rejected object",
@@ -744,7 +760,7 @@ fn verify_negative(v: &NegativeVector) {
 
 fn verify_key_derivation(v: &KeyDerivationVector) {
     let album: AlbumKey = album_from(&v.k_album);
-    let asset_id: [u8; 16] = unhex_array(&v.asset_id);
+    let asset_id: AssetId = AssetId::from_bytes(unhex_array(&v.asset_id));
     assert_eq!(hex(album.derive_asset(&asset_id).expose_bytes()), v.k_asset);
     assert_eq!(hex(album.derive_thumb(&asset_id).expose_bytes()), v.k_thumb);
     assert_eq!(hex(album.derive_meta(&asset_id).expose_bytes()), v.k_meta);

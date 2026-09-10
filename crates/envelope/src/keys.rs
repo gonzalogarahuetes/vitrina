@@ -4,6 +4,8 @@ use chacha20poly1305::KeyInit as _;
 use chacha20poly1305::XChaCha20Poly1305;
 use zeroize::Zeroizing;
 
+use crate::AssetId;
+
 const ASSET_LABEL: &[u8; 16] = b"vitrina-asset-v1";
 const THUMB_LABEL: &[u8; 16] = b"vitrina-thumb-v1";
 const META_LABEL: &[u8; 15] = b"vitrina-meta-v1";
@@ -57,20 +59,20 @@ impl AlbumKey {
     pub(crate) fn expose_bytes(&self) -> &[u8; 32] {
         &self.0
     }
-    pub(crate) fn derive_asset(&self, asset_id: &[u8; 16]) -> AssetKey {
+    pub(crate) fn derive_asset(&self, asset_id: &AssetId) -> AssetKey {
         AssetKey(Zeroizing::new(self.derive(ASSET_LABEL, asset_id)))
     }
-    pub(crate) fn derive_thumb(&self, asset_id: &[u8; 16]) -> ThumbKey {
+    pub(crate) fn derive_thumb(&self, asset_id: &AssetId) -> ThumbKey {
         ThumbKey(Zeroizing::new(self.derive(THUMB_LABEL, asset_id)))
     }
-    pub(crate) fn derive_meta(&self, asset_id: &[u8; 16]) -> MetaKey {
+    pub(crate) fn derive_meta(&self, asset_id: &AssetId) -> MetaKey {
         MetaKey(Zeroizing::new(self.derive(META_LABEL, asset_id)))
     }
-    fn derive(&self, label: &[u8], asset_id: &[u8; 16]) -> [u8; 32] {
+    fn derive(&self, label: &[u8], asset_id: &AssetId) -> [u8; 32] {
         let mut buf: [u8; 32] = [0u8; 32];
         let n: usize = label.len();
         buf[..n].copy_from_slice(label);
-        buf[n..n + 16].copy_from_slice(asset_id);
+        buf[n..n + 16].copy_from_slice(asset_id.as_bytes());
         keyed_blake2b_256(self.expose_bytes(), &buf[..n + 16])
     }
 }
@@ -161,9 +163,9 @@ mod tests {
     ) -> (AssetKey, ThumbKey, MetaKey) {
         let k_album: AlbumKey = AlbumKey::from_bytes(album_bytes);
 
-        let k_asset: AssetKey = k_album.derive_asset(&asset_id_bytes);
-        let k_thumb: ThumbKey = k_album.derive_thumb(&asset_id_bytes);
-        let k_meta: MetaKey = k_album.derive_meta(&asset_id_bytes);
+        let k_asset: AssetKey = k_album.derive_asset(&AssetId::from_bytes(asset_id_bytes));
+        let k_thumb: ThumbKey = k_album.derive_thumb(&AssetId::from_bytes(asset_id_bytes));
+        let k_meta: MetaKey = k_album.derive_meta(&AssetId::from_bytes(asset_id_bytes));
         (k_asset, k_thumb, k_meta)
     }
 

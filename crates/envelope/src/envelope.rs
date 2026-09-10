@@ -1,5 +1,5 @@
 use crate::{
-    AlbumKey, HeaderError, LayoutError,
+    AlbumKey, AssetId, HeaderError, LayoutError,
     chunk::{ChunkError, decrypt_chunk, encrypt_chunk},
     header::Header,
     keys::ChunkKey,
@@ -45,44 +45,44 @@ pub const CHUNK_SIZE: u32 = 262_144;
 
 pub(crate) fn encrypt_object<K: ChunkKey>(
     key: &K,
-    asset_id: &[u8; 16],
+    asset_id: AssetId,
     plaintext: &[u8],
 ) -> Result<Vec<u8>, EnvelopeError> {
     let mut base_nonce: [u8; 16] = [0u8; 16];
     getrandom::fill(&mut base_nonce).map_err(|_| EnvelopeError::RandomnessUnavailable)?;
 
-    let header: Header = Header::new(*asset_id, base_nonce, CHUNK_SIZE, plaintext.len() as u64)?;
+    let header: Header = Header::new(asset_id, base_nonce, CHUNK_SIZE, plaintext.len() as u64)?;
 
     encrypt_with_header(key, &header, plaintext)
 }
 
 pub fn encrypt_asset(
     album: &AlbumKey,
-    asset_id: &[u8; 16],
+    asset_id: AssetId,
     plaintext: &[u8],
 ) -> Result<Vec<u8>, EnvelopeError> {
-    encrypt_object(&album.derive_asset(asset_id), asset_id, plaintext)
+    encrypt_object(&album.derive_asset(&asset_id), asset_id, plaintext)
 }
 
 pub fn encrypt_thumb(
     album: &AlbumKey,
-    asset_id: &[u8; 16],
+    asset_id: AssetId,
     plaintext: &[u8],
 ) -> Result<Vec<u8>, EnvelopeError> {
-    encrypt_object(&album.derive_thumb(asset_id), asset_id, plaintext)
+    encrypt_object(&album.derive_thumb(&asset_id), asset_id, plaintext)
 }
 
 pub fn encrypt_meta(
     album: &AlbumKey,
-    asset_id: &[u8; 16],
+    asset_id: AssetId,
     plaintext: &[u8],
 ) -> Result<Vec<u8>, EnvelopeError> {
-    encrypt_object(&album.derive_meta(asset_id), asset_id, plaintext)
+    encrypt_object(&album.derive_meta(&asset_id), asset_id, plaintext)
 }
 
 pub fn decrypt_asset(
     album: &AlbumKey,
-    asset_id: &[u8; 16],
+    asset_id: &AssetId,
     object: &[u8],
 ) -> Result<Vec<u8>, EnvelopeError> {
     decrypt(&album.derive_asset(asset_id), object)
@@ -90,7 +90,7 @@ pub fn decrypt_asset(
 
 pub fn decrypt_thumb(
     album: &AlbumKey,
-    asset_id: &[u8; 16],
+    asset_id: &AssetId,
     object: &[u8],
 ) -> Result<Vec<u8>, EnvelopeError> {
     decrypt(&album.derive_thumb(asset_id), object)
@@ -98,7 +98,7 @@ pub fn decrypt_thumb(
 
 pub fn decrypt_meta(
     album: &AlbumKey,
-    asset_id: &[u8; 16],
+    asset_id: &AssetId,
     object: &[u8],
 ) -> Result<Vec<u8>, EnvelopeError> {
     decrypt(&album.derive_meta(asset_id), object)
@@ -231,8 +231,13 @@ mod tests {
         ] {
             let k: crate::keys::AssetKey = asset_key();
             let plaintext: Vec<u8> = (0..plaintext_length).map(|b| b as u8).collect::<Vec<u8>>();
-            let header: Header =
-                Header::new(ASSET_ID, BASE_NONCE, chunk_size, plaintext_length).unwrap();
+            let header: Header = Header::new(
+                AssetId::from_bytes(ASSET_ID),
+                BASE_NONCE,
+                chunk_size,
+                plaintext_length,
+            )
+            .unwrap();
 
             let out: Vec<u8> = encrypt_with_header(&k, &header, &plaintext).unwrap();
 
@@ -263,7 +268,13 @@ mod tests {
             .map(|b: u64| b as u8)
             .collect::<Vec<u8>>();
         plaintext.pop();
-        let header: Header = Header::new(ASSET_ID, BASE_NONCE, 64u32, plaintext_length).unwrap();
+        let header: Header = Header::new(
+            AssetId::from_bytes(ASSET_ID),
+            BASE_NONCE,
+            64u32,
+            plaintext_length,
+        )
+        .unwrap();
         assert_eq!(
             encrypt_with_header(&k, &header, &plaintext).unwrap_err(),
             EnvelopeError::PlaintextLengthMismatch {
@@ -281,7 +292,13 @@ mod tests {
             .map(|b: u64| b as u8)
             .collect::<Vec<u8>>();
         plaintext.push(0);
-        let header: Header = Header::new(ASSET_ID, BASE_NONCE, 64u32, plaintext_length).unwrap();
+        let header: Header = Header::new(
+            AssetId::from_bytes(ASSET_ID),
+            BASE_NONCE,
+            64u32,
+            plaintext_length,
+        )
+        .unwrap();
         assert_eq!(
             encrypt_with_header(&k, &header, &plaintext).unwrap_err(),
             EnvelopeError::PlaintextLengthMismatch {
@@ -303,8 +320,13 @@ mod tests {
             let plaintext: Vec<u8> = (0..plaintext_length)
                 .map(|b: u64| b as u8)
                 .collect::<Vec<u8>>();
-            let header: Header =
-                Header::new(ASSET_ID, BASE_NONCE, chunk_size, plaintext_length).unwrap();
+            let header: Header = Header::new(
+                AssetId::from_bytes(ASSET_ID),
+                BASE_NONCE,
+                chunk_size,
+                plaintext_length,
+            )
+            .unwrap();
 
             let ciphertext: Vec<u8> = encrypt_with_header(&k, &header, &plaintext).unwrap();
             let decrypted: Vec<u8> = decrypt(&k, &ciphertext).unwrap();
@@ -323,8 +345,13 @@ mod tests {
         let plaintext: Vec<u8> = (0..plaintext_length)
             .map(|b: u64| b as u8)
             .collect::<Vec<u8>>();
-        let header: Header =
-            Header::new(ASSET_ID, BASE_NONCE, chunk_size, plaintext_length).unwrap();
+        let header: Header = Header::new(
+            AssetId::from_bytes(ASSET_ID),
+            BASE_NONCE,
+            chunk_size,
+            plaintext_length,
+        )
+        .unwrap();
 
         let mut ciphertext: Vec<u8> = encrypt_with_header(&k, &header, &plaintext).unwrap();
         ciphertext.pop();
@@ -346,8 +373,13 @@ mod tests {
         let plaintext: Vec<u8> = (0..plaintext_length)
             .map(|b: u64| b as u8)
             .collect::<Vec<u8>>();
-        let header: Header =
-            Header::new(ASSET_ID, BASE_NONCE, chunk_size, plaintext_length).unwrap();
+        let header: Header = Header::new(
+            AssetId::from_bytes(ASSET_ID),
+            BASE_NONCE,
+            chunk_size,
+            plaintext_length,
+        )
+        .unwrap();
 
         let mut ciphertext: Vec<u8> = encrypt_with_header(&k, &header, &plaintext).unwrap();
         ciphertext.push(0);
@@ -369,8 +401,13 @@ mod tests {
         let plaintext: Vec<u8> = (0..plaintext_length)
             .map(|b: u64| b as u8)
             .collect::<Vec<u8>>();
-        let header: Header =
-            Header::new(ASSET_ID, BASE_NONCE, chunk_size, plaintext_length).unwrap();
+        let header: Header = Header::new(
+            AssetId::from_bytes(ASSET_ID),
+            BASE_NONCE,
+            chunk_size,
+            plaintext_length,
+        )
+        .unwrap();
 
         let ciphertext: Vec<u8> = encrypt_with_header(&k, &header, &plaintext).unwrap();
 
@@ -401,8 +438,13 @@ mod tests {
         let plaintext: Vec<u8> = (0..plaintext_length)
             .map(|b: u64| b as u8)
             .collect::<Vec<u8>>();
-        let header: Header =
-            Header::new(ASSET_ID, BASE_NONCE, chunk_size, plaintext_length).unwrap();
+        let header: Header = Header::new(
+            AssetId::from_bytes(ASSET_ID),
+            BASE_NONCE,
+            chunk_size,
+            plaintext_length,
+        )
+        .unwrap();
 
         let ciphertext: Vec<u8> = encrypt_with_header(&k, &header, &plaintext).unwrap();
         let mut truncated: Vec<u8> = ciphertext[0..144].to_vec();
@@ -420,33 +462,40 @@ mod tests {
     #[test]
     fn encrypts_and_decrypts_an_asset() {
         let album: AlbumKey = album_key();
-        let object: Vec<u8> = encrypt_asset(&album, &ASSET_ID, PLAINTEXT).unwrap();
-        let plaintext: Vec<u8> = decrypt_asset(&album, &ASSET_ID, &object).unwrap();
+        let object: Vec<u8> =
+            encrypt_asset(&album, AssetId::from_bytes(ASSET_ID), PLAINTEXT).unwrap();
+        let plaintext: Vec<u8> =
+            decrypt_asset(&album, &AssetId::from_bytes(ASSET_ID), &object).unwrap();
         assert_eq!(plaintext, PLAINTEXT);
     }
 
     #[test]
     fn encrypts_and_decrypts_a_thumbnail() {
         let album: AlbumKey = album_key();
-        let object: Vec<u8> = encrypt_thumb(&album, &ASSET_ID, PLAINTEXT).unwrap();
-        let plaintext: Vec<u8> = decrypt_thumb(&album, &ASSET_ID, &object).unwrap();
+        let object: Vec<u8> =
+            encrypt_thumb(&album, AssetId::from_bytes(ASSET_ID), PLAINTEXT).unwrap();
+        let plaintext: Vec<u8> =
+            decrypt_thumb(&album, &AssetId::from_bytes(ASSET_ID), &object).unwrap();
         assert_eq!(plaintext, PLAINTEXT);
     }
 
     #[test]
     fn encrypts_and_decrypts_metadata() {
         let album: AlbumKey = album_key();
-        let object: Vec<u8> = encrypt_meta(&album, &ASSET_ID, PLAINTEXT).unwrap();
-        let plaintext: Vec<u8> = decrypt_meta(&album, &ASSET_ID, &object).unwrap();
+        let object: Vec<u8> =
+            encrypt_meta(&album, AssetId::from_bytes(ASSET_ID), PLAINTEXT).unwrap();
+        let plaintext: Vec<u8> =
+            decrypt_meta(&album, &AssetId::from_bytes(ASSET_ID), &object).unwrap();
         assert_eq!(plaintext, PLAINTEXT);
     }
 
     #[test]
     fn rejects_asset_object_decrypted_as_thumb() {
         let album: AlbumKey = album_key();
-        let object: Vec<u8> = encrypt_asset(&album, &ASSET_ID, PLAINTEXT).unwrap();
+        let object: Vec<u8> =
+            encrypt_asset(&album, AssetId::from_bytes(ASSET_ID), PLAINTEXT).unwrap();
         assert_eq!(
-            decrypt_thumb(&album, &ASSET_ID, &object).unwrap_err(),
+            decrypt_thumb(&album, &AssetId::from_bytes(ASSET_ID), &object).unwrap_err(),
             EnvelopeError::AuthenticationFailed
         );
     }
@@ -454,9 +503,10 @@ mod tests {
     #[test]
     fn rejects_thumb_object_decrypted_as_meta() {
         let album: AlbumKey = album_key();
-        let object: Vec<u8> = encrypt_thumb(&album, &ASSET_ID, PLAINTEXT).unwrap();
+        let object: Vec<u8> =
+            encrypt_thumb(&album, AssetId::from_bytes(ASSET_ID), PLAINTEXT).unwrap();
         assert_eq!(
-            decrypt_meta(&album, &ASSET_ID, &object).unwrap_err(),
+            decrypt_meta(&album, &AssetId::from_bytes(ASSET_ID), &object).unwrap_err(),
             EnvelopeError::AuthenticationFailed
         );
     }
@@ -464,9 +514,10 @@ mod tests {
     #[test]
     fn rejects_meta_object_decrypted_as_asset() {
         let album: AlbumKey = album_key();
-        let object: Vec<u8> = encrypt_meta(&album, &ASSET_ID, PLAINTEXT).unwrap();
+        let object: Vec<u8> =
+            encrypt_meta(&album, AssetId::from_bytes(ASSET_ID), PLAINTEXT).unwrap();
         assert_eq!(
-            decrypt_asset(&album, &ASSET_ID, &object).unwrap_err(),
+            decrypt_asset(&album, &AssetId::from_bytes(ASSET_ID), &object).unwrap_err(),
             EnvelopeError::AuthenticationFailed
         );
     }
@@ -474,14 +525,14 @@ mod tests {
     #[test]
     fn creates_new_base_nonce_for_every_encryption() {
         let album: AlbumKey = album_key();
-        let a: Vec<u8> = encrypt_asset(&album, &ASSET_ID, PLAINTEXT).unwrap();
-        let b: Vec<u8> = encrypt_asset(&album, &ASSET_ID, PLAINTEXT).unwrap();
+        let a: Vec<u8> = encrypt_asset(&album, AssetId::from_bytes(ASSET_ID), PLAINTEXT).unwrap();
+        let b: Vec<u8> = encrypt_asset(&album, AssetId::from_bytes(ASSET_ID), PLAINTEXT).unwrap();
         assert_ne!(a[8..24], b[8..24]);
     }
 
     #[test]
     fn matches_known_answer_envelope() {
-        let header = Header::new(ASSET_ID, BASE_NONCE, 64, 65).unwrap();
+        let header = Header::new(AssetId::from_bytes(ASSET_ID), BASE_NONCE, 64, 65).unwrap();
         let object = encrypt_with_header(&asset_key(), &header, PLAINTEXT_65).unwrap();
 
         assert_eq!(Header::parse(&object).unwrap().chunk_size(), 64);
@@ -493,7 +544,7 @@ mod tests {
     #[test]
     fn decrypts_chunk_i_given_only_k_asset() {
         // Build the object in memory first — that part isn't what's being tested.
-        let header = Header::new(ASSET_ID, BASE_NONCE, 64, 300).unwrap(); // 5 chunks, last is 44 bytes
+        let header = Header::new(AssetId::from_bytes(ASSET_ID), BASE_NONCE, 64, 300).unwrap(); // 5 chunks, last is 44 bytes
         let plaintext: Vec<u8> = (0..300u64).map(|b| b as u8).collect();
         let object = encrypt_with_header(&asset_key(), &header, &plaintext).unwrap();
 

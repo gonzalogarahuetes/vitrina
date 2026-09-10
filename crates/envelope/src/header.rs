@@ -1,4 +1,6 @@
 use std::ops::Range;
+
+use crate::AssetId;
 const EXPECTED_MAGIC: [u8; 4] = [0x56, 0x54, 0x52, 0x4E];
 
 #[derive(Debug)]
@@ -8,7 +10,7 @@ pub struct Header {
     base_nonce: [u8; 16],
     chunk_size: u32,
     plaintext_length: u64,
-    asset_id: [u8; 16],
+    asset_id: AssetId,
 }
 
 #[derive(Debug, PartialEq)]
@@ -77,7 +79,7 @@ impl Header {
             base_nonce,
             chunk_size,
             plaintext_length,
-            asset_id,
+            asset_id: AssetId::from_bytes(asset_id),
         })
     }
     pub fn to_bytes(&self) -> [u8; 64] {
@@ -93,7 +95,7 @@ impl Header {
         bytes_header[8..24].copy_from_slice(&self.base_nonce);
         bytes_header[24..28].copy_from_slice(&chunk_size);
         bytes_header[28..36].copy_from_slice(&plaintext_length);
-        bytes_header[36..52].copy_from_slice(&self.asset_id);
+        bytes_header[36..52].copy_from_slice(AssetId::as_bytes(&self.asset_id));
         bytes_header[52..64].copy_from_slice(&[0u8; 12]);
 
         bytes_header
@@ -181,7 +183,7 @@ impl Header {
     /// never derived from content — `encrypt` is what enforces that, which is why
     /// this constructor is `pub(crate)` and unreachable from a binding.
     pub(crate) fn new(
-        asset_id: [u8; 16],
+        asset_id: AssetId,
         base_nonce: [u8; 16],
         chunk_size: u32,
         plaintext_length: u64,
@@ -227,10 +229,10 @@ mod tests {
         );
         assert_eq!(
             h.asset_id,
-            [
+            AssetId::from_bytes([
                 0xB0, 0xB1, 0xB2, 0xB3, 0xB4, 0xB5, 0xB6, 0xB7, 0xB8, 0xB9, 0xBA, 0xBB, 0xBC, 0xBD,
                 0xBE, 0xBF,
-            ]
+            ])
         );
     }
 
@@ -677,8 +679,13 @@ mod tests {
     fn reconstruct_golden_from_its_parts() {
         let chunk_size: u32 = 262144;
         let plaintext_length: u64 = 262145;
-        let header: Header =
-            Header::new(ASSET_ID, BASE_NONCE, chunk_size, plaintext_length).unwrap();
+        let header: Header = Header::new(
+            AssetId::from_bytes(ASSET_ID),
+            BASE_NONCE,
+            chunk_size,
+            plaintext_length,
+        )
+        .unwrap();
         assert_eq!(header.to_bytes(), GOLDEN);
     }
 
@@ -688,7 +695,13 @@ mod tests {
         let plaintext_length: u64 = 262145;
 
         assert_eq!(
-            Header::new(ASSET_ID, BASE_NONCE, chunk_size, plaintext_length).unwrap_err(),
+            Header::new(
+                AssetId::from_bytes(ASSET_ID),
+                BASE_NONCE,
+                chunk_size,
+                plaintext_length
+            )
+            .unwrap_err(),
             HeaderError::ChunkSizeZero
         );
     }
@@ -699,7 +712,13 @@ mod tests {
         let plaintext_length: u64 = 0;
 
         assert_eq!(
-            Header::new(ASSET_ID, BASE_NONCE, chunk_size, plaintext_length).unwrap_err(),
+            Header::new(
+                AssetId::from_bytes(ASSET_ID),
+                BASE_NONCE,
+                chunk_size,
+                plaintext_length
+            )
+            .unwrap_err(),
             HeaderError::PlaintextLengthZero
         );
     }
