@@ -185,8 +185,8 @@ mod tests {
 
     /// Self-generated. Sound per §9.2 because the primitives beneath it are
     /// externally anchored — category 6 (BLAKE2b, keys.rs) and category 7
-    /// (XChaCha20-Poly1305, chunk.rs). Pins §3's layout, §4's nonce derivation and
-    /// §5's AAD composition as one value. This is C.9's category 1 vector.
+    /// (XChaCha20-Poly1305, aead.rs). Pins §3's layout, §4's nonce derivation and
+    /// §5's AAD composition as one value. This is C.9's category 3 vector.
     #[rustfmt::skip]
     const KNOWN_ANSWER_ENVELOPE: &str = "5654524e01010000a0a1a2a3a4a5a6a7a8a9aaabacadaeaf400000004100000000000000b0b1b2b3b4b5b6b7b8b9babbbcbdbebf000000000000000000000000928301e29c278da2388ceb0a6d2c899ccce96d7f0d3df9189ec325c28fbd0d76956206aee01bce1fb25da71b81d238bf57c33f5bc200f6aa261cdeefb78cb32494cc419c54159c0b002af3c4a06aa116cf2d8e418d74bff9feb72b43ea4a9e2324";
 

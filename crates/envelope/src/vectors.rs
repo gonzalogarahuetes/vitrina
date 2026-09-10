@@ -641,6 +641,11 @@ fn read_committed() -> String {
 
 fn build() -> VectorFile {
     assert_eq!(Params::V1.wrap_params(), WrapParams::V1);
+    assert_eq!(
+        base_nonce_for(3),
+        BASE_NONCE,
+        "category 3 keeps the fixture nonce"
+    );
     let anchors: Anchors = anchors();
     let envelope: Vec<EnvelopeVector> = envelope_vectors();
     let envelope_negative: Vec<NegativeVector> = negative_vectors(&envelope[3]);
