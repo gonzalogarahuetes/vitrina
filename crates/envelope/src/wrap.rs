@@ -1,6 +1,7 @@
 use crate::{
     AlbumKey,
     aead::{AeadError, aead_decrypt, aead_encrypt},
+    ids::{RecipientId, Salt},
     keys::{Kek, cipher_for},
 };
 use argon2::{Algorithm, Argon2, Params, Version};
@@ -100,34 +101,6 @@ pub(crate) fn wrap_aad(recipient_id: &RecipientId) -> [u8; 31] {
     bytes_aad[15..].copy_from_slice(recipient_id.as_bytes());
 
     bytes_aad
-}
-
-// C.8.5 — Wrap and unwrap, taking wrap_nonce as a parameter. Same split you used at C.6:
-// a nonce-taking inner function so vectors are reproducible, and a public wrapper that generates 24 random bytes from getrandom
-// and returns them alongside wrapped — the server stores it (§6.2), so it has to come back out.
-// Round trip, and wrapped.len() == 48.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Salt([u8; 16]);
-
-impl Salt {
-    pub fn from_bytes(bytes: [u8; 16]) -> Self {
-        Salt(bytes)
-    }
-    pub fn as_bytes(&self) -> &[u8; 16] {
-        &self.0
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct RecipientId([u8; 16]);
-
-impl RecipientId {
-    pub fn from_bytes(bytes: [u8; 16]) -> Self {
-        RecipientId(bytes)
-    }
-    pub fn as_bytes(&self) -> &[u8; 16] {
-        &self.0
-    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
