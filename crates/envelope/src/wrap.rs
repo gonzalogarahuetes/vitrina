@@ -1,5 +1,5 @@
 use crate::{
-    AlbumKey,
+    AlbumKey, WrongLength,
     aead::{AeadError, aead_decrypt, aead_encrypt},
     ids::{RecipientId, Salt},
     keys::{Kek, cipher_for},
@@ -117,6 +117,33 @@ pub struct WrappedKey {
     // The Argon2id parameters are the fourth thing the server stores, and
     // they are deliberately absent: the caller passed them in, so it
     // already has them.
+}
+
+impl WrappedKey {
+    pub const WRAPPED_LEN: usize = 48;
+    pub const WRAP_NONCE_LEN: usize = 24;
+
+    pub fn try_from_parts(
+        wrapped: &[u8],
+        wrap_nonce: &[u8],
+        kdf_salt: Salt,
+    ) -> Result<WrappedKey, WrongLength> {
+        let wrapped_bytes: [u8; Self::WRAPPED_LEN] =
+            wrapped.try_into().map_err(|_| WrongLength {
+                expected: Self::WRAPPED_LEN,
+                got: wrapped.len(),
+            })?;
+        let wrap_nonce_bytes: [u8; Self::WRAP_NONCE_LEN] =
+            wrap_nonce.try_into().map_err(|_| WrongLength {
+                expected: Self::WRAP_NONCE_LEN,
+                got: wrap_nonce.len(),
+            })?;
+        Ok(WrappedKey {
+            wrapped: wrapped_bytes,
+            wrap_nonce: wrap_nonce_bytes,
+            kdf_salt,
+        })
+    }
 }
 
 pub(crate) fn wrap_with_salt_and_nonce(
