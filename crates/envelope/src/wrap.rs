@@ -1,7 +1,11 @@
-use crate::keys::Kek;
+use crate::{
+    AlbumKey,
+    aead::{AeadError, aead_decrypt, aead_encrypt},
+    keys::{Kek, cipher_for},
+};
 use argon2::{Algorithm, Argon2, Params, Version};
 use unicode_normalization::{UnicodeNormalization, char::is_combining_mark};
-use zeroize::Zeroizing;
+use zeroize::{Zeroize, Zeroizing};
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct WrapParams {
     t_cost: u32,
@@ -38,13 +42,27 @@ impl WrapParams {
 }
 
 #[derive(Debug, PartialEq)]
-pub(crate) enum WrapError {
+pub enum WrapError {
     InvalidParams {
         t_cost: u32,
         p_cost: u32,
         m_cost: u32,
     },
     HashingFailed,
+    UnexpectedWrappedLength,
+    RandomnessUnavailable,
+    UnexpectedKeyLength,
+    AuthenticationFailed,
+}
+
+impl From<AeadError> for WrapError {
+    /// Exhaustive on purpose: if `AeadError` gains a variant that isn't an
+    /// authentication failure, this must fail to compile.
+    fn from(e: AeadError) -> Self {
+        match e {
+            AeadError::AuthenticationFailed => WrapError::AuthenticationFailed,
+        }
+    }
 }
 
 pub(crate) fn normalize_passphrase(s: &str) -> String {
@@ -59,7 +77,7 @@ pub(crate) fn normalize_passphrase(s: &str) -> String {
 pub(crate) fn derive_kek(
     passphrase: &str,
     params: WrapParams,
-    salt: &[u8; 16],
+    salt: Salt,
 ) -> Result<Kek, WrapError> {
     let pwd = normalize_passphrase(passphrase);
     let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, params.argon2_params()?);
@@ -67,7 +85,7 @@ pub(crate) fn derive_kek(
     let mut out = Zeroizing::new([0u8; KEK_LEN]);
 
     argon2
-        .hash_password_into(pwd.as_bytes(), salt, &mut out[..])
+        .hash_password_into(pwd.as_bytes(), salt.as_bytes(), &mut out[..])
         .map_err(|_| WrapError::HashingFailed)?;
 
     Ok(Kek::from_bytes(out))
@@ -75,18 +93,125 @@ pub(crate) fn derive_kek(
 
 const WRAP_AAD_LABEL: &[u8; 15] = b"vitrina-wrap-v1";
 
-pub(crate) fn wrap_aad(recipient_id: &[u8; 16]) -> [u8; 31] {
+pub(crate) fn wrap_aad(recipient_id: &RecipientId) -> [u8; 31] {
     let mut bytes_aad: [u8; 31] = [0u8; 31];
 
     bytes_aad[..15].copy_from_slice(WRAP_AAD_LABEL);
-    bytes_aad[15..].copy_from_slice(recipient_id);
+    bytes_aad[15..].copy_from_slice(recipient_id.as_bytes());
 
     bytes_aad
 }
 
+// C.8.5 — Wrap and unwrap, taking wrap_nonce as a parameter. Same split you used at C.6:
+// a nonce-taking inner function so vectors are reproducible, and a public wrapper that generates 24 random bytes from getrandom
+// and returns them alongside wrapped — the server stores it (§6.2), so it has to come back out.
+// Round trip, and wrapped.len() == 48.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Salt([u8; 16]);
+
+impl Salt {
+    pub fn from_bytes(bytes: [u8; 16]) -> Self {
+        Salt(bytes)
+    }
+    pub fn as_bytes(&self) -> &[u8; 16] {
+        &self.0
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct RecipientId([u8; 16]);
+
+impl RecipientId {
+    pub fn from_bytes(bytes: [u8; 16]) -> Self {
+        RecipientId(bytes)
+    }
+    pub fn as_bytes(&self) -> &[u8; 16] {
+        &self.0
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct WrappedKey {
+    /// `K_album` (32) plus the Poly1305 tag (16) — §6.2's lengths table.
+    pub wrapped: [u8; 48],
+    pub wrap_nonce: [u8; 24],
+    pub kdf_salt: Salt,
+    // The Argon2id parameters are the fourth thing the server stores, and
+    // they are deliberately absent: the caller passed them in, so it
+    // already has them.
+}
+
+fn wrap_with_salt_and_nonce(
+    album_key: &AlbumKey,
+    passphrase: &str,
+    salt: Salt,
+    params: WrapParams,
+    recipient_id: &RecipientId,
+    wrap_nonce: &[u8; 24],
+) -> Result<[u8; 48], WrapError> {
+    let kek = derive_kek(passphrase, params, salt)?;
+    let aad: [u8; 31] = wrap_aad(recipient_id);
+    let cipher_kek = cipher_for(kek.expose_bytes());
+    aead_encrypt(&cipher_kek, wrap_nonce, &aad, album_key.expose_bytes())
+        .try_into()
+        .map_err(|_| WrapError::UnexpectedWrappedLength)
+}
+
+pub fn wrap_album_key(
+    album_key: &AlbumKey,
+    passphrase: &str,
+    params: WrapParams,
+    recipient_id: RecipientId,
+) -> Result<WrappedKey, WrapError> {
+    let mut salt_bytes = [0u8; 16];
+    let mut wrap_nonce = [0u8; 24];
+
+    getrandom::fill(&mut salt_bytes).map_err(|_| WrapError::RandomnessUnavailable)?;
+    getrandom::fill(&mut wrap_nonce).map_err(|_| WrapError::RandomnessUnavailable)?;
+
+    let salt = Salt::from_bytes(salt_bytes);
+    let wrapped: [u8; 48] = wrap_with_salt_and_nonce(
+        album_key,
+        passphrase,
+        salt,
+        params,
+        &recipient_id,
+        &wrap_nonce,
+    )?;
+
+    Ok(WrappedKey {
+        wrap_nonce,
+        wrapped,
+        kdf_salt: salt,
+    })
+}
+
+pub fn unwrap_album_key(
+    passphrase: &str,
+    params: WrapParams,
+    recipient_id: RecipientId,
+    wrapped: &WrappedKey,
+) -> Result<AlbumKey, WrapError> {
+    let kek = derive_kek(passphrase, params, wrapped.kdf_salt)?;
+    let aad: [u8; 31] = wrap_aad(&recipient_id);
+    let cipher_kek = cipher_for(kek.expose_bytes());
+
+    let mut plaintext = aead_decrypt(&cipher_kek, &wrapped.wrap_nonce, &aad, &wrapped.wrapped)?;
+    let bytes: [u8; 32] = plaintext[..]
+        .try_into()
+        .map_err(|_| WrapError::UnexpectedKeyLength)?;
+    plaintext.zeroize();
+
+    Ok(AlbumKey::from_bytes(bytes))
+}
+
 #[cfg(test)]
 mod tests {
-    use crate::wrap::{derive_kek, normalize_passphrase, wrap_aad};
+    use crate::test_fixtures::album_key;
+    use crate::wrap::{
+        RecipientId, Salt, derive_kek, normalize_passphrase, unwrap_album_key, wrap_aad,
+        wrap_album_key, wrap_with_salt_and_nonce,
+    };
     use crate::{
         test_fixtures::hex,
         wrap::{WrapError, WrapParams},
@@ -118,10 +243,43 @@ mod tests {
         0x34,
     ];
 
+    /// One byte different from `RECIPIENT_ID` — 3f2a91c7-8b4e-4d16-9f05-c2a7d81e6b35.
+    /// Still a valid UUIDv4: the version nibble and variant bits are untouched.
+    const OTHER_RECIPIENT_ID: [u8; 16] = [
+        0x3f, 0x2a, 0x91, 0xc7, 0x8b, 0x4e, 0x4d, 0x16, 0x9f, 0x05, 0xc2, 0xa7, 0xd8, 0x1e, 0x6b,
+        0x35,
+    ];
+
     /// §6.2's AAD for RECIPIENT_ID: the 15 ASCII bytes of "vitrina-wrap-v1"
     /// with no terminator and no length prefix, then the 16 raw UUID bytes.
     /// The first 30 hex characters are the label; everything after is the id.
     const WRAP_AAD: &str = "76697472696e612d777261702d76313f2a91c78b4e4d169f05c2a7d81e6b34";
+
+    /// A fixed nonce is correct in a test and catastrophic in production.
+    /// A repeated nonce under a repeated key is total failure, not degradation.
+    /// The constant living inside #[cfg(test)] is what keeps that from being reachable,
+    /// which is the whole reason the public wrap_album_key generates its own.
+    const WRAP_NONCE: [u8; 24] = [
+        0x6d, 0xc4, 0x1a, 0x83, 0x2f, 0x0b, 0x97, 0x5e, 0xa1, 0x38, 0xd6, 0x72, 0x4c, 0xe9, 0x05,
+        0xbf, 0x81, 0x27, 0x9a, 0x60, 0xf3, 0x4d, 0xcb, 0x16,
+    ];
+
+    /// §9 category 7. Self-generated — see §9.2 on what that can and cannot
+    /// catch. It pins the composition so a later refactor cannot silently
+    /// change the bytes.
+    const KNOWN_ANSWER_WRAPPED: &str = "2b2b3d1289ac7c793735f7bd2ac86824f0b44878ba75b8865acdf827ab812da67f076808904b46b8600a535b6754ba61";
+
+    fn wrapped_for(recipient_id: [u8; 16]) -> [u8; 48] {
+        wrap_with_salt_and_nonce(
+            &album_key(),
+            "Café Roble",
+            Salt::from_bytes(SALT),
+            low_params(),
+            &RecipientId::from_bytes(recipient_id),
+            &WRAP_NONCE,
+        )
+        .unwrap()
+    }
 
     #[test]
     fn matches_rfc9106_argon2id_vector() {
@@ -224,10 +382,10 @@ mod tests {
     #[test]
     fn creates_same_kek_with_same_inputs() {
         assert_eq!(
-            derive_kek("Café Roble", low_params(), &SALT)
+            derive_kek("Café Roble", low_params(), Salt::from_bytes(SALT))
                 .unwrap()
                 .expose_bytes(),
-            derive_kek("Café Roble", low_params(), &SALT)
+            derive_kek("Café Roble", low_params(), Salt::from_bytes(SALT))
                 .unwrap()
                 .expose_bytes()
         );
@@ -236,10 +394,10 @@ mod tests {
     #[test]
     fn creates_same_kek_with_normalized_passphrase() {
         assert_eq!(
-            derive_kek("Café Roble ", low_params(), &SALT)
+            derive_kek("Café Roble ", low_params(), Salt::from_bytes(SALT))
                 .unwrap()
                 .expose_bytes(),
-            derive_kek("cafe roble", low_params(), &SALT)
+            derive_kek("cafe roble", low_params(), Salt::from_bytes(SALT))
                 .unwrap()
                 .expose_bytes()
         );
@@ -247,16 +405,16 @@ mod tests {
 
     #[test]
     fn derives_kek_at_v1_params() {
-        assert!(derive_kek("Café Roble", WrapParams::V1, &SALT).is_ok());
+        assert!(derive_kek("Café Roble", WrapParams::V1, Salt::from_bytes(SALT)).is_ok());
     }
 
     #[test]
     fn creates_different_kek_with_different_salt() {
         assert_ne!(
-            derive_kek("Café Roble", low_params(), &SALT)
+            derive_kek("Café Roble", low_params(), Salt::from_bytes(SALT))
                 .unwrap()
                 .expose_bytes(),
-            derive_kek("Café Roble", low_params(), &OTHER_SALT)
+            derive_kek("Café Roble", low_params(), Salt::from_bytes(OTHER_SALT))
                 .unwrap()
                 .expose_bytes()
         );
@@ -265,10 +423,10 @@ mod tests {
     #[test]
     fn creates_different_kek_with_different_passphrase() {
         assert_ne!(
-            derive_kek("Café Roble", low_params(), &SALT)
+            derive_kek("Café Roble", low_params(), Salt::from_bytes(SALT))
                 .unwrap()
                 .expose_bytes(),
-            derive_kek("Café Sauce", low_params(), &SALT)
+            derive_kek("Café Sauce", low_params(), Salt::from_bytes(SALT))
                 .unwrap()
                 .expose_bytes()
         );
@@ -277,12 +435,16 @@ mod tests {
     #[test]
     fn creates_different_kek_with_different_params() {
         assert_ne!(
-            derive_kek("Café Roble", low_params(), &SALT)
+            derive_kek("Café Roble", low_params(), Salt::from_bytes(SALT))
                 .unwrap()
                 .expose_bytes(),
-            derive_kek("Café Roble", WrapParams::new(16, 1, 1).unwrap(), &SALT)
-                .unwrap()
-                .expose_bytes()
+            derive_kek(
+                "Café Roble",
+                WrapParams::new(16, 1, 1).unwrap(),
+                Salt::from_bytes(SALT)
+            )
+            .unwrap()
+            .expose_bytes()
         );
     }
 
@@ -318,7 +480,7 @@ mod tests {
         // derive_kek's output IS the Argon2id computation — this is what pins
         // the algorithm, the version, the params and the normalisation at once.
         assert_eq!(
-            derive_kek("Café Roble", low_params(), &SALT)
+            derive_kek("Café Roble", low_params(), Salt::from_bytes(SALT))
                 .unwrap()
                 .expose_bytes(),
             &*out_argon2id
@@ -329,11 +491,244 @@ mod tests {
     // ----------------------------------------------------
     #[test]
     fn concatenated_aad_matches_hex_literal() {
-        assert_eq!(hex(&wrap_aad(&RECIPIENT_ID)), WRAP_AAD);
+        assert_eq!(
+            hex(&wrap_aad(&RecipientId::from_bytes(RECIPIENT_ID))),
+            WRAP_AAD
+        );
     }
 
     #[test]
     fn concatenated_aad_length_matches_expected() {
-        assert_eq!(wrap_aad(&RECIPIENT_ID).len(), 31)
+        assert_eq!(wrap_aad(&RecipientId::from_bytes(RECIPIENT_ID)).len(), 31)
+    }
+
+    // Wrap With Salt and Nonce Tests
+    // ----------------------------------------------------
+    #[test]
+    fn matches_known_answer_wrapped() {
+        assert_eq!(hex(&wrapped_for(RECIPIENT_ID)), KNOWN_ANSWER_WRAPPED);
+    }
+
+    #[test]
+    fn creates_different_answer_wrapped_with_different_recipient_ids() {
+        assert_ne!(&wrapped_for(RECIPIENT_ID), &wrapped_for(OTHER_RECIPIENT_ID));
+    }
+
+    // Wrap Album Key Tests
+    // ----------------------------------------------------
+    #[test]
+    fn wraps_and_unwraps_correctly() {
+        let passphrase = "Café Roble";
+        let wrapped = wrap_album_key(
+            &album_key(),
+            passphrase,
+            low_params(),
+            RecipientId::from_bytes(RECIPIENT_ID),
+        )
+        .unwrap();
+
+        let unwrapped = unwrap_album_key(
+            passphrase,
+            low_params(),
+            RecipientId::from_bytes(RECIPIENT_ID),
+            &wrapped,
+        )
+        .unwrap();
+
+        assert_eq!(&album_key().expose_bytes(), &unwrapped.expose_bytes())
+    }
+
+    #[test]
+    fn generates_fresh_salt_and_nonce_every_time() {
+        let passphrase = "Café Roble";
+        let wrapped_one = wrap_album_key(
+            &album_key(),
+            passphrase,
+            low_params(),
+            RecipientId::from_bytes(RECIPIENT_ID),
+        )
+        .unwrap();
+
+        let wrapped_two = wrap_album_key(
+            &album_key(),
+            passphrase,
+            low_params(),
+            RecipientId::from_bytes(RECIPIENT_ID),
+        )
+        .unwrap();
+        assert_ne!(wrapped_one.wrap_nonce, wrapped_two.wrap_nonce);
+        assert_ne!(wrapped_one.kdf_salt, wrapped_two.kdf_salt);
+    }
+
+    #[test]
+    fn wraps_and_unwraps_with_normalized_passphrase() {
+        let wrapped = wrap_album_key(
+            &album_key(),
+            "Café Roble ",
+            low_params(),
+            RecipientId::from_bytes(RECIPIENT_ID),
+        )
+        .unwrap();
+
+        let wrapped_low = unwrap_album_key(
+            "cafe roble",
+            low_params(),
+            RecipientId::from_bytes(RECIPIENT_ID),
+            &wrapped,
+        )
+        .unwrap();
+
+        assert_eq!(&album_key().expose_bytes(), &wrapped_low.expose_bytes());
+    }
+
+    #[test]
+    fn rejects_unwrap_with_wrong_passphrase() {
+        let wrapped = wrap_album_key(
+            &album_key(),
+            "Café Roble",
+            low_params(),
+            RecipientId::from_bytes(RECIPIENT_ID),
+        )
+        .unwrap();
+
+        assert_eq!(
+            unwrap_album_key(
+                "Café Sauce",
+                low_params(),
+                RecipientId::from_bytes(RECIPIENT_ID),
+                &wrapped
+            )
+            .err(),
+            Some(WrapError::AuthenticationFailed)
+        );
+    }
+
+    #[test]
+    fn rejects_unwrap_with_wrong_salt() {
+        let passphrase = "Café Roble";
+        let wrapped = wrap_album_key(
+            &album_key(),
+            passphrase,
+            low_params(),
+            RecipientId::from_bytes(RECIPIENT_ID),
+        )
+        .unwrap();
+
+        let mut tampered = wrapped.clone();
+        let mut salt_bytes = *wrapped.kdf_salt.as_bytes();
+        salt_bytes[0] ^= 1;
+        tampered.kdf_salt = Salt::from_bytes(salt_bytes);
+
+        assert_eq!(
+            unwrap_album_key(
+                passphrase,
+                low_params(),
+                RecipientId::from_bytes(RECIPIENT_ID),
+                &tampered
+            )
+            .err(),
+            Some(WrapError::AuthenticationFailed)
+        );
+    }
+
+    #[test]
+    fn rejects_unwrap_with_wrong_recipient_id() {
+        let passphrase = "Café Roble";
+
+        let wrapped = wrap_album_key(
+            &album_key(),
+            passphrase,
+            low_params(),
+            RecipientId::from_bytes(RECIPIENT_ID),
+        )
+        .unwrap();
+
+        assert_eq!(
+            unwrap_album_key(
+                passphrase,
+                low_params(),
+                RecipientId::from_bytes(OTHER_RECIPIENT_ID),
+                &wrapped
+            )
+            .err(),
+            Some(WrapError::AuthenticationFailed)
+        );
+    }
+
+    #[test]
+    fn rejects_unwrap_with_wrong_params() {
+        let passphrase = "Café Roble";
+
+        let wrapped = wrap_album_key(
+            &album_key(),
+            passphrase,
+            low_params(),
+            RecipientId::from_bytes(RECIPIENT_ID),
+        )
+        .unwrap();
+
+        assert_eq!(
+            unwrap_album_key(
+                passphrase,
+                WrapParams::new(16, 1, 1).unwrap(),
+                RecipientId::from_bytes(RECIPIENT_ID),
+                &wrapped
+            )
+            .err(),
+            Some(WrapError::AuthenticationFailed)
+        );
+    }
+
+    #[test]
+    fn rejects_unwrap_with_flipped_wrapped() {
+        let passphrase = "Café Roble";
+
+        let wrapped = wrap_album_key(
+            &album_key(),
+            passphrase,
+            low_params(),
+            RecipientId::from_bytes(RECIPIENT_ID),
+        )
+        .unwrap();
+
+        let mut tampered = wrapped.clone();
+        tampered.wrapped[0] ^= 1;
+
+        assert_eq!(
+            unwrap_album_key(
+                passphrase,
+                low_params(),
+                RecipientId::from_bytes(RECIPIENT_ID),
+                &tampered
+            )
+            .err(),
+            Some(WrapError::AuthenticationFailed)
+        );
+    }
+    #[test]
+    fn rejects_unwrap_with_flipped_nonce() {
+        let passphrase = "Café Roble";
+
+        let wrapped = wrap_album_key(
+            &album_key(),
+            passphrase,
+            low_params(),
+            RecipientId::from_bytes(RECIPIENT_ID),
+        )
+        .unwrap();
+
+        let mut tampered = wrapped.clone();
+        tampered.wrap_nonce[0] ^= 1;
+
+        assert_eq!(
+            unwrap_album_key(
+                passphrase,
+                low_params(),
+                RecipientId::from_bytes(RECIPIENT_ID),
+                &tampered
+            )
+            .err(),
+            Some(WrapError::AuthenticationFailed)
+        );
     }
 }
