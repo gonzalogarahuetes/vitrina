@@ -54,6 +54,7 @@ pub enum WrapError {
     RandomnessUnavailable,
     UnexpectedKeyLength,
     AuthenticationFailed,
+    EmptyPassphrase,
 }
 
 impl From<AeadError> for WrapError {
@@ -81,6 +82,10 @@ pub(crate) fn derive_kek(
     salt: Salt,
 ) -> Result<Kek, WrapError> {
     let pwd = normalize_passphrase(passphrase);
+    if pwd.is_empty() {
+        return Err(WrapError::EmptyPassphrase);
+    }
+
     let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, params.argon2_params()?);
 
     let mut out = Zeroizing::new([0u8; KEK_LEN]);
@@ -460,6 +465,30 @@ mod tests {
         );
     }
 
+    #[test]
+    fn rejects_with_empty_passphrase() {
+        assert_eq!(
+            derive_kek("", low_params(), Salt::from_bytes(SALT)).err(),
+            Some(WrapError::EmptyPassphrase)
+        );
+    }
+
+    #[test]
+    fn rejects_whitespace_only_passphrase() {
+        assert_eq!(
+            derive_kek("   ", low_params(), Salt::from_bytes(SALT)).err(),
+            Some(WrapError::EmptyPassphrase)
+        );
+    }
+
+    #[test]
+    fn rejects_passphrase_that_normalizes_to_empty() {
+        assert_eq!(
+            derive_kek("\u{0301}", low_params(), Salt::from_bytes(SALT)).err(),
+            Some(WrapError::EmptyPassphrase)
+        );
+    }
+
     // AAD Concatenation Tests
     // ----------------------------------------------------
     #[test]
@@ -552,6 +581,42 @@ mod tests {
         .unwrap();
 
         assert_eq!(&album_key().expose_bytes(), &wrapped_low.expose_bytes());
+    }
+
+    #[test]
+    fn rejects_wraps_with_passphrase_that_normalizes_to_empty() {
+        assert_eq!(
+            wrap_album_key(
+                &album_key(),
+                "\u{0301}",
+                low_params(),
+                RecipientId::from_bytes(RECIPIENT_ID),
+            )
+            .err(),
+            Some(WrapError::EmptyPassphrase)
+        );
+    }
+
+    #[test]
+    fn rejects_unwraps_with_passphrase_that_normalize_to_empty() {
+        let wrapped = wrap_album_key(
+            &album_key(),
+            "Café Roble ",
+            low_params(),
+            RecipientId::from_bytes(RECIPIENT_ID),
+        )
+        .unwrap();
+
+        assert_eq!(
+            unwrap_album_key(
+                "    ",
+                low_params(),
+                RecipientId::from_bytes(RECIPIENT_ID),
+                &wrapped
+            )
+            .err(),
+            Some(WrapError::EmptyPassphrase)
+        );
     }
 
     #[test]
