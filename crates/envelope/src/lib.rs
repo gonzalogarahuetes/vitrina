@@ -3,12 +3,14 @@
 //! Header layout: encryption spec §3.1. Derived quantities and byte ranges:
 //! §3.2, §3.3. Reader validation: §8. The format is permanent — see §0.
 
+mod aead;
 mod chunk;
 mod envelope;
 mod header;
 mod keys;
 #[cfg(test)]
 pub(crate) mod test_fixtures;
+mod wrap;
 
 pub use envelope::{
     CHUNK_SIZE, EnvelopeError, decrypt_asset, decrypt_meta, decrypt_thumb, encrypt_asset,
@@ -16,3 +18,6 @@ pub use envelope::{
 };
 pub use header::{HeaderError, LayoutError};
 pub use keys::AlbumKey;
+pub use wrap::{
+    RecipientId, Salt, WrapError, WrapParams, WrappedKey, unwrap_album_key, wrap_album_key,
+};

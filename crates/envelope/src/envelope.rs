@@ -4,7 +4,6 @@ use crate::{
     header::Header,
     keys::ChunkKey,
 };
-use std::io::{Read, Seek, SeekFrom};
 
 #[derive(Debug, PartialEq)]
 pub enum EnvelopeError {
@@ -172,37 +171,6 @@ pub(crate) fn decrypt<K: ChunkKey>(key: &K, object: &[u8]) -> Result<Vec<u8>, En
     Ok(out)
 }
 
-struct CountingReader<R> {
-    inner: R,
-    bytes_read: usize,
-}
-
-impl<R> CountingReader<R> {
-    fn new(inner: R) -> Self {
-        Self {
-            inner,
-            bytes_read: 0,
-        }
-    }
-    fn bytes_read(&self) -> usize {
-        self.bytes_read
-    }
-}
-
-impl<R: Read> Read for CountingReader<R> {
-    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        let n = self.inner.read(buf)?;
-        self.bytes_read += n;
-        Ok(n)
-    }
-}
-
-impl<R: Seek> Seek for CountingReader<R> {
-    fn seek(&mut self, pos: SeekFrom) -> std::io::Result<u64> {
-        self.inner.seek(pos)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -212,7 +180,7 @@ mod tests {
         ASSET_ID, BASE_NONCE, PLAINTEXT, PLAINTEXT_65, album_key, asset_key, hex,
     };
     use std::fs::File;
-    use std::io::{Read, SeekFrom, Write};
+    use std::io::{Read, Seek, SeekFrom, Write};
     use tempfile::NamedTempFile;
 
     /// Self-generated. Sound per §9.2 because the primitives beneath it are
@@ -221,6 +189,37 @@ mod tests {
     /// §5's AAD composition as one value. This is C.9's category 1 vector.
     #[rustfmt::skip]
     const KNOWN_ANSWER_ENVELOPE: &str = "5654524e01010000a0a1a2a3a4a5a6a7a8a9aaabacadaeaf400000004100000000000000b0b1b2b3b4b5b6b7b8b9babbbcbdbebf000000000000000000000000928301e29c278da2388ceb0a6d2c899ccce96d7f0d3df9189ec325c28fbd0d76956206aee01bce1fb25da71b81d238bf57c33f5bc200f6aa261cdeefb78cb32494cc419c54159c0b002af3c4a06aa116cf2d8e418d74bff9feb72b43ea4a9e2324";
+
+    struct CountingReader<R> {
+        inner: R,
+        bytes_read: usize,
+    }
+
+    impl<R> CountingReader<R> {
+        fn new(inner: R) -> Self {
+            Self {
+                inner,
+                bytes_read: 0,
+            }
+        }
+        fn bytes_read(&self) -> usize {
+            self.bytes_read
+        }
+    }
+
+    impl<R: Read> Read for CountingReader<R> {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            let n = self.inner.read(buf)?;
+            self.bytes_read += n;
+            Ok(n)
+        }
+    }
+
+    impl<R: Seek> Seek for CountingReader<R> {
+        fn seek(&mut self, pos: SeekFrom) -> std::io::Result<u64> {
+            self.inner.seek(pos)
+        }
+    }
 
     #[test]
     fn encrypts_to_expected_layout() {
