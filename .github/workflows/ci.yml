@@ -119,7 +119,6 @@ jobs:
         run: cargo clippy --all-targets -- -D warnings
 
       # Slots for later phases. Do not implement these ahead of their step:
-      #   C.9      — run the exported JSON vectors from spec/vectors/
       #   C.10     — build the WASM target and run the TypeScript smoke harness
       #   Phase 1  — assert no outbound request carries key material
       #              (invite spec §7 #3)

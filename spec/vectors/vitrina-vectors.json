@@ -1,0 +1,223 @@
+{
+  "source": "spec/vitrina-encryption-spec.md §9 and §9.1",
+  "envelope_version": 1,
+  "envelope": [
+    {
+      "category": 1,
+      "name": "single chunk, plaintext shorter than chunk_size",
+      "k_album": "c0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedf",
+      "asset_id": "b0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+      "base_nonce": "a0a1a2a3a4a5a6a7a8a9aaabacadaead",
+      "chunk_size": 262144,
+      "plaintext": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f60616263",
+      "object": "5654524e01010000a0a1a2a3a4a5a6a7a8a9aaabacadaead000004006400000000000000b0b1b2b3b4b5b6b7b8b9babbbcbdbebf00000000000000000000000075abfa6d1f67bf78e7fd1c83f11cccf3d41afca80188e941c4134c23e86db4328328c1579804da95c31451ee05785c8678676ebe4ae9a046ce89e77c6baed58c93de83951d313a7fc91301cfd396016c42db1d80b6fa066ceb50d6ba96216c241fe504e896247917fcfb90b34b8ea404fa6a27e2",
+      "expect": "accept"
+    },
+    {
+      "category": 2,
+      "name": "plaintext exactly chunk_size",
+      "k_album": "c0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedf",
+      "asset_id": "b0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+      "base_nonce": "a0a1a2a3a4a5a6a7a8a9aaabacadaeae",
+      "chunk_size": 64,
+      "plaintext": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f",
+      "object": "5654524e01010000a0a1a2a3a4a5a6a7a8a9aaabacadaeae400000004000000000000000b0b1b2b3b4b5b6b7b8b9babbbcbdbebf000000000000000000000000fdd320d97ac9e72efcfb2f6b9a273de3f122c183d2bd90cc584de368f99786992c8def1137248c164591962449a1f25149fff58ec5dc1dfcb893aaa7ceecdf39b5d6e765d911d0feba7980e8874898cd",
+      "expect": "accept"
+    },
+    {
+      "category": 3,
+      "name": "plaintext exactly chunk_size + 1",
+      "k_album": "c0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedf",
+      "asset_id": "b0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+      "base_nonce": "a0a1a2a3a4a5a6a7a8a9aaabacadaeaf",
+      "chunk_size": 64,
+      "plaintext": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f40",
+      "object": "5654524e01010000a0a1a2a3a4a5a6a7a8a9aaabacadaeaf400000004100000000000000b0b1b2b3b4b5b6b7b8b9babbbcbdbebf000000000000000000000000928301e29c278da2388ceb0a6d2c899ccce96d7f0d3df9189ec325c28fbd0d76956206aee01bce1fb25da71b81d238bf57c33f5bc200f6aa261cdeefb78cb32494cc419c54159c0b002af3c4a06aa116cf2d8e418d74bff9feb72b43ea4a9e2324",
+      "expect": "accept"
+    },
+    {
+      "category": 4,
+      "name": "three full chunks plus an 8-byte final chunk",
+      "k_album": "c0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedf",
+      "asset_id": "b0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+      "base_nonce": "a0a1a2a3a4a5a6a7a8a9aaabacadaeb0",
+      "chunk_size": 64,
+      "plaintext": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0c1c2c3c4c5c6c7",
+      "object": "5654524e01010000a0a1a2a3a4a5a6a7a8a9aaabacadaeb040000000c800000000000000b0b1b2b3b4b5b6b7b8b9babbbcbdbebf000000000000000000000000e9a9370967bf90d1e3c7dce5143bcbed35e25bc518e116808b95f30f95cb7b8e6f3cc4427cf395d679649ea819af3b846634efb95c7ad3f059239556bed79f6ac382797f0cd730f1788fe2ede29cf5290fd4313dfd746dd4e1f81550322ad4c965e19b6c15df90df3bf854c0b6de4e280d92abc25c7fcac5e0a38ebbdcdc5660fe422af663e799cd2bad6315f63abda5cf6af06bbffdb3ff7c56de094f944c6ea3111ce106a2b01f37f2309ccb11e006f621b0feeb5e245d8d98e0efa9f85f65d4177dbcc8861b85188f1dbdd726bfb062c3f87e94ea6303f43543fdd7c30c791a2ed5c68e6d4183c79cb090658b6911b3d5c6a4bb53d54ff12970be47b6e0047dcafcc14499a086",
+      "expect": "accept"
+    }
+  ],
+  "envelope_negative": [
+    {
+      "category": 10,
+      "name": "tampered ciphertext byte in chunk 1",
+      "k_album": "c0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedf",
+      "asset_id": "b0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+      "object": "5654524e01010000a0a1a2a3a4a5a6a7a8a9aaabacadaeb040000000c800000000000000b0b1b2b3b4b5b6b7b8b9babbbcbdbebf000000000000000000000000e9a9370967bf90d1e3c7dce5143bcbed35e25bc518e116808b95f30f95cb7b8e6f3cc4427cf395d679649ea819af3b846634efb95c7ad3f059239556bed79f6ac382797f0cd730f1788fe2ede29cf5290fd4313dfd756dd4e1f81550322ad4c965e19b6c15df90df3bf854c0b6de4e280d92abc25c7fcac5e0a38ebbdcdc5660fe422af663e799cd2bad6315f63abda5cf6af06bbffdb3ff7c56de094f944c6ea3111ce106a2b01f37f2309ccb11e006f621b0feeb5e245d8d98e0efa9f85f65d4177dbcc8861b85188f1dbdd726bfb062c3f87e94ea6303f43543fdd7c30c791a2ed5c68e6d4183c79cb090658b6911b3d5c6a4bb53d54ff12970be47b6e0047dcafcc14499a086",
+      "expect": "reject"
+    },
+    {
+      "category": 11,
+      "name": "chunks 0 and 1 swapped",
+      "k_album": "c0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedf",
+      "asset_id": "b0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+      "object": "5654524e01010000a0a1a2a3a4a5a6a7a8a9aaabacadaeb040000000c800000000000000b0b1b2b3b4b5b6b7b8b9babbbcbdbebf0000000000000000000000000fd4313dfd746dd4e1f81550322ad4c965e19b6c15df90df3bf854c0b6de4e280d92abc25c7fcac5e0a38ebbdcdc5660fe422af663e799cd2bad6315f63abda5cf6af06bbffdb3ff7c56de094f944c6ee9a9370967bf90d1e3c7dce5143bcbed35e25bc518e116808b95f30f95cb7b8e6f3cc4427cf395d679649ea819af3b846634efb95c7ad3f059239556bed79f6ac382797f0cd730f1788fe2ede29cf529a3111ce106a2b01f37f2309ccb11e006f621b0feeb5e245d8d98e0efa9f85f65d4177dbcc8861b85188f1dbdd726bfb062c3f87e94ea6303f43543fdd7c30c791a2ed5c68e6d4183c79cb090658b6911b3d5c6a4bb53d54ff12970be47b6e0047dcafcc14499a086",
+      "expect": "reject"
+    },
+    {
+      "category": 12,
+      "name": "final chunk removed and plaintext_length adjusted",
+      "k_album": "c0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedf",
+      "asset_id": "b0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+      "object": "5654524e01010000a0a1a2a3a4a5a6a7a8a9aaabacadaeb040000000c000000000000000b0b1b2b3b4b5b6b7b8b9babbbcbdbebf000000000000000000000000e9a9370967bf90d1e3c7dce5143bcbed35e25bc518e116808b95f30f95cb7b8e6f3cc4427cf395d679649ea819af3b846634efb95c7ad3f059239556bed79f6ac382797f0cd730f1788fe2ede29cf5290fd4313dfd746dd4e1f81550322ad4c965e19b6c15df90df3bf854c0b6de4e280d92abc25c7fcac5e0a38ebbdcdc5660fe422af663e799cd2bad6315f63abda5cf6af06bbffdb3ff7c56de094f944c6ea3111ce106a2b01f37f2309ccb11e006f621b0feeb5e245d8d98e0efa9f85f65d4177dbcc8861b85188f1dbdd726bfb062c3f87e94ea6303f43543fdd7c30c791a2ed5c68e6d4183c79cb090658b6911",
+      "expect": "reject"
+    },
+    {
+      "category": 13,
+      "name": "version byte altered",
+      "k_album": "c0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedf",
+      "asset_id": "b0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+      "object": "5654524e02010000a0a1a2a3a4a5a6a7a8a9aaabacadaeb040000000c800000000000000b0b1b2b3b4b5b6b7b8b9babbbcbdbebf000000000000000000000000e9a9370967bf90d1e3c7dce5143bcbed35e25bc518e116808b95f30f95cb7b8e6f3cc4427cf395d679649ea819af3b846634efb95c7ad3f059239556bed79f6ac382797f0cd730f1788fe2ede29cf5290fd4313dfd746dd4e1f81550322ad4c965e19b6c15df90df3bf854c0b6de4e280d92abc25c7fcac5e0a38ebbdcdc5660fe422af663e799cd2bad6315f63abda5cf6af06bbffdb3ff7c56de094f944c6ea3111ce106a2b01f37f2309ccb11e006f621b0feeb5e245d8d98e0efa9f85f65d4177dbcc8861b85188f1dbdd726bfb062c3f87e94ea6303f43543fdd7c30c791a2ed5c68e6d4183c79cb090658b6911b3d5c6a4bb53d54ff12970be47b6e0047dcafcc14499a086",
+      "expect": "reject"
+    }
+  ],
+  "key_derivation": [
+    {
+      "category": 5,
+      "name": "K_album + asset_id -> K_asset, K_thumb, K_meta",
+      "k_album": "c0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedf",
+      "asset_id": "b0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+      "k_asset": "ee01f1e9ceb261ba0267781177c5a76aa47152739b460786986599ce3a9c4936",
+      "k_thumb": "0be27b741ef3546f40926f75a5b309ecfa930f3be69777a1ca085f2dc73caa44",
+      "k_meta": "0b9b93a0679c2ef5a2d02dac49d8dc00304c636bcf518ba012d891f866ca6ce1"
+    }
+  ],
+  "anchors": {
+    "blake2b_keyed": {
+      "category": 6,
+      "source": "libsodium 1.0.20 test/default/generichash2.exp line 32 (i = 31)",
+      "key": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "message": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e",
+      "digest": "0e5625d74ada70b8a3b23ca76894e9a0f9dee88f5e3e370e27ad25061ea9dd6f"
+    },
+    "xchacha20poly1305": {
+      "category": 7,
+      "source": "draft-irtf-cfrg-xchacha-03 Appendix A.3.1",
+      "key": "808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9f",
+      "nonce": "404142434445464748494a4b4c4d4e4f5051525354555657",
+      "aad": "50515253c0c1c2c3c4c5c6c7",
+      "plaintext": "4c616469657320616e642047656e746c656d656e206f662074686520636c617373206f66202739393a204966204920636f756c64206f6666657220796f75206f6e6c79206f6e652074697020666f7220746865206675747572652c2073756e73637265656e20776f756c642062652069742e",
+      "ciphertext_and_tag": "bd6d179d3e83d43b9576579493c0e939572a1700252bfaccbed2902c21396cbb731c7f1b0b4aa6440bf3a82f4eda7e39ae64c6708c54c216cb96b72e1213b4522f8c9ba40db5d945b11b69b982c1bb9e3f3fac2bc369488f76b2383565d3fff921f9664c97637da9768812f615c68b13b52ec0875924c1c7987947deafd8780acf49"
+    },
+    "argon2id": {
+      "category": 8,
+      "source": "RFC 9106 §5.3",
+      "password": "0101010101010101010101010101010101010101010101010101010101010101",
+      "salt": "02020202020202020202020202020202",
+      "secret": "0303030303030303",
+      "associated_data": "040404040404040404040404",
+      "params": {
+        "m_cost_kib": 32,
+        "t_cost": 3,
+        "p_cost": 4
+      },
+      "tag": "0d640df58d78766c08c037a34a8b53c9d01ef0452d75b65eb52520e96b01e659"
+    }
+  },
+  "wrap": [
+    {
+      "category": 9,
+      "name": "v1 parameters (§6.2)",
+      "k_album": "c0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedf",
+      "passphrase": "Café Roble",
+      "salt": "8f2c41d705ba6319e47a2f90c8115d36",
+      "params": {
+        "m_cost_kib": 65536,
+        "t_cost": 3,
+        "p_cost": 1
+      },
+      "recipient_id": "3f2a91c78b4e4d169f05c2a7d81e6b34",
+      "wrap_nonce": "6dc41a832f0b975ea138d6724ce905bf81279a60f34dcb16",
+      "wrapped": "36446cfbf45d62c487bebeed6548dbbcc6452179f7edb09314cadcc2ab060bfdfdd881ccede87ec90e1fbba90f6c270b"
+    },
+    {
+      "category": 9,
+      "name": "low parameters",
+      "k_album": "c0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedf",
+      "passphrase": "Café Roble",
+      "salt": "8f2c41d705ba6319e47a2f90c8115d36",
+      "params": {
+        "m_cost_kib": 8,
+        "t_cost": 1,
+        "p_cost": 1
+      },
+      "recipient_id": "3f2a91c78b4e4d169f05c2a7d81e6b34",
+      "wrap_nonce": "6dc41a832f0b975ea138d6724ce905bf81279a60f34dcb16",
+      "wrapped": "2b2b3d1289ac7c793735f7bd2ac86824f0b44878ba75b8865acdf827ab812da67f076808904b46b8600a535b6754ba61"
+    }
+  ],
+  "protocol": {
+    "token": {
+      "vector": 1,
+      "token_raw": "101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f",
+      "token_base64url": "EBESExQVFhcYGRobHB0eHyAhIiMkJSYnKCkqKywtLi8",
+      "sha256": "89c7460452eddff119fea0419e785c74de2ffb139dbe74323aca4a01e198a5dc",
+      "expect": "accept"
+    },
+    "token_noncanonical": {
+      "vector": 2,
+      "token_base64url": "EBESExQVFhcYGRobHB0eHyAhIiMkJSYnKCkqKywtLi9",
+      "expect": "reject"
+    },
+    "passphrase_normalisation": {
+      "vector": 3,
+      "passphrase": "  Café  ROBLE\tÑandú ",
+      "normalized": "cafe roble nandu",
+      "salt": "8f2c41d705ba6319e47a2f90c8115d36",
+      "params": {
+        "m_cost_kib": 8,
+        "t_cost": 1,
+        "p_cost": 1
+      },
+      "kek": "5ec92ffd16125658113b8dd0e547535266d1cb5753dc25e78f280ce710b55cb2"
+    },
+    "wrap_aad": {
+      "vector": 4,
+      "recipient_id": "3f2a91c78b4e4d169f05c2a7d81e6b34",
+      "aad": "76697472696e612d777261702d76313f2a91c78b4e4d169f05c2a7d81e6b34"
+    },
+    "wrap_salt_length": [
+      {
+        "vector": 5,
+        "name": "16-byte salt",
+        "k_album": "c0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedf",
+        "passphrase": "Café Roble",
+        "salt": "8f2c41d705ba6319e47a2f90c8115d36",
+        "params": {
+          "m_cost_kib": 8,
+          "t_cost": 1,
+          "p_cost": 1
+        },
+        "recipient_id": "3f2a91c78b4e4d169f05c2a7d81e6b34",
+        "wrap_nonce": "6dc41a832f0b975ea138d6724ce905bf81279a60f34dcb16",
+        "wrapped": "2b2b3d1289ac7c793735f7bd2ac86824f0b44878ba75b8865acdf827ab812da67f076808904b46b8600a535b6754ba61",
+        "expect": "accept"
+      },
+      {
+        "vector": 5,
+        "name": "32-byte salt",
+        "k_album": "c0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedf",
+        "passphrase": "Café Roble",
+        "salt": "8f2c41d705ba6319e47a2f90c8115d368f2c41d705ba6319e47a2f90c8115d36",
+        "params": {
+          "m_cost_kib": 8,
+          "t_cost": 1,
+          "p_cost": 1
+        },
+        "recipient_id": "3f2a91c78b4e4d169f05c2a7d81e6b34",
+        "wrap_nonce": "6dc41a832f0b975ea138d6724ce905bf81279a60f34dcb16",
+        "expect": "reject"
+      }
+    ]
+  }
+}

@@ -141,7 +141,7 @@ pub struct WrappedKey {
     // already has them.
 }
 
-fn wrap_with_salt_and_nonce(
+pub(crate) fn wrap_with_salt_and_nonce(
     album_key: &AlbumKey,
     passphrase: &str,
     salt: Salt,
