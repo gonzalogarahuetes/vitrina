@@ -7,7 +7,8 @@ use crate::envelope::encrypt_with_header;
 use crate::header::Header;
 use crate::keys::{cipher_for, keyed_blake2b_256};
 use crate::test_fixtures::{ASSET_ID, BASE_NONCE, K_ALBUM, album_key, hex};
-use crate::{AlbumKey, CHUNK_SIZE, WrapParams};
+use crate::wrap::{derive_kek, normalize_passphrase, wrap_aad, wrap_with_salt_and_nonce};
+use crate::{AlbumKey, CHUNK_SIZE, RecipientId, Salt, WrapParams};
 use argon2::{Algorithm, Argon2, AssociatedData, ParamsBuilder, Version};
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -47,6 +48,11 @@ impl Params {
         t_cost: 3,
         p_cost: 1,
     };
+    const LOW: Params = Params {
+        m_cost_kib: 8,
+        t_cost: 1,
+        p_cost: 1,
+    };
 
     fn wrap_params(self) -> WrapParams {
         WrapParams::new(self.m_cost_kib, self.t_cost, self.p_cost).expect("valid Argon2id params")
@@ -68,6 +74,64 @@ struct VectorFile {
     envelope_negative: Vec<NegativeVector>,
     key_derivation: Vec<KeyDerivationVector>,
     anchors: Anchors,
+    wrap: Vec<WrapVector>,
+    protocol: Protocol,
+}
+
+/// §9 category 9. Two parameter sets, because one cannot tell a reader that
+/// honours per-recipient parameters (§6.2) from one that hardcodes them.
+#[derive(Serialize, Deserialize)]
+struct WrapVector {
+    category: u8,
+    name: String,
+    k_album: String,
+    passphrase: String,
+    salt: String,
+    params: Params,
+    recipient_id: String,
+    wrap_nonce: String,
+    wrapped: String,
+}
+
+/// §9.1's required protocol vectors, keyed by name in §9.1's order.
+#[derive(Serialize, Deserialize)]
+struct Protocol {
+    passphrase_normalisation: PassphraseVector,
+    wrap_aad: WrapAadVector,
+    wrap_salt_length: Vec<SaltLengthVector>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct PassphraseVector {
+    vector: u8,
+    passphrase: String,
+    normalized: String,
+    salt: String,
+    params: Params,
+    kek: String,
+}
+
+#[derive(Serialize, Deserialize)]
+struct WrapAadVector {
+    vector: u8,
+    recipient_id: String,
+    aad: String,
+}
+
+/// `wrapped` is absent on the reject case: nothing is computed there.
+#[derive(Serialize, Deserialize)]
+struct SaltLengthVector {
+    vector: u8,
+    name: String,
+    k_album: String,
+    passphrase: String,
+    salt: String,
+    params: Params,
+    recipient_id: String,
+    wrap_nonce: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    wrapped: Option<String>,
+    expect: Expect,
 }
 
 /// §9 categories 6–8: one external anchor per §1 primitive, keyed by name.
@@ -257,6 +321,114 @@ fn rfc9106_argon2id(
     out
 }
 
+// Wrap fixtures, shared with wrap.rs's tests so category 9 at low parameters
+// coincides with KNOWN_ANSWER_WRAPPED there.
+// ---------------------------------------------------------------------------
+
+const SALT: [u8; 16] = [
+    0x8f, 0x2c, 0x41, 0xd7, 0x05, 0xba, 0x63, 0x19, 0xe4, 0x7a, 0x2f, 0x90, 0xc8, 0x11, 0x5d, 0x36,
+];
+/// UUIDv4 3f2a91c7-8b4e-4d16-9f05-c2a7d81e6b34.
+const RECIPIENT_ID: [u8; 16] = [
+    0x3f, 0x2a, 0x91, 0xc7, 0x8b, 0x4e, 0x4d, 0x16, 0x9f, 0x05, 0xc2, 0xa7, 0xd8, 0x1e, 0x6b, 0x34,
+];
+const WRAP_NONCE: [u8; 24] = [
+    0x6d, 0xc4, 0x1a, 0x83, 0x2f, 0x0b, 0x97, 0x5e, 0xa1, 0x38, 0xd6, 0x72, 0x4c, 0xe9, 0x05, 0xbf,
+    0x81, 0x27, 0x9a, 0x60, 0xf3, 0x4d, 0xcb, 0x16,
+];
+const PASSPHRASE: &str = "Café Roble";
+/// Diacritics, mixed case, leading, doubled, tab and trailing whitespace.
+const MESSY_PASSPHRASE: &str = "  Café  ROBLE\tÑandú ";
+
+fn wrapped_for(passphrase: &str, params: Params) -> [u8; 48] {
+    wrap_with_salt_and_nonce(
+        &album_key(),
+        passphrase,
+        Salt::from_bytes(SALT),
+        params.wrap_params(),
+        &RecipientId::from_bytes(RECIPIENT_ID),
+        &WRAP_NONCE,
+    )
+    .unwrap()
+}
+
+fn wrap_vector(name: &str, params: Params) -> WrapVector {
+    WrapVector {
+        category: 9,
+        name: name.to_string(),
+        k_album: hex(&K_ALBUM),
+        passphrase: PASSPHRASE.to_string(),
+        salt: hex(&SALT),
+        params,
+        recipient_id: hex(&RECIPIENT_ID),
+        wrap_nonce: hex(&WRAP_NONCE),
+        wrapped: hex(&wrapped_for(PASSPHRASE, params)),
+    }
+}
+
+fn wrap_vectors() -> Vec<WrapVector> {
+    vec![
+        wrap_vector("v1 parameters (§6.2)", Params::V1),
+        wrap_vector("low parameters", Params::LOW),
+    ]
+}
+
+fn salt_length_vector(
+    name: &str,
+    salt: &[u8],
+    wrapped: Option<[u8; 48]>,
+    expect: Expect,
+) -> SaltLengthVector {
+    SaltLengthVector {
+        vector: 5,
+        name: name.to_string(),
+        k_album: hex(&K_ALBUM),
+        passphrase: PASSPHRASE.to_string(),
+        salt: hex(salt),
+        params: Params::LOW,
+        recipient_id: hex(&RECIPIENT_ID),
+        wrap_nonce: hex(&WRAP_NONCE),
+        wrapped: wrapped.map(|w| hex(&w)),
+        expect,
+    }
+}
+
+fn protocol() -> Protocol {
+    let normalized: String = normalize_passphrase(MESSY_PASSPHRASE);
+    assert_eq!(normalized, "cafe roble nandu");
+    let kek = derive_kek(
+        MESSY_PASSPHRASE,
+        Params::LOW.wrap_params(),
+        Salt::from_bytes(SALT),
+    )
+    .unwrap();
+
+    Protocol {
+        passphrase_normalisation: PassphraseVector {
+            vector: 3,
+            passphrase: MESSY_PASSPHRASE.to_string(),
+            normalized,
+            salt: hex(&SALT),
+            params: Params::LOW,
+            kek: hex(kek.expose_bytes()),
+        },
+        wrap_aad: WrapAadVector {
+            vector: 4,
+            recipient_id: hex(&RECIPIENT_ID),
+            aad: hex(&wrap_aad(&RecipientId::from_bytes(RECIPIENT_ID))),
+        },
+        wrap_salt_length: vec![
+            salt_length_vector(
+                "16-byte salt",
+                &SALT,
+                Some(wrapped_for(PASSPHRASE, Params::LOW)),
+                Expect::Accept,
+            ),
+            salt_length_vector("32-byte salt", &SALT.repeat(2), None, Expect::Reject),
+        ],
+    }
+}
+
 fn ascending(len: u64) -> Vec<u8> {
     (0..len).map(|b| b as u8).collect()
 }
@@ -397,6 +569,8 @@ fn generate_vectors() {
         envelope_negative,
         key_derivation: key_derivation_vectors(),
         anchors,
+        wrap: wrap_vectors(),
+        protocol: protocol(),
     });
 }
 

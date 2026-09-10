@@ -123,5 +123,89 @@
       },
       "tag": "0d640df58d78766c08c037a34a8b53c9d01ef0452d75b65eb52520e96b01e659"
     }
+  },
+  "wrap": [
+    {
+      "category": 9,
+      "name": "v1 parameters (§6.2)",
+      "k_album": "c0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedf",
+      "passphrase": "Café Roble",
+      "salt": "8f2c41d705ba6319e47a2f90c8115d36",
+      "params": {
+        "m_cost_kib": 65536,
+        "t_cost": 3,
+        "p_cost": 1
+      },
+      "recipient_id": "3f2a91c78b4e4d169f05c2a7d81e6b34",
+      "wrap_nonce": "6dc41a832f0b975ea138d6724ce905bf81279a60f34dcb16",
+      "wrapped": "36446cfbf45d62c487bebeed6548dbbcc6452179f7edb09314cadcc2ab060bfdfdd881ccede87ec90e1fbba90f6c270b"
+    },
+    {
+      "category": 9,
+      "name": "low parameters",
+      "k_album": "c0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedf",
+      "passphrase": "Café Roble",
+      "salt": "8f2c41d705ba6319e47a2f90c8115d36",
+      "params": {
+        "m_cost_kib": 8,
+        "t_cost": 1,
+        "p_cost": 1
+      },
+      "recipient_id": "3f2a91c78b4e4d169f05c2a7d81e6b34",
+      "wrap_nonce": "6dc41a832f0b975ea138d6724ce905bf81279a60f34dcb16",
+      "wrapped": "2b2b3d1289ac7c793735f7bd2ac86824f0b44878ba75b8865acdf827ab812da67f076808904b46b8600a535b6754ba61"
+    }
+  ],
+  "protocol": {
+    "passphrase_normalisation": {
+      "vector": 3,
+      "passphrase": "  Café  ROBLE\tÑandú ",
+      "normalized": "cafe roble nandu",
+      "salt": "8f2c41d705ba6319e47a2f90c8115d36",
+      "params": {
+        "m_cost_kib": 8,
+        "t_cost": 1,
+        "p_cost": 1
+      },
+      "kek": "5ec92ffd16125658113b8dd0e547535266d1cb5753dc25e78f280ce710b55cb2"
+    },
+    "wrap_aad": {
+      "vector": 4,
+      "recipient_id": "3f2a91c78b4e4d169f05c2a7d81e6b34",
+      "aad": "76697472696e612d777261702d76313f2a91c78b4e4d169f05c2a7d81e6b34"
+    },
+    "wrap_salt_length": [
+      {
+        "vector": 5,
+        "name": "16-byte salt",
+        "k_album": "c0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedf",
+        "passphrase": "Café Roble",
+        "salt": "8f2c41d705ba6319e47a2f90c8115d36",
+        "params": {
+          "m_cost_kib": 8,
+          "t_cost": 1,
+          "p_cost": 1
+        },
+        "recipient_id": "3f2a91c78b4e4d169f05c2a7d81e6b34",
+        "wrap_nonce": "6dc41a832f0b975ea138d6724ce905bf81279a60f34dcb16",
+        "wrapped": "2b2b3d1289ac7c793735f7bd2ac86824f0b44878ba75b8865acdf827ab812da67f076808904b46b8600a535b6754ba61",
+        "expect": "accept"
+      },
+      {
+        "vector": 5,
+        "name": "32-byte salt",
+        "k_album": "c0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedf",
+        "passphrase": "Café Roble",
+        "salt": "8f2c41d705ba6319e47a2f90c8115d368f2c41d705ba6319e47a2f90c8115d36",
+        "params": {
+          "m_cost_kib": 8,
+          "t_cost": 1,
+          "p_cost": 1
+        },
+        "recipient_id": "3f2a91c78b4e4d169f05c2a7d81e6b34",
+        "wrap_nonce": "6dc41a832f0b975ea138d6724ce905bf81279a60f34dcb16",
+        "expect": "reject"
+      }
+    ]
   }
 }
