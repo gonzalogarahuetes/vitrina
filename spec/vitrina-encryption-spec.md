@@ -232,6 +232,7 @@ Because the server stores `wrapped`, anyone with database access can mount an of
 - Generate from a wordlist of at least 7,776 words
 - Minimum 5 words → ≥ 64 bits of entropy
 - The user MUST NOT be permitted to supply their own
+- **An entry that is empty after normalisation MUST be rejected, not hashed.** Argon2id accepts an empty password without complaint, and a KEK derived from one fails to unwrap with no diagnostic — "empty passphrase" is actionable where "unwrap failed" is not. The generation rule above makes an empty passphrase impossible; the _entry_ path takes whatever a recipient types, including whitespace that normalisation reduces to nothing. Word count is not checkable without the wordlist and belongs to the client; non-emptiness belongs here
 - Words MUST come from a wordlist in the **recipient's** language, selected per invite by the owner (brief §15.2) — a grandparent reading a passphrase aloud over the phone transcribes their own language reliably and a foreign one badly. This is a correctness concern, not a localisation nicety.
 
 **Wordlist construction is constrained beyond word count.** A list MUST contain no homophones and no pairs of words differing only by a diacritic, because the normalisation below collapses both.
@@ -441,9 +442,10 @@ Only two of these are envelope concerns. The rest are protocol-adjacent and belo
 
 1. A token in both forms — 32 raw bytes and its canonical 43-character base64url — with the expected SHA-256 of the raw bytes
 2. A non-canonical 43-character spelling of that same token, asserted to be **rejected** rather than accepted
-3. A passphrase containing diacritics, mixed case and irregular whitespace, with its normalised form and the expected KEK under a fixed salt and parameters
-4. A `recipient_id` with the expected 31-byte AAD, hex-encoded
-5. An Argon2id wrap using a 16-byte salt, asserted to succeed, and one using a 32-byte salt, asserted to be rejected before it reaches the KDF
+3. **A passphrase that is empty after normalisation — whitespace only — asserted to be rejected rather than hashed** (§6.3). Note the motivation differs from the rest of this list: under brief §6 #4 there is one cryptographic implementation, so Vitrina's own clients cannot diverge here. This vector exists for §0's requirement that the document be implementable independently
+4. A passphrase containing diacritics, mixed case and irregular whitespace, with its normalised form and the expected KEK under a fixed salt and parameters
+5. A `recipient_id` with the expected 31-byte AAD, hex-encoded
+6. An Argon2id wrap using a 16-byte salt, asserted to succeed, and one using a 32-byte salt, asserted to be rejected before it reaches the KDF
 
 ### 9.2 Self-generated vectors cannot catch a wrong primitive
 
@@ -459,7 +461,7 @@ Two limits on what category 6 proves. It uses the streaming API, which for BLAKE
 
 **XChaCha20-Poly1305 needs the same treatment, and it is the most consequential of the three.** Categories 1 through 4 all encrypt with it, so a construction difference makes the entire envelope vector set self-consistent and wrong. The risk is not a hidden parameter block but the construction itself: HChaCha20 derives a subkey from the key and the first 16 nonce bytes, the remaining 8 bytes are prefixed with four NUL bytes to form the ChaCha20 nonce, and the AEAD mode starts its block counter at **1** rather than 0 because block 0 produces the one-time Poly1305 key. Each of those is a place to differ, and each difference yields a working cipher whose output no other implementation reproduces.
 
-**The anchor: `draft-irtf-cfrg-xchacha-03`, Appendix A.1**, which states the key, 24-byte nonce, 114-byte plaintext, 12-byte AAD and expected ciphertext inline. **Draft-03 specifically** — earlier drafts disagree on the initial block counter, and -03 is what implementations cite as their compliance target. libsodium's `test/default/aead_xchacha20poly1305.c` uses the identical inputs, so it is the same vector rather than a second source; prefer the draft because libsodium's expected values live in a `.exp` file interleaved with `_ietf` sub-tests, where picking the wrong line anchors you silently to the wrong answer. If both can be read confidently, agreeing is a free cross-check.
+**The anchor: `draft-irtf-cfrg-xchacha-03`, Appendix A.3.1** — the developer-friendly presentation, which is what the crate verified against during C.5. It states the key, 24-byte nonce, 114-byte plaintext, 12-byte AAD and expected ciphertext inline. **Draft-03 specifically** — earlier drafts disagree on the initial block counter, and -03 is what implementations cite as their compliance target. libsodium's `test/default/aead_xchacha20poly1305.c` uses the identical inputs, so it is the same vector rather than a second source; prefer the draft because libsodium's expected values live in a `.exp` file interleaved with `_ietf` sub-tests, where picking the wrong line anchors you silently to the wrong answer. If both can be read confidently, agreeing is a free cross-check.
 
 The AAD must be non-empty. Vitrina's AAD is never empty (§5), and AAD length encoding in the Poly1305 input is precisely where a construction difference would hide.
 
