@@ -4,7 +4,7 @@ use chacha20poly1305::KeyInit as _;
 use chacha20poly1305::XChaCha20Poly1305;
 use zeroize::Zeroizing;
 
-use crate::AssetId;
+use crate::{AssetId, WrongLength};
 
 const ASSET_LABEL: &[u8; 16] = b"vitrina-asset-v1";
 const THUMB_LABEL: &[u8; 16] = b"vitrina-thumb-v1";
@@ -52,11 +52,13 @@ impl ChunkKey for MetaKey {
 }
 
 impl AlbumKey {
+    pub const LEN: usize = 32;
+
     /// [u8; 32] is Copy, so the caller still has their own copy on the stack and that one isn't wiped. Zeroizing protects the copy the key owns, nothing more
-    pub fn from_bytes(bytes: [u8; 32]) -> Self {
+    pub fn from_bytes(bytes: [u8; Self::LEN]) -> Self {
         AlbumKey(Zeroizing::new(bytes))
     }
-    pub(crate) fn expose_bytes(&self) -> &[u8; 32] {
+    pub(crate) fn expose_bytes(&self) -> &[u8; Self::LEN] {
         &self.0
     }
     pub(crate) fn derive_asset(&self, asset_id: &AssetId) -> AssetKey {
@@ -68,12 +70,19 @@ impl AlbumKey {
     pub(crate) fn derive_meta(&self, asset_id: &AssetId) -> MetaKey {
         MetaKey(Zeroizing::new(self.derive(META_LABEL, asset_id)))
     }
-    fn derive(&self, label: &[u8], asset_id: &AssetId) -> [u8; 32] {
+    fn derive(&self, label: &[u8], asset_id: &AssetId) -> [u8; Self::LEN] {
         let mut buf: [u8; 32] = [0u8; 32];
         let n: usize = label.len();
         buf[..n].copy_from_slice(label);
         buf[n..n + 16].copy_from_slice(asset_id.as_bytes());
         keyed_blake2b_256(self.expose_bytes(), &buf[..n + 16])
+    }
+    pub fn try_from_slice(bytes: &[u8]) -> Result<AlbumKey, WrongLength> {
+        let bytes: [u8; Self::LEN] = bytes.try_into().map_err(|_| WrongLength {
+            expected: Self::LEN,
+            got: bytes.len(),
+        })?;
+        Ok(AlbumKey::from_bytes(bytes))
     }
 }
 
@@ -220,5 +229,48 @@ mod tests {
         assert_ne!(k_asset.expose_bytes(), other_k_asset.expose_bytes());
         assert_ne!(k_thumb.expose_bytes(), other_k_thumb.expose_bytes());
         assert_ne!(k_meta.expose_bytes(), other_k_meta.expose_bytes());
+    }
+
+    // Album Key Length Tests
+    // ----------------------------------------------------
+    #[test]
+    fn accepts_album_key_exact_length_and_preserves_bytes() {
+        assert_eq!(
+            AlbumKey::try_from_slice(&K_ALBUM).unwrap().expose_bytes(),
+            &K_ALBUM
+        );
+    }
+
+    #[test]
+    fn rejects_empty_album_key() {
+        assert_eq!(
+            AlbumKey::try_from_slice(&[]).err(),
+            Some(WrongLength {
+                got: 0,
+                expected: AlbumKey::LEN
+            })
+        );
+    }
+
+    #[test]
+    fn rejects_short_album_key() {
+        assert_eq!(
+            AlbumKey::try_from_slice(&[0u8; 15]).err(),
+            Some(WrongLength {
+                got: 15,
+                expected: AlbumKey::LEN
+            })
+        );
+    }
+
+    #[test]
+    fn rejects_long_album_key() {
+        assert_eq!(
+            AlbumKey::try_from_slice(&[0u8; 35]).err(),
+            Some(WrongLength {
+                got: 35,
+                expected: AlbumKey::LEN
+            })
+        );
     }
 }

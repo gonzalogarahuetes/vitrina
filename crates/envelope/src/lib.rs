@@ -20,6 +20,6 @@ pub use envelope::{
     encrypt_meta, encrypt_thumb,
 };
 pub use header::{HeaderError, LayoutError};
-pub use ids::{AssetId, RecipientId, Salt};
+pub use ids::{AssetId, RecipientId, Salt, WrongLength};
 pub use keys::AlbumKey;
 pub use wrap::{WrapError, WrapParams, WrappedKey, unwrap_album_key, wrap_album_key};
