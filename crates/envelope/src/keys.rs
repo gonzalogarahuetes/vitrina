@@ -117,6 +117,8 @@ impl Kek {
 mod tests {
     use super::*;
     use crate::test_fixtures::{ASSET_ID, K_ALBUM, hex};
+    #[cfg(target_arch = "wasm32")]
+    use wasm_bindgen_test::wasm_bindgen_test as test;
 
     const I: usize = 31;
 

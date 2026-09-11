@@ -223,6 +223,8 @@ mod tests {
         wrap::{WrapError, WrapParams},
     };
     use argon2::{Algorithm, Argon2, AssociatedData, ParamsBuilder, Version};
+    #[cfg(target_arch = "wasm32")]
+    use wasm_bindgen_test::wasm_bindgen_test as test;
     use zeroize::Zeroizing;
 
     const RFC_9106_ARGON2ID_TAG: &str =

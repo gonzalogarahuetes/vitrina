@@ -11,7 +11,8 @@ mod ids;
 mod keys;
 #[cfg(test)]
 pub(crate) mod test_fixtures;
-#[cfg(test)]
+// Reads spec/vectors/ from disk, so it has no wasm32 counterpart.
+#[cfg(all(test, not(target_arch = "wasm32")))]
 mod vectors;
 mod wrap;
 

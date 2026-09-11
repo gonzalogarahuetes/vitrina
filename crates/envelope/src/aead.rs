@@ -50,6 +50,8 @@ mod tests {
         aead::{aead_decrypt, aead_encrypt},
         keys::cipher_for,
     };
+    #[cfg(target_arch = "wasm32")]
+    use wasm_bindgen_test::wasm_bindgen_test as test;
 
     /// xchacha-rfc, `draft-irtf-cfrg-xchacha-rfc-03.txt`, A.3.1, AAD —
     #[rustfmt::skip]

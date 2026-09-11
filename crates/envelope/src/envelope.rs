@@ -179,9 +179,8 @@ mod tests {
     use crate::test_fixtures::{
         ASSET_ID, BASE_NONCE, PLAINTEXT, PLAINTEXT_65, album_key, asset_key, hex,
     };
-    use std::fs::File;
-    use std::io::{Read, Seek, SeekFrom, Write};
-    use tempfile::NamedTempFile;
+    #[cfg(target_arch = "wasm32")]
+    use wasm_bindgen_test::wasm_bindgen_test as test;
 
     /// Self-generated. Sound per §9.2 because the primitives beneath it are
     /// externally anchored — category 6 (BLAKE2b, keys.rs) and category 7
@@ -189,37 +188,6 @@ mod tests {
     /// §5's AAD composition as one value. This is C.9's category 3 vector.
     #[rustfmt::skip]
     const KNOWN_ANSWER_ENVELOPE: &str = "5654524e01010000a0a1a2a3a4a5a6a7a8a9aaabacadaeaf400000004100000000000000b0b1b2b3b4b5b6b7b8b9babbbcbdbebf000000000000000000000000928301e29c278da2388ceb0a6d2c899ccce96d7f0d3df9189ec325c28fbd0d76956206aee01bce1fb25da71b81d238bf57c33f5bc200f6aa261cdeefb78cb32494cc419c54159c0b002af3c4a06aa116cf2d8e418d74bff9feb72b43ea4a9e2324";
-
-    struct CountingReader<R> {
-        inner: R,
-        bytes_read: usize,
-    }
-
-    impl<R> CountingReader<R> {
-        fn new(inner: R) -> Self {
-            Self {
-                inner,
-                bytes_read: 0,
-            }
-        }
-        fn bytes_read(&self) -> usize {
-            self.bytes_read
-        }
-    }
-
-    impl<R: Read> Read for CountingReader<R> {
-        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-            let n = self.inner.read(buf)?;
-            self.bytes_read += n;
-            Ok(n)
-        }
-    }
-
-    impl<R: Seek> Seek for CountingReader<R> {
-        fn seek(&mut self, pos: SeekFrom) -> std::io::Result<u64> {
-            self.inner.seek(pos)
-        }
-    }
 
     #[test]
     fn encrypts_to_expected_layout() {
@@ -539,40 +507,79 @@ mod tests {
         assert_eq!(hex(&object), KNOWN_ANSWER_ENVELOPE);
     }
 
-    // C.7 Tests
-    // -----------------------------------------------------
-    #[test]
-    fn decrypts_chunk_i_given_only_k_asset() {
-        // Build the object in memory first — that part isn't what's being tested.
-        let header = Header::new(AssetId::from_bytes(ASSET_ID), BASE_NONCE, 64, 300).unwrap(); // 5 chunks, last is 44 bytes
-        let plaintext: Vec<u8> = (0..300u64).map(|b| b as u8).collect();
-        let object = encrypt_with_header(&asset_key(), &header, &plaintext).unwrap();
+    #[cfg(not(target_arch = "wasm32"))]
+    mod properties {
+        use super::*;
+        use std::fs::File;
+        use std::io::{Read, Seek, SeekFrom, Write};
+        use tempfile::NamedTempFile;
 
-        let mut tmp = NamedTempFile::new().unwrap();
-        tmp.write_all(&object).unwrap();
+        struct CountingReader<R> {
+            inner: R,
+            bytes_read: usize,
+        }
 
-        for i in [0u64, 2, header.chunk_count() - 1] {
-            // Fresh handle per index, so the counter sees only this iteration's reads.
-            let mut file = CountingReader::new(File::open(tmp.path()).unwrap());
+        impl<R> CountingReader<R> {
+            fn new(inner: R) -> Self {
+                Self {
+                    inner,
+                    bytes_read: 0,
+                }
+            }
+            fn bytes_read(&self) -> usize {
+                self.bytes_read
+            }
+        }
 
-            let mut header_buf = [0u8; 64];
-            file.read_exact(&mut header_buf).unwrap();
-            let parsed = Header::parse(&header_buf).unwrap();
+        impl<R: Read> Read for CountingReader<R> {
+            fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+                let n = self.inner.read(buf)?;
+                self.bytes_read += n;
+                Ok(n)
+            }
+        }
 
-            let range = parsed.chunk_range(i).unwrap();
-            let len = (range.end - range.start) as usize;
-            let mut chunk = vec![0u8; len];
-            file.seek(SeekFrom::Start(range.start)).unwrap();
-            file.read_exact(&mut chunk).unwrap();
+        impl<R: Seek> Seek for CountingReader<R> {
+            fn seek(&mut self, pos: SeekFrom) -> std::io::Result<u64> {
+                self.inner.seek(pos)
+            }
+        }
 
-            let got = decrypt_chunk(&asset_key(), &parsed, i, &chunk).unwrap();
+        // C.7 Tests
+        // -----------------------------------------------------
+        #[test]
+        fn decrypts_chunk_i_given_only_k_asset() {
+            // Build the object in memory first — that part isn't what's being tested.
+            let header = Header::new(AssetId::from_bytes(ASSET_ID), BASE_NONCE, 64, 300).unwrap(); // 5 chunks, last is 44 bytes
+            let plaintext: Vec<u8> = (0..300u64).map(|b| b as u8).collect();
+            let object = encrypt_with_header(&asset_key(), &header, &plaintext).unwrap();
 
-            let cs = parsed.chunk_size() as usize;
-            let start = i as usize * cs;
-            let end = ((i as usize + 1) * cs).min(plaintext.len());
+            let mut tmp = NamedTempFile::new().unwrap();
+            tmp.write_all(&object).unwrap();
 
-            assert_eq!(got.as_slice(), &plaintext[start..end]);
-            assert_eq!(file.bytes_read(), 64 + len);
+            for i in [0u64, 2, header.chunk_count() - 1] {
+                // Fresh handle per index, so the counter sees only this iteration's reads.
+                let mut file = CountingReader::new(File::open(tmp.path()).unwrap());
+
+                let mut header_buf = [0u8; 64];
+                file.read_exact(&mut header_buf).unwrap();
+                let parsed = Header::parse(&header_buf).unwrap();
+
+                let range = parsed.chunk_range(i).unwrap();
+                let len = (range.end - range.start) as usize;
+                let mut chunk = vec![0u8; len];
+                file.seek(SeekFrom::Start(range.start)).unwrap();
+                file.read_exact(&mut chunk).unwrap();
+
+                let got = decrypt_chunk(&asset_key(), &parsed, i, &chunk).unwrap();
+
+                let cs = parsed.chunk_size() as usize;
+                let start = i as usize * cs;
+                let end = ((i as usize + 1) * cs).min(plaintext.len());
+
+                assert_eq!(got.as_slice(), &plaintext[start..end]);
+                assert_eq!(file.bytes_read(), 64 + len);
+            }
         }
     }
 }

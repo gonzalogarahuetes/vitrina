@@ -82,6 +82,8 @@ mod tests {
         AlbumKey, AssetId, RecipientId, Salt, WrappedKey, WrongLength,
         test_fixtures::{ASSET_ID, RECIPIENT_ID, SALT},
     };
+    #[cfg(target_arch = "wasm32")]
+    use wasm_bindgen_test::wasm_bindgen_test as test;
 
     // Recipient ID Length Tests
     // ----------------------------------------------------
