@@ -138,6 +138,8 @@ This is what makes an HTTP `Range` request sufficient to fetch and independently
 
 An implementation MUST be able to decrypt chunk _i_ given only `K_asset`, the 64-byte header, and the bytes of chunk _i_. If your implementation cannot do that, it is not conforming, and video will not work later.
 
+**A binding that does not expose this is not a conformance failure of the implementation behind it — but a client reaching that implementation only through such a binding does not have the property.** As of Phase 0 that is the actual situation: `crates/envelope` satisfies the requirement and its WASM binding does not surface it, because nothing in Phase 1 needs random access. Phase 3 requires a public entry point. Recorded so "the crate conforms" is not mistaken for "the client can seek".
+
 ---
 
 ## 4. Nonce derivation
@@ -442,7 +444,7 @@ Only two of these are envelope concerns. The rest are protocol-adjacent and belo
 
 1. A token in both forms — 32 raw bytes and its canonical 43-character base64url — with the expected SHA-256 of the raw bytes
 2. A non-canonical 43-character spelling of that same token, asserted to be **rejected** rather than accepted
-3. **A passphrase that is empty after normalisation — whitespace only — asserted to be rejected rather than hashed** (§6.3). Note the motivation differs from the rest of this list: under brief §6 #4 there is one cryptographic implementation, so Vitrina's own clients cannot diverge here. This vector exists for §0's requirement that the document be implementable independently
+3. **Two passphrases that are empty after normalisation — one already empty, one whitespace only — each asserted to be rejected rather than hashed, with no KEK** (§6.3). Two inputs because they fail at different points: an implementation testing emptiness _before_ normalising accepts the whitespace form and would pass a single-input vector. Note the motivation differs from the rest of this list: under brief §6 #4 there is one cryptographic implementation, so Vitrina's own clients cannot diverge here. This vector exists for §0's requirement that the document be implementable independently
 4. A passphrase containing diacritics, mixed case and irregular whitespace, with its normalised form and the expected KEK under a fixed salt and parameters
 5. A `recipient_id` with the expected 31-byte AAD, hex-encoded
 6. An Argon2id wrap using a 16-byte salt, asserted to succeed, and one using a 32-byte salt, asserted to be rejected before it reaches the KDF
@@ -470,6 +472,16 @@ The AAD must be non-empty. Vitrina's AAD is never empty (§5), and AAD length en
 **And note what RFC 9106's vector does not exercise.** It supplies a non-empty secret and non-empty associated data; Vitrina supplies neither (§6.2). Those are length-prefixed fields in Argon2's initial hash, so passing this vector proves the implementation handles them _present_ and says nothing about the zero-length case Vitrina actually uses. Category 9's round trip covers that composition — self-generated, so per this section it establishes agreement rather than correctness.
 
 ---
+
+### 9.3 Not every category is externally verifiable, and that is deliberate
+
+§9 requires every other implementation to pass the vectors unchanged. For some categories that is structurally impossible, and the reasons are properties this document asks for elsewhere. Recorded so the gap is a decision rather than an oversight to be "fixed".
+
+**The encrypt direction cannot be verified from outside an implementation.** Reproducing a vector's bytes requires supplying its `base_nonce`, and §4.1 forbids a public entry point accepting one — the point being that a caller cannot choose a nonce. Satisfying §9 literally would mean making nonce reuse expressible from JavaScript, which is what §4.1 forbids most emphatically. **The resolution: the encrypt direction is pinned by known-answer tests inside the implementation; the decrypt direction is verified byte-exactly from outside.** That is the correct trade and must not be revisited as a gap.
+
+**Categories 5 through 8 are likewise internal.** Checking key derivation requires reading a derived key, and §2.2 forbids any byte accessor on a key type; categories 6–8 anchor primitives a binding deliberately does not expose at all. The same property that stops a binding leaking `K_album` stops it checking how `K_album` was used.
+
+**What this means in practice.** Under brief §6 #4 there is one cryptographic implementation, reached by WASM and by FFI, so nothing diverges — these categories protect the implementation from its own future edits rather than one implementation from another. The externally verifiable set is the decrypt direction, the envelope layout, the negatives, and the protocol vectors. An independent implementation built from this document alone (§0) must construct its own internal equivalents of 5–8, which is why §9.2 names their external anchors rather than only their expected outputs.
 
 ## 10. Accepted limitations
 

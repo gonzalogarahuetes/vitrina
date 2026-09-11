@@ -351,6 +351,8 @@ Two implementations compute this hash independently and must agree byte for byte
 4. **The base64url form is transport only.** Because the hash is taken over decoded bytes, all four spellings would authenticate identically even without rule 3 — which is why rule 3 is a guard rather than a security control. Never compare token strings: not as a cache key, not for log deduplication, not for rate limiting. #10 keys the limiter on the hash for exactly this reason.
 5. The server cannot validate that a stored hash corresponds to a well-formed token, and must not try — any 32 random bytes is a valid token, so there is nothing to check.
 
-**This requires a conformance vector**, not just this prose: one known token, in both its raw-byte and base64url forms, with its expected SHA-256. Both implementations run it. See encryption spec §9 — the same mechanism, applied outside the envelope.
+**This requires a conformance vector**, not just this prose: one known token, in both its raw-byte and base64url forms, with its expected SHA-256. Both implementations run it.
+
+_Note as of Phase 0: the canonicality rule above has two test-only implementations — one in the crate's vector generator, one in the TypeScript harness. When Phase 1 writes the production one, those two must import it or be deleted. Three copies of a rule is §9.1's failure class reproduced inside the machinery built to prevent it._ See encryption spec §9 — the same mechanism, applied outside the envelope.
 
 `owner_tokens.token_hash` follows the same rule. Only the server hashes it today, so the cross-implementation risk is lower, but one rule for both is cheaper than two.
