@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import init, * as envelope from "../wasm/envelope.js";
 
 export type Envelope = typeof envelope;
+export type { AlbumKey } from "../wasm/envelope.js";
 
 /** packages/envelope/, resolved from the compiled location dist/test/. */
 export const PACKAGE_ROOT = new URL("../../", import.meta.url);
