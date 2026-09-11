@@ -128,23 +128,29 @@ Two numbers in the spec are guesses that need evidence. Both are cheap to check 
 
 **V.2 — decrypt and render a full album in mobile Safari.** Twenty photos at ~1600 px. Watch for tab crashes from memory pressure. If 256 KiB chunks are wrong, better to know before anything depends on them.
 
+**V.2 PASSED.** Mobile Safari, twenty photos, no crash, maximum scheduler gap 0 ms — so nothing was suspended and the result is memory behaviour rather than backgrounding. **256 KiB chunks stand; encryption spec §3.1 needs no amendment.**
+
+**The transferable finding, which matters more than the pass.** Decryption is not the cost of opening an album. Twenty 1600 px photos: 122 ms decrypt against 706 ms render on iPhone, 495 ms against 1637 ms on Android. On the worse platform the envelope is under a third of decode, and decode is itself a fraction of fetch.
+
+Two consequences for Phase 1. **Chunk size is retired as a performance question** — it is a format decision (§3.1) and nothing about it is worth revisiting for speed. And **the dominant cost is the one brief §10.1 forbids optimising**: `no-store` means no caching, so a recipient pays full fetch on every album open. That is a deliberate choice, not a defect — but it means the first performance complaint in Phase 1 will not be answered by anything in the envelope, and the thumbnail-grid figure §10.1 anticipates remains unmeasured, because the only run available was over a tunnel rather than a LAN.
+
 ---
 
 ## 9. Exit criteria
 
 Phase 0 is done when all of the following are true. Not "mostly."
 
-- [ ] `crates/envelope` passes every vector category in encryption spec §9, **including every negative case**
-- [ ] Chunk _i_ decrypts given only the header and that chunk's bytes (C.7)
-- [ ] The WASM module loads in a browser and round-trips a 3 MB buffer
-- [ ] The binding validates every length it accepts and errors rather than panicking, with a harness assertion per wrong-length input (§7, C.10)
+- [x] `crates/envelope` passes every vector category in encryption spec §9, **including every negative case** — **done**, 13 categories incl. negatives
+- [x] Chunk _i_ decrypts given only the header and that chunk's bytes (C.7) — **done (C.7)**
+- [x] The WASM module loads in a browser and round-trips a 3 MB buffer — **done on two devices** (§8)
+- [x] The binding validates every length it accepts and errors rather than panicking, with a harness assertion per wrong-length input (§7, C.10) — **done (C.10)**
 - [ ] V.1 passes on real low-end Android hardware, or the spec has been amended
-- [ ] V.2 passes on real iOS Safari, or the chunk size has been amended
+- [x] V.2 passes on real iOS Safari, or the chunk size has been amended — **passed; 256 KiB stands** (§8)
 - [ ] The encryption spec has been corrected to match the implementation exactly, with every ambiguity found during C.1–C.8 resolved in the document
-- [ ] Exported JSON vectors live in `spec/vectors/` and CI runs against them
+- [x] Exported JSON vectors live in `spec/vectors/` and CI runs against them — **done**, pending the protocol-vector renumbering
 - [ ] Repo skeleton exists, CI is green, `docker-compose` brings up Postgres and an S3-compatible store
-- [ ] API surface sketch written (B.6)
-- [ ] Onboarding copy written (B.7)
+- [ ] API surface sketch written (B.6) — PR1 and PR2 shipped; **PR2b–PR5 outstanding, and they are Phase 1 work**
+- [x] Onboarding copy written (B.7) — **done**, brief §16
 
 The sixth item is the one most likely to be skipped and the most valuable. You will find ambiguities. Fix the document, not just the code.
 
