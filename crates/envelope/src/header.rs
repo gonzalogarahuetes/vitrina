@@ -210,8 +210,11 @@ impl Header {
 mod tests {
     use super::*;
     use crate::test_fixtures::{ASSET_ID, BASE_NONCE, GOLDEN, header_with};
+    #[cfg(not(target_arch = "wasm32"))]
     use proptest::prelude::*;
     use std::io::{Cursor, Read, Seek, SeekFrom};
+    #[cfg(target_arch = "wasm32")]
+    use wasm_bindgen_test::wasm_bindgen_test as test;
 
     #[test]
     fn parses_golden_header() {
@@ -363,25 +366,6 @@ mod tests {
         }
     }
 
-    proptest! {
-        #[test]
-        fn round_trips_any_valid_header(
-            base_nonce: [u8; 16],
-            asset_id: [u8; 16],
-            chunk_size in 1u32..,
-            plaintext_length in 1u64..,
-        ) {
-            let mut b = GOLDEN;
-            b[8..24].copy_from_slice(&base_nonce);
-            b[24..28].copy_from_slice(&chunk_size.to_le_bytes());
-            b[28..36].copy_from_slice(&plaintext_length.to_le_bytes());
-            b[36..52].copy_from_slice(&asset_id);
-
-            let h = Header::parse(&b).unwrap();
-            prop_assert_eq!(Header::to_bytes(&h), b);
-        }
-    }
-
     // Computing Methods Tests
     // ----------------------------------------------------
     const CS: u64 = 262_144;
@@ -495,6 +479,188 @@ mod tests {
         }
     }
 
+    #[test]
+    fn chunk_ranges_read_back_from_a_seekable_source() {
+        let h: Header = header_with(64, 200);
+        let chunk_count: u64 = h.chunk_count();
+        let total: u64 = h.total_object_size().unwrap();
+        let mut src: Cursor<Vec<u8>> = Cursor::new(vec![0u8; total as usize]);
+        for i in 0..chunk_count {
+            let r: Range<u64> = h.chunk_range(i).unwrap();
+            let mut buf: Vec<u8> = vec![0u8; (r.end - r.start) as usize];
+            src.seek(SeekFrom::Start(r.start)).unwrap();
+            src.read_exact(&mut buf).unwrap();
+        }
+        assert_eq!(src.position(), total);
+    }
+
+    // Nonce Derivation Tests
+    // ----------------------------------------------------
+    #[test]
+    fn nonce_counter_is_little_endian() {
+        let h: Header = header_with(1, 1);
+
+        for (i, tail) in [
+            (0u64, [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]),
+            (1, [0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]),
+            (
+                0x0807060504030201,
+                [0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08],
+            ),
+        ] {
+            let mut expected = [0u8; 24];
+            expected[0..16].copy_from_slice(&h.base_nonce);
+            expected[16..24].copy_from_slice(&tail);
+            assert_eq!(h.nonce(i), expected, "i = {i:#x}");
+        }
+    }
+
+    #[test]
+    fn nonce_does_not_validate_index() {
+        // `nonce` deliberately does not validate `i` — index checking lives in
+        // `chunk_range`. This pins that an out-of-range index still yields the
+        // §4 nonce rather than a clamped or sentinel value.
+        let h: Header = header_with(64, 200); // chunk_count == 4
+        let mut expected: [u8; 24] = [0u8; 24];
+        expected[0..16].copy_from_slice(&h.base_nonce);
+        expected[16..24].copy_from_slice(&4u64.to_le_bytes());
+        assert_eq!(h.nonce(h.chunk_count()), expected);
+    }
+
+    // AAD Derivation Tests
+    // -----------------------------------------------------
+    #[test]
+    fn aad_matches_golden_header_at_index_zero() {
+        let i: u64 = 0;
+        let h: Header = Header::parse(&GOLDEN).unwrap();
+
+        let mut expected: [u8; 72] = [0u8; 72];
+        expected[0..64].copy_from_slice(&GOLDEN);
+
+        assert_eq!(h.aad(i), expected);
+    }
+
+    // Header Creation Tests
+    // ----------------------------------------------------
+    #[test]
+    fn reconstruct_golden_from_its_parts() {
+        let chunk_size: u32 = 262144;
+        let plaintext_length: u64 = 262145;
+        let header: Header = Header::new(
+            AssetId::from_bytes(ASSET_ID),
+            BASE_NONCE,
+            chunk_size,
+            plaintext_length,
+        )
+        .unwrap();
+        assert_eq!(header.to_bytes(), GOLDEN);
+    }
+
+    #[test]
+    fn rejects_new_header_with_zero_chunk_size() {
+        let chunk_size: u32 = 0;
+        let plaintext_length: u64 = 262145;
+
+        assert_eq!(
+            Header::new(
+                AssetId::from_bytes(ASSET_ID),
+                BASE_NONCE,
+                chunk_size,
+                plaintext_length
+            )
+            .unwrap_err(),
+            HeaderError::ChunkSizeZero
+        );
+    }
+
+    #[test]
+    fn rejects_new_header_with_zero_plaintext_length() {
+        let chunk_size: u32 = 262144;
+        let plaintext_length: u64 = 0;
+
+        assert_eq!(
+            Header::new(
+                AssetId::from_bytes(ASSET_ID),
+                BASE_NONCE,
+                chunk_size,
+                plaintext_length
+            )
+            .unwrap_err(),
+            HeaderError::PlaintextLengthZero
+        );
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    mod properties {
+        use super::*;
+
+        proptest! {
+            #[test]
+            fn aad_is_header_bytes_followed_by_le_counter(i in any::<u64>()) {
+                let h = header_with(64, 200);
+                let aad = h.aad(i);
+
+                prop_assert_eq!(&aad[0..64], h.to_bytes());
+                prop_assert_eq!(u64::from_le_bytes(aad[64..72].try_into().unwrap()), i);
+            }
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    proptest! {
+        #[test]
+        fn nonce_is_base_nonce_followed_by_le_counter(i in any::<u64>(), j in any::<u64>()) {
+            let h = header_with(64, 200);
+            let n = h.nonce(i);
+
+            prop_assert_eq!(&n[0..16], &h.base_nonce[..]);
+            prop_assert_eq!(u64::from_le_bytes(n[16..24].try_into().unwrap()), i);
+
+            if i != j {
+                prop_assert_ne!(h.nonce(i), h.nonce(j));
+            }
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    proptest! {
+        #[test]
+        fn chunk_range_holds_at_any_index(
+            chunk_size in 1u32..,
+            plaintext_length in 1u64..,
+            seed in any::<u64>(),
+        ) {
+            let h = header_with(chunk_size, plaintext_length);
+            let cc = h.chunk_count();
+            let i = seed % cc;
+            let range_or_err = h.chunk_range(i);
+            let next_range_or_err = h.chunk_range(i + 1);
+            if let Ok(range_or_err) = &range_or_err {
+                let length = range_or_err.end - range_or_err.start;
+                let expected = if i == cc - 1 {
+                    h.last_chunk_plaintext() + 16
+                } else {
+                    h.ciphertext_chunk_size()
+                };
+                prop_assert_eq!(length, expected);
+            }
+            if i + 1 < cc  && let Ok(range_or_err) = &range_or_err && let Ok(next_range_or_err) = &next_range_or_err {
+                prop_assert_eq!(range_or_err.end, next_range_or_err.start);
+            }
+            if let Err(range_or_err) = range_or_err {
+                prop_assert_eq!(
+                    range_or_err,
+                    LayoutError::SizeOverflow
+                );
+            }
+            prop_assert_eq!(
+                h.chunk_range(cc).unwrap_err(),
+                LayoutError::ChunkIndexOutOfRange { index: cc, chunk_count: cc }
+            );
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
     proptest! {
         #[test]
             fn chunk_ranges_tile_the_object(
@@ -549,177 +715,23 @@ mod tests {
             }
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     proptest! {
         #[test]
-        fn chunk_range_holds_at_any_index(
+        fn round_trips_any_valid_header(
+            base_nonce: [u8; 16],
+            asset_id: [u8; 16],
             chunk_size in 1u32..,
             plaintext_length in 1u64..,
-            seed in any::<u64>(),
         ) {
-            let h = header_with(chunk_size, plaintext_length);
-            let cc = h.chunk_count();
-            let i = seed % cc;
-            let range_or_err = h.chunk_range(i);
-            let next_range_or_err = h.chunk_range(i + 1);
-            if let Ok(range_or_err) = &range_or_err {
-                let length = range_or_err.end - range_or_err.start;
-                let expected = if i == cc - 1 {
-                    h.last_chunk_plaintext() + 16
-                } else {
-                    h.ciphertext_chunk_size()
-                };
-                prop_assert_eq!(length, expected);
-            }
-            if i + 1 < cc  && let Ok(range_or_err) = &range_or_err && let Ok(next_range_or_err) = &next_range_or_err {
-                prop_assert_eq!(range_or_err.end, next_range_or_err.start);
-            }
-            if let Err(range_or_err) = range_or_err {
-                prop_assert_eq!(
-                    range_or_err,
-                    LayoutError::SizeOverflow
-                );
-            }
-            prop_assert_eq!(
-                h.chunk_range(cc).unwrap_err(),
-                LayoutError::ChunkIndexOutOfRange { index: cc, chunk_count: cc }
-            );
+            let mut b = GOLDEN;
+            b[8..24].copy_from_slice(&base_nonce);
+            b[24..28].copy_from_slice(&chunk_size.to_le_bytes());
+            b[28..36].copy_from_slice(&plaintext_length.to_le_bytes());
+            b[36..52].copy_from_slice(&asset_id);
+
+            let h = Header::parse(&b).unwrap();
+            prop_assert_eq!(Header::to_bytes(&h), b);
         }
-    }
-
-    #[test]
-    fn chunk_ranges_read_back_from_a_seekable_source() {
-        let h: Header = header_with(64, 200);
-        let chunk_count: u64 = h.chunk_count();
-        let total: u64 = h.total_object_size().unwrap();
-        let mut src: Cursor<Vec<u8>> = Cursor::new(vec![0u8; total as usize]);
-        for i in 0..chunk_count {
-            let r: Range<u64> = h.chunk_range(i).unwrap();
-            let mut buf: Vec<u8> = vec![0u8; (r.end - r.start) as usize];
-            src.seek(SeekFrom::Start(r.start)).unwrap();
-            src.read_exact(&mut buf).unwrap();
-        }
-        assert_eq!(src.position(), total);
-    }
-
-    // Nonce Derivation Tests
-    // ----------------------------------------------------
-    #[test]
-    fn nonce_counter_is_little_endian() {
-        let h: Header = header_with(1, 1);
-
-        for (i, tail) in [
-            (0u64, [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]),
-            (1, [0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]),
-            (
-                0x0807060504030201,
-                [0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08],
-            ),
-        ] {
-            let mut expected = [0u8; 24];
-            expected[0..16].copy_from_slice(&h.base_nonce);
-            expected[16..24].copy_from_slice(&tail);
-            assert_eq!(h.nonce(i), expected, "i = {i:#x}");
-        }
-    }
-
-    #[test]
-    fn nonce_does_not_validate_index() {
-        // `nonce` deliberately does not validate `i` — index checking lives in
-        // `chunk_range`. This pins that an out-of-range index still yields the
-        // §4 nonce rather than a clamped or sentinel value.
-        let h: Header = header_with(64, 200); // chunk_count == 4
-        let mut expected: [u8; 24] = [0u8; 24];
-        expected[0..16].copy_from_slice(&h.base_nonce);
-        expected[16..24].copy_from_slice(&4u64.to_le_bytes());
-        assert_eq!(h.nonce(h.chunk_count()), expected);
-    }
-
-    proptest! {
-        #[test]
-        fn nonce_is_base_nonce_followed_by_le_counter(i in any::<u64>(), j in any::<u64>()) {
-            let h = header_with(64, 200);
-            let n = h.nonce(i);
-
-            prop_assert_eq!(&n[0..16], &h.base_nonce[..]);
-            prop_assert_eq!(u64::from_le_bytes(n[16..24].try_into().unwrap()), i);
-
-            if i != j {
-                prop_assert_ne!(h.nonce(i), h.nonce(j));
-            }
-        }
-    }
-
-    // AAD Derivation Tests
-    // -----------------------------------------------------
-    #[test]
-    fn aad_matches_golden_header_at_index_zero() {
-        let i: u64 = 0;
-        let h: Header = Header::parse(&GOLDEN).unwrap();
-
-        let mut expected: [u8; 72] = [0u8; 72];
-        expected[0..64].copy_from_slice(&GOLDEN);
-
-        assert_eq!(h.aad(i), expected);
-    }
-
-    proptest! {
-        #[test]
-        fn aad_is_header_bytes_followed_by_le_counter(i in any::<u64>()) {
-            let h = header_with(64, 200);
-            let aad = h.aad(i);
-
-            prop_assert_eq!(&aad[0..64], h.to_bytes());
-            prop_assert_eq!(u64::from_le_bytes(aad[64..72].try_into().unwrap()), i);
-        }
-    }
-
-    // Header Creation Tests
-    // ----------------------------------------------------
-    #[test]
-    fn reconstruct_golden_from_its_parts() {
-        let chunk_size: u32 = 262144;
-        let plaintext_length: u64 = 262145;
-        let header: Header = Header::new(
-            AssetId::from_bytes(ASSET_ID),
-            BASE_NONCE,
-            chunk_size,
-            plaintext_length,
-        )
-        .unwrap();
-        assert_eq!(header.to_bytes(), GOLDEN);
-    }
-
-    #[test]
-    fn rejects_new_header_with_zero_chunk_size() {
-        let chunk_size: u32 = 0;
-        let plaintext_length: u64 = 262145;
-
-        assert_eq!(
-            Header::new(
-                AssetId::from_bytes(ASSET_ID),
-                BASE_NONCE,
-                chunk_size,
-                plaintext_length
-            )
-            .unwrap_err(),
-            HeaderError::ChunkSizeZero
-        );
-    }
-
-    #[test]
-    fn rejects_new_header_with_zero_plaintext_length() {
-        let chunk_size: u32 = 262144;
-        let plaintext_length: u64 = 0;
-
-        assert_eq!(
-            Header::new(
-                AssetId::from_bytes(ASSET_ID),
-                BASE_NONCE,
-                chunk_size,
-                plaintext_length
-            )
-            .unwrap_err(),
-            HeaderError::PlaintextLengthZero
-        );
     }
 }

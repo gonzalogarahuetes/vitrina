@@ -62,7 +62,10 @@ mod tests {
     use crate::test_fixtures::{
         ASSET_ID, GOLDEN, PLAINTEXT, asset_key, header_with, hex, thumb_key,
     };
+    #[cfg(not(target_arch = "wasm32"))]
     use proptest::prelude::*;
+    #[cfg(target_arch = "wasm32")]
+    use wasm_bindgen_test::wasm_bindgen_test as test;
 
     // Round Trip Tests
     // -----------------------------------------------------
@@ -75,7 +78,9 @@ mod tests {
         assert_ne!(ciphertext_on_one, ciphertext_on_zero);
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     proptest! {
+        #[cfg(not(target_arch = "wasm32"))]
         #[test]
         fn chunk_round_trips(
             i in any::<u64>(),
