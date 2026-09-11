@@ -214,6 +214,27 @@ importers:
         specifier: ^3.1106.0
         version: 3.1106.0
 
+  packages/envelope:
+    devDependencies:
+      '@babel/core':
+        specifier: ^8.0.1
+        version: 8.0.1
+      '@babel/eslint-parser':
+        specifier: ^8.0.1
+        version: 8.0.1(@babel/core@8.0.1)(eslint@10.8.1)
+      '@babel/preset-typescript':
+        specifier: ^8.0.1
+        version: 8.0.1(@babel/core@8.0.1)
+      '@types/node':
+        specifier: ^26.2.0
+        version: 26.2.0
+      eslint:
+        specifier: ^10.8.1
+        version: 10.8.1
+      typescript:
+        specifier: ^7.0.2
+        version: 7.0.2
+
   packages/server:
     dependencies:
       '@fastify/cors':

@@ -101,6 +101,20 @@ jobs:
         with:
           toolchain: stable
           components: rustfmt, clippy
+          targets: wasm32-unknown-unknown
+
+      # Must match the wasm-bindgen crate in Cargo.lock exactly; the CLI refuses
+      # a mismatched module. A prebuilt release pinned by SHA-256, like actions
+      # by commit. The tarball also carries the wasm32 test runner.
+      - name: Install wasm-bindgen-cli 0.2.128
+        run: |
+          curl -sSfL -o wasm-bindgen.tar.gz \
+            https://github.com/wasm-bindgen/wasm-bindgen/releases/download/0.2.128/wasm-bindgen-0.2.128-x86_64-unknown-linux-musl.tar.gz
+          echo "b51f0208fdff83515a787bd8ab9ac5865ed84dabb66d0c709957bb59793c645f  wasm-bindgen.tar.gz" | sha256sum -c -
+          tar xzf wasm-bindgen.tar.gz --strip-components=1 -C "$HOME/.cargo/bin" \
+            wasm-bindgen-0.2.128-x86_64-unknown-linux-musl/wasm-bindgen \
+            wasm-bindgen-0.2.128-x86_64-unknown-linux-musl/wasm-bindgen-test-runner
+          wasm-bindgen --version
 
       - name: cargo fmt --check
         run: cargo fmt --check
@@ -118,8 +132,20 @@ jobs:
       - name: cargo clippy --all-targets -- -D warnings
         run: cargo clippy --all-targets -- -D warnings
 
+      # C.10 — the envelope suite on the target it ships on. `--features wasm`
+      # gives getrandom its browser backend; without it nothing random links.
+      # Runs under Node via wasm-bindgen-test-runner, not in a browser.
+      - name: cargo test (wasm32-unknown-unknown)
+        run: cargo test --target wasm32-unknown-unknown --features wasm
+        working-directory: crates/envelope
+
+      # C.10 — builds crates/envelope-wasm and runs every spec/vectors entry
+      # through TypeScript (encryption spec §9). Its own script, like
+      # test:infra, because it needs a toolchain the JS steps above do not.
+      - name: TypeScript smoke harness
+        run: pnpm test:wasm
+
       # Slots for later phases. Do not implement these ahead of their step:
-      #   C.10     — build the WASM target and run the TypeScript smoke harness
       #   Phase 1  — assert no outbound request carries key material
       #              (invite spec §7 #3)
       # Each is another step in this job; none requires restructuring.

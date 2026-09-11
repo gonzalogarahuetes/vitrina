@@ -1,0 +1,14 @@
+[package]
+name = "vitrina-envelope-wasm"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# `wasm` gives getrandom its browser backend; without it nothing random links.
+vitrina-envelope = { path = "../envelope", features = ["wasm"] }
+# Exact pin: wasm-bindgen-cli must match this version byte for byte.
+wasm-bindgen = "=0.2.128"
+js-sys = "0.3.105"

@@ -1,0 +1,22 @@
+{
+  "name": "@vitrina/envelope",
+  "version": "0.0.0",
+  "private": true,
+  "description": "wasm-bindgen build of crates/envelope-wasm and its TypeScript smoke harness (phase-0 plan C.10)",
+  "type": "module",
+  "license": "UNLICENSED",
+  "scripts": {
+    "build:wasm": "./scripts/build-wasm.sh",
+    "lint": "eslint .",
+    "test": "echo \"envelope: the harness needs the wasm32 toolchain and runs under pnpm test:wasm\"",
+    "test:wasm": "pnpm build:wasm && tsc -p tsconfig.json && node --test dist/test/*.test.js"
+  },
+  "devDependencies": {
+    "@babel/core": "^8.0.1",
+    "@babel/eslint-parser": "^8.0.1",
+    "@babel/preset-typescript": "^8.0.1",
+    "@types/node": "^26.2.0",
+    "eslint": "^10.8.1",
+    "typescript": "^7.0.2"
+  }
+}
