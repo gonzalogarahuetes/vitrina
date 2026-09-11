@@ -53,6 +53,22 @@ pub(crate) fn wrong_length(param: &'static str, e: WrongLength) -> Failure {
     .with("got", e.got as f64)
 }
 
+/// Rejects everything ToInt32 would silently reshape: non-numbers, fractions,
+/// negatives, NaN, infinities and anything above u32::MAX (phase-0 plan §7).
+pub(crate) fn u32_param(value: &JsValue, param: &'static str) -> Result<u32, Failure> {
+    value
+        .as_f64()
+        .filter(|n| n.is_finite() && n.fract() == 0.0 && *n >= 0.0 && *n <= f64::from(u32::MAX))
+        .map(|n| n as u32)
+        .ok_or_else(|| {
+            Failure::new(
+                "NotUint32",
+                format!("{param} must be an integer between 0 and 4294967295"),
+            )
+            .with("param", param)
+        })
+}
+
 impl From<EnvelopeError> for Failure {
     fn from(e: EnvelopeError) -> Failure {
         match e {
