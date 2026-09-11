@@ -1,12 +1,7 @@
 #!/usr/bin/env bash
-#
-# Builds crates/envelope-wasm for wasm32-unknown-unknown and runs wasm-bindgen
-# over it. `--target web` is the artifact a browser loads; the harness feeds
-# the same files to Node by reading the .wasm bytes itself.
-#
-# wasm-bindgen-cli must match the wasm-bindgen crate in Cargo.lock exactly.
-# The CLI checks this itself and refuses a mismatched module, so no version
-# check is repeated here.
+# Builds crates/envelope-wasm and runs wasm-bindgen over it. `--target web` is
+# what a browser loads; the harness feeds Node the same files. The CLI itself
+# refuses a module built against a different wasm-bindgen version.
 
 set -euo pipefail
 

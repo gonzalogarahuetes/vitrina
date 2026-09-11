@@ -84,9 +84,8 @@ test("vector file targets envelope version 1", () => {
 });
 
 // Categories 1–4 — decrypt direction is byte-exact. The encrypt direction
-// cannot be: §4.1 requires a fresh CSPRNG base_nonce and the chunk size is
-// fixed at 262144 by the writer, so the vector's bytes are unreachable from
-// outside the crate. What the writer must reproduce is asserted instead.
+// cannot be: §4.1 draws a fresh base_nonce and the writer fixes chunk_size,
+// both outside the binding's reach, so the writer's layout is asserted instead.
 for (const v of file.envelope) {
   test(`category ${v.category}: ${v.name} — decrypts to the expected plaintext`, () => {
     assert.equal(v.expect, "accept");
