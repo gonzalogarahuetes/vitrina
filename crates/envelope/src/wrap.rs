@@ -212,11 +212,12 @@ pub fn unwrap_album_key(
 
 #[cfg(test)]
 mod tests {
-    use crate::test_fixtures::album_key;
+    use crate::test_fixtures::{RECIPIENT_ID, SALT, WRAP_NONCE, album_key};
     use crate::wrap::{
         RecipientId, Salt, derive_kek, normalize_passphrase, unwrap_album_key, wrap_aad,
         wrap_album_key, wrap_with_salt_and_nonce,
     };
+    use crate::{WrappedKey, WrongLength};
     use crate::{
         test_fixtures::hex,
         wrap::{WrapError, WrapParams},
@@ -227,10 +228,6 @@ mod tests {
     const RFC_9106_ARGON2ID_TAG: &str =
         "0d640df58d78766c08c037a34a8b53c9d01ef0452d75b65eb52520e96b01e659";
 
-    const SALT: [u8; 16] = [
-        0x8f, 0x2c, 0x41, 0xd7, 0x05, 0xba, 0x63, 0x19, 0xe4, 0x7a, 0x2f, 0x90, 0xc8, 0x11, 0x5d,
-        0x36,
-    ];
     const OTHER_SALT: [u8; 16] = [
         0x8f, 0x2c, 0x41, 0xd7, 0x05, 0xba, 0x63, 0x19, 0xe4, 0x7a, 0x2f, 0x90, 0xc8, 0x11, 0x5d,
         0x37,
@@ -239,14 +236,6 @@ mod tests {
     fn low_params() -> WrapParams {
         WrapParams::new(8, 1, 1).unwrap()
     }
-
-    /// `recipient_id` for the AAD fixture. A real UUIDv4 —
-    /// 3f2a91c7-8b4e-4d16-9f05-c2a7d81e6b34 — so the version nibble (4)
-    /// and variant bits (10xx) are where §2 says they are.
-    const RECIPIENT_ID: [u8; 16] = [
-        0x3f, 0x2a, 0x91, 0xc7, 0x8b, 0x4e, 0x4d, 0x16, 0x9f, 0x05, 0xc2, 0xa7, 0xd8, 0x1e, 0x6b,
-        0x34,
-    ];
 
     /// One byte different from `RECIPIENT_ID` — 3f2a91c7-8b4e-4d16-9f05-c2a7d81e6b35.
     /// Still a valid UUIDv4: the version nibble and variant bits are untouched.
@@ -259,15 +248,6 @@ mod tests {
     /// with no terminator and no length prefix, then the 16 raw UUID bytes.
     /// The first 30 hex characters are the label; everything after is the id.
     const WRAP_AAD: &str = "76697472696e612d777261702d76313f2a91c78b4e4d169f05c2a7d81e6b34";
-
-    /// A fixed nonce is correct in a test and catastrophic in production.
-    /// A repeated nonce under a repeated key is total failure, not degradation.
-    /// The constant living inside #[cfg(test)] is what keeps that from being reachable,
-    /// which is the whole reason the public wrap_album_key generates its own.
-    const WRAP_NONCE: [u8; 24] = [
-        0x6d, 0xc4, 0x1a, 0x83, 0x2f, 0x0b, 0x97, 0x5e, 0xa1, 0x38, 0xd6, 0x72, 0x4c, 0xe9, 0x05,
-        0xbf, 0x81, 0x27, 0x9a, 0x60, 0xf3, 0x4d, 0xcb, 0x16,
-    ];
 
     /// §9 category 7. Self-generated — see §9.2 on what that can and cannot
     /// catch. It pins the composition so a later refactor cannot silently
@@ -284,6 +264,10 @@ mod tests {
             &WRAP_NONCE,
         )
         .unwrap()
+    }
+
+    fn wrapped_of_valid_length() -> [u8; WrappedKey::WRAPPED_LEN] {
+        std::array::from_fn(|i| i as u8)
     }
 
     #[test]
@@ -794,6 +778,95 @@ mod tests {
             )
             .err(),
             Some(WrapError::AuthenticationFailed)
+        );
+    }
+
+    // Wrapped Key Length Tests
+    // ----------------------------------------------------
+    #[test]
+    fn builds_wrapped_key_from_valid_parts() {
+        let bytes: [u8; WrappedKey::WRAPPED_LEN] = std::array::from_fn(|i| i as u8);
+        let salt = Salt::from_bytes(SALT);
+        assert_eq!(
+            WrappedKey::try_from_parts(&bytes, &WRAP_NONCE, salt).unwrap(),
+            WrappedKey {
+                wrapped: bytes,
+                wrap_nonce: WRAP_NONCE,
+                kdf_salt: salt
+            }
+        );
+    }
+
+    #[test]
+    fn rejects_short_wrapped() {
+        let bytes: [u8; 40] = std::array::from_fn(|i| i as u8);
+        assert_eq!(
+            WrappedKey::try_from_parts(&bytes, &WRAP_NONCE, Salt::from_bytes(SALT)).err(),
+            Some(WrongLength {
+                got: 40,
+                expected: WrappedKey::WRAPPED_LEN
+            })
+        );
+    }
+
+    #[test]
+    fn rejects_long_wrapped() {
+        let bytes: [u8; 50] = std::array::from_fn(|i| i as u8);
+        assert_eq!(
+            WrappedKey::try_from_parts(&bytes, &WRAP_NONCE, Salt::from_bytes(SALT)).err(),
+            Some(WrongLength {
+                got: 50,
+                expected: WrappedKey::WRAPPED_LEN
+            })
+        );
+    }
+
+    #[test]
+    fn rejects_empty_wrapped() {
+        assert_eq!(
+            WrappedKey::try_from_parts(&[], &WRAP_NONCE, Salt::from_bytes(SALT)).err(),
+            Some(WrongLength {
+                got: 0,
+                expected: WrappedKey::WRAPPED_LEN
+            })
+        );
+    }
+
+    #[test]
+    fn rejects_short_wrap_nonce() {
+        let bytes: [u8; 20] = std::array::from_fn(|i| i as u8);
+        assert_eq!(
+            WrappedKey::try_from_parts(&wrapped_of_valid_length(), &bytes, Salt::from_bytes(SALT))
+                .err(),
+            Some(WrongLength {
+                got: 20,
+                expected: WrappedKey::WRAP_NONCE_LEN
+            })
+        );
+    }
+
+    #[test]
+    fn rejects_long_wrap_nonce() {
+        let bytes: [u8; 50] = std::array::from_fn(|i| i as u8);
+        assert_eq!(
+            WrappedKey::try_from_parts(&wrapped_of_valid_length(), &bytes, Salt::from_bytes(SALT))
+                .err(),
+            Some(WrongLength {
+                got: 50,
+                expected: WrappedKey::WRAP_NONCE_LEN
+            })
+        );
+    }
+
+    #[test]
+    fn rejects_empty_wrap_nonce() {
+        assert_eq!(
+            WrappedKey::try_from_parts(&wrapped_of_valid_length(), &[], Salt::from_bytes(SALT))
+                .err(),
+            Some(WrongLength {
+                got: 0,
+                expected: WrappedKey::WRAP_NONCE_LEN
+            })
         );
     }
 }

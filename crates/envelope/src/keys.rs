@@ -230,4 +230,47 @@ mod tests {
         assert_ne!(k_thumb.expose_bytes(), other_k_thumb.expose_bytes());
         assert_ne!(k_meta.expose_bytes(), other_k_meta.expose_bytes());
     }
+
+    // Album Key Length Tests
+    // ----------------------------------------------------
+    #[test]
+    fn accepts_album_key_exact_length_and_preserves_bytes() {
+        assert_eq!(
+            AlbumKey::try_from_slice(&K_ALBUM).unwrap().expose_bytes(),
+            &K_ALBUM
+        );
+    }
+
+    #[test]
+    fn rejects_empty_album_key() {
+        assert_eq!(
+            AlbumKey::try_from_slice(&[]).err(),
+            Some(WrongLength {
+                got: 0,
+                expected: AlbumKey::LEN
+            })
+        );
+    }
+
+    #[test]
+    fn rejects_short_album_key() {
+        assert_eq!(
+            AlbumKey::try_from_slice(&[0u8; 15]).err(),
+            Some(WrongLength {
+                got: 15,
+                expected: AlbumKey::LEN
+            })
+        );
+    }
+
+    #[test]
+    fn rejects_long_album_key() {
+        assert_eq!(
+            AlbumKey::try_from_slice(&[0u8; 35]).err(),
+            Some(WrongLength {
+                got: 35,
+                expected: AlbumKey::LEN
+            })
+        );
+    }
 }
