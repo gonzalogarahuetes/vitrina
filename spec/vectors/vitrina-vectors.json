@@ -169,8 +169,36 @@
       "token_base64url": "EBESExQVFhcYGRobHB0eHyAhIiMkJSYnKCkqKywtLi9",
       "expect": "reject"
     },
+    "passphrase_empty": [
+      {
+        "vector": 3,
+        "name": "already empty",
+        "passphrase": "",
+        "normalized": "",
+        "salt": "8f2c41d705ba6319e47a2f90c8115d36",
+        "params": {
+          "m_cost_kib": 8,
+          "t_cost": 1,
+          "p_cost": 1
+        },
+        "expect": "reject"
+      },
+      {
+        "vector": 3,
+        "name": "whitespace only",
+        "passphrase": " ",
+        "normalized": "",
+        "salt": "8f2c41d705ba6319e47a2f90c8115d36",
+        "params": {
+          "m_cost_kib": 8,
+          "t_cost": 1,
+          "p_cost": 1
+        },
+        "expect": "reject"
+      }
+    ],
     "passphrase_normalisation": {
-      "vector": 3,
+      "vector": 4,
       "passphrase": "  Café  ROBLE\tÑandú ",
       "normalized": "cafe roble nandu",
       "salt": "8f2c41d705ba6319e47a2f90c8115d36",
@@ -182,13 +210,13 @@
       "kek": "5ec92ffd16125658113b8dd0e547535266d1cb5753dc25e78f280ce710b55cb2"
     },
     "wrap_aad": {
-      "vector": 4,
+      "vector": 5,
       "recipient_id": "3f2a91c78b4e4d169f05c2a7d81e6b34",
       "aad": "76697472696e612d777261702d76313f2a91c78b4e4d169f05c2a7d81e6b34"
     },
     "wrap_salt_length": [
       {
-        "vector": 5,
+        "vector": 6,
         "name": "16-byte salt",
         "k_album": "c0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedf",
         "passphrase": "Café Roble",
@@ -204,7 +232,7 @@
         "expect": "accept"
       },
       {
-        "vector": 5,
+        "vector": 6,
         "name": "32-byte salt",
         "k_album": "c0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedf",
         "passphrase": "Café Roble",

@@ -10,8 +10,8 @@ use crate::keys::{cipher_for, keyed_blake2b_256};
 use crate::test_fixtures::{ASSET_ID, BASE_NONCE, K_ALBUM, album_key, hex};
 use crate::wrap::{derive_kek, normalize_passphrase, wrap_aad, wrap_with_salt_and_nonce};
 use crate::{
-    AlbumKey, AssetId, CHUNK_SIZE, RecipientId, Salt, WrapParams, WrappedKey, decrypt_asset,
-    unwrap_album_key,
+    AlbumKey, AssetId, CHUNK_SIZE, RecipientId, Salt, WrapError, WrapParams, WrappedKey,
+    decrypt_asset, unwrap_album_key,
 };
 use argon2::{Algorithm, Argon2, AssociatedData, ParamsBuilder, Version};
 use base64::Engine;
@@ -145,6 +145,7 @@ struct WrapVector {
 struct Protocol {
     token: TokenVector,
     token_noncanonical: TokenSpellingVector,
+    passphrase_empty: Vec<EmptyPassphraseVector>,
     passphrase_normalisation: PassphraseVector,
     wrap_aad: WrapAadVector,
     wrap_salt_length: Vec<SaltLengthVector>,
@@ -166,6 +167,19 @@ struct TokenVector {
 struct TokenSpellingVector {
     vector: u8,
     token_base64url: String,
+    expect: Expect,
+}
+
+/// §6.3: empty after normalisation is rejected before Argon2id runs, so there
+/// is no `kek` field. Two inputs because they fail at different steps.
+#[derive(Serialize, Deserialize)]
+struct EmptyPassphraseVector {
+    vector: u8,
+    name: String,
+    passphrase: String,
+    normalized: String,
+    salt: String,
+    params: Params,
     expect: Expect,
 }
 
@@ -410,7 +424,7 @@ fn salt_length_vector(
     expect: Expect,
 ) -> SaltLengthVector {
     SaltLengthVector {
-        vector: 5,
+        vector: 6,
         name: name.to_string(),
         k_album: hex(&K_ALBUM),
         passphrase: PASSPHRASE.to_string(),
@@ -470,6 +484,29 @@ fn token_vectors() -> (TokenVector, TokenSpellingVector) {
     )
 }
 
+fn empty_passphrase_vector(name: &str, passphrase: &str) -> EmptyPassphraseVector {
+    let normalized: String = normalize_passphrase(passphrase);
+    assert_eq!(normalized, "");
+    assert_eq!(
+        derive_kek(
+            passphrase,
+            Params::LOW.wrap_params(),
+            Salt::from_bytes(SALT)
+        )
+        .err(),
+        Some(WrapError::EmptyPassphrase)
+    );
+    EmptyPassphraseVector {
+        vector: 3,
+        name: name.to_string(),
+        passphrase: passphrase.to_string(),
+        normalized,
+        salt: hex(&SALT),
+        params: Params::LOW,
+        expect: Expect::Reject,
+    }
+}
+
 fn protocol() -> Protocol {
     let (token, token_noncanonical) = token_vectors();
     let normalized: String = normalize_passphrase(MESSY_PASSPHRASE);
@@ -484,8 +521,12 @@ fn protocol() -> Protocol {
     Protocol {
         token,
         token_noncanonical,
+        passphrase_empty: vec![
+            empty_passphrase_vector("already empty", ""),
+            empty_passphrase_vector("whitespace only", " "),
+        ],
         passphrase_normalisation: PassphraseVector {
-            vector: 3,
+            vector: 4,
             passphrase: MESSY_PASSPHRASE.to_string(),
             normalized,
             salt: hex(&SALT),
@@ -493,7 +534,7 @@ fn protocol() -> Protocol {
             kek: hex(kek.expose_bytes()),
         },
         wrap_aad: WrapAadVector {
-            vector: 4,
+            vector: 5,
             recipient_id: hex(&RECIPIENT_ID),
             aad: hex(&wrap_aad(&RecipientId::from_bytes(RECIPIENT_ID))),
         },
@@ -854,8 +895,24 @@ fn verify_protocol(p: &Protocol) {
     assert_ne!(n.token_base64url, t.token_base64url);
     assert_eq!(strict_decode_token(&n.token_base64url), None);
 
+    // §9.1 vector 3: the empty form fails the emptiness test as typed, the
+    // whitespace form only after normalisation. Neither reaches Argon2id.
+    assert_eq!(p.passphrase_empty.len(), 2);
+    assert!(p.passphrase_empty[0].passphrase.is_empty());
+    assert!(!p.passphrase_empty[1].passphrase.is_empty());
+    for v in &p.passphrase_empty {
+        assert_eq!((v.vector, v.expect), (3, Expect::Reject));
+        assert_eq!(v.normalized, "");
+        assert_eq!(normalize_passphrase(&v.passphrase), v.normalized);
+        let salt: Salt = Salt::from_bytes(unhex_array(&v.salt));
+        assert_eq!(
+            derive_kek(&v.passphrase, v.params.wrap_params(), salt).err(),
+            Some(WrapError::EmptyPassphrase)
+        );
+    }
+
     let pn = &p.passphrase_normalisation;
-    assert_eq!(pn.vector, 3);
+    assert_eq!(pn.vector, 4);
     assert_eq!(normalize_passphrase(&pn.passphrase), pn.normalized);
     let salt: Salt = Salt::from_bytes(unhex_array(&pn.salt));
     let kek = derive_kek(&pn.passphrase, pn.params.wrap_params(), salt).unwrap();
@@ -864,7 +921,7 @@ fn verify_protocol(p: &Protocol) {
     assert_eq!(kek_from_normalized.expose_bytes(), kek.expose_bytes());
 
     let a = &p.wrap_aad;
-    assert_eq!(a.vector, 4);
+    assert_eq!(a.vector, 5);
     assert_eq!(
         hex(&wrap_aad(&RecipientId::from_bytes(unhex_array(
             &a.recipient_id
@@ -874,7 +931,7 @@ fn verify_protocol(p: &Protocol) {
 
     assert_eq!(p.wrap_salt_length.len(), 2);
     for v in &p.wrap_salt_length {
-        assert_eq!(v.vector, 5);
+        assert_eq!(v.vector, 6);
         match (v.expect, unhex(&v.salt).len(), &v.wrapped) {
             (Expect::Accept, 16, Some(wrapped)) => verify_wrap(
                 &v.k_album,
