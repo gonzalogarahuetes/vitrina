@@ -101,7 +101,7 @@ struct EnvelopeVector {
     expect: Expect,
 }
 
-/// §9 categories 10–14. The mutated bytes are stored, never the mutation,
+/// §9 categories 10–15. The mutated bytes are stored, never the mutation,
 /// so no implementation has to interpret an instruction (§9.1).
 #[derive(Serialize, Deserialize)]
 struct NegativeVector {
@@ -624,7 +624,7 @@ fn negative_vector(category: u8, name: &str, object: Vec<u8>) -> NegativeVector 
     }
 }
 
-/// All five derive from category 4: 200 bytes at chunk_size 64, so chunks 0
+/// All six derive from category 4: 200 bytes at chunk_size 64, so chunks 0
 /// and 1 are both 80 ciphertext bytes and the final chunk is 8 + 16.
 fn negative_vectors(source: &EnvelopeVector) -> Vec<NegativeVector> {
     assert_eq!(source.category, 4);
@@ -656,6 +656,8 @@ fn negative_vectors(source: &EnvelopeVector) -> Vec<NegativeVector> {
     let mut wrong_cipher: Vec<u8> = object.clone();
     wrong_cipher[5] = 0x02;
 
+    let short: Vec<u8> = object[..last.start as usize].to_vec();
+
     vec![
         negative_vector(10, "tampered ciphertext byte in chunk 1", tampered),
         negative_vector(11, "chunks 0 and 1 swapped", swapped),
@@ -670,6 +672,7 @@ fn negative_vectors(source: &EnvelopeVector) -> Vec<NegativeVector> {
             "cipher byte set to an unimplemented value",
             wrong_cipher,
         ),
+        negative_vector(15, "final chunk removed, header unchanged", short),
     ]
 }
 
@@ -812,6 +815,18 @@ fn verify_negative(v: &NegativeVector) {
         assert_eq!(
             err,
             EnvelopeError::Header(HeaderError::WrongCipher(object[5]))
+        );
+    }
+    // Category 15: every present chunk authenticates, so only §8's length
+    // check can reject it, and it must report both lengths.
+    if v.category == 15 {
+        let header: Header = Header::parse(&object).unwrap();
+        assert_eq!(
+            err,
+            EnvelopeError::ObjectTooShort {
+                expected: header.total_object_size().unwrap(),
+                got: object.len(),
+            }
         );
     }
 }
@@ -976,7 +991,7 @@ fn committed_vectors_verify() {
     file.envelope.iter().for_each(verify_envelope);
 
     let categories: Vec<u8> = file.envelope_negative.iter().map(|v| v.category).collect();
-    assert_eq!(categories, [10, 11, 12, 13, 14]);
+    assert_eq!(categories, [10, 11, 12, 13, 14, 15]);
     file.envelope_negative.iter().for_each(verify_negative);
 
     assert_eq!(file.key_derivation.len(), 1);
