@@ -5,13 +5,13 @@
 use crate::aead::aead_encrypt;
 use crate::chunk::decrypt_chunk;
 use crate::envelope::encrypt_with_header;
-use crate::header::Header;
+use crate::header::{Header, HeaderError};
 use crate::keys::{cipher_for, keyed_blake2b_256};
 use crate::test_fixtures::{ASSET_ID, BASE_NONCE, K_ALBUM, album_key, hex};
 use crate::wrap::{derive_kek, normalize_passphrase, wrap_aad, wrap_with_salt_and_nonce};
 use crate::{
-    AlbumKey, AssetId, CHUNK_SIZE, RecipientId, Salt, WrapError, WrapParams, WrappedKey,
-    decrypt_asset, unwrap_album_key,
+    AlbumKey, AssetId, CHUNK_SIZE, EnvelopeError, RecipientId, Salt, WrapError, WrapParams,
+    WrappedKey, decrypt_asset, unwrap_album_key,
 };
 use argon2::{Algorithm, Argon2, AssociatedData, ParamsBuilder, Version};
 use base64::Engine;
@@ -101,7 +101,7 @@ struct EnvelopeVector {
     expect: Expect,
 }
 
-/// §9 categories 10–13. The mutated bytes are stored, never the mutation,
+/// §9 categories 10–14. The mutated bytes are stored, never the mutation,
 /// so no implementation has to interpret an instruction (§9.1).
 #[derive(Serialize, Deserialize)]
 struct NegativeVector {
@@ -624,7 +624,7 @@ fn negative_vector(category: u8, name: &str, object: Vec<u8>) -> NegativeVector 
     }
 }
 
-/// All four derive from category 4: 200 bytes at chunk_size 64, so chunks 0
+/// All five derive from category 4: 200 bytes at chunk_size 64, so chunks 0
 /// and 1 are both 80 ciphertext bytes and the final chunk is 8 + 16.
 fn negative_vectors(source: &EnvelopeVector) -> Vec<NegativeVector> {
     assert_eq!(source.category, 4);
@@ -653,6 +653,9 @@ fn negative_vectors(source: &EnvelopeVector) -> Vec<NegativeVector> {
     let mut downgraded: Vec<u8> = object.clone();
     downgraded[4] = 0x02;
 
+    let mut wrong_cipher: Vec<u8> = object.clone();
+    wrong_cipher[5] = 0x02;
+
     vec![
         negative_vector(10, "tampered ciphertext byte in chunk 1", tampered),
         negative_vector(11, "chunks 0 and 1 swapped", swapped),
@@ -662,6 +665,11 @@ fn negative_vectors(source: &EnvelopeVector) -> Vec<NegativeVector> {
             truncated,
         ),
         negative_vector(13, "version byte altered", downgraded),
+        negative_vector(
+            14,
+            "cipher byte set to an unimplemented value",
+            wrong_cipher,
+        ),
     ]
 }
 
@@ -794,11 +802,18 @@ fn verify_negative(v: &NegativeVector) {
     assert_eq!(v.expect, Expect::Reject, "category {}", v.category);
     let album: AlbumKey = album_from(&v.k_album);
     let asset_id: AssetId = AssetId::from_bytes(unhex_array(&v.asset_id));
-    assert!(
-        decrypt_asset(&album, &asset_id, &unhex(&v.object)).is_err(),
-        "category {}: accepted a rejected object",
-        v.category
-    );
+    let object: Vec<u8> = unhex(&v.object);
+    let err: EnvelopeError = decrypt_asset(&album, &asset_id, &object)
+        .err()
+        .unwrap_or_else(|| panic!("category {}: accepted a rejected object", v.category));
+    // §8 lists `cipher` as its own rejection condition, distinct from `version`
+    // and from any AEAD failure — so 14 must fail there and nowhere else.
+    if v.category == 14 {
+        assert_eq!(
+            err,
+            EnvelopeError::Header(HeaderError::WrongCipher(object[5]))
+        );
+    }
 }
 
 fn verify_key_derivation(v: &KeyDerivationVector) {
@@ -961,7 +976,7 @@ fn committed_vectors_verify() {
     file.envelope.iter().for_each(verify_envelope);
 
     let categories: Vec<u8> = file.envelope_negative.iter().map(|v| v.category).collect();
-    assert_eq!(categories, [10, 11, 12, 13]);
+    assert_eq!(categories, [10, 11, 12, 13, 14]);
     file.envelope_negative.iter().for_each(verify_negative);
 
     assert_eq!(file.key_derivation.len(), 1);
