@@ -5,7 +5,7 @@ use crate::{
     keys::{Kek, cipher_for},
 };
 use argon2::{Algorithm, Argon2, Params, Version};
-use unicode_normalization::{UnicodeNormalization, char::is_combining_mark};
+use unicode_normalization::{UnicodeNormalization, char::canonical_combining_class};
 use zeroize::{Zeroize, Zeroizing};
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct WrapParams {
@@ -70,7 +70,10 @@ impl From<AeadError> for WrapError {
 pub(crate) fn normalize_passphrase(s: &str) -> String {
     let folded: String = s
         .nfkd()
-        .filter(|c| !is_combining_mark(*c))
+        // Canonical_Combining_Class, not is_combining_mark: that one is
+        // General_Category=M and also strips Indic vowel signs, which have CCC 0
+        // and are vowels rather than decoration. §6.3.
+        .filter(|c| canonical_combining_class(*c) == 0)
         .flat_map(|c| c.to_lowercase())
         .collect();
     folded.split_whitespace().collect::<Vec<_>>().join(" ")
@@ -340,6 +343,7 @@ mod tests {
             ("a\u{00A0}b", "a b"), // NFKD maps NBSP to a plain space, which then collapses
             ("\u{1D2C}", "a"),    // the step order itself; fails if you lowercase first
             ("a\t\nb", "a b"),    // tabs and newlines are whitespace too
+            ("\u{0915}\u{093E}", "\u{0915}\u{093E}"), // That's का: Devanagari KA plus vowel sign AA, Mc with CCC 0
         ] {
             assert_eq!(normalize_passphrase(input), expected_output);
         }

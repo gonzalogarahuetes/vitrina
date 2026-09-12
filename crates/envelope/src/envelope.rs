@@ -140,20 +140,19 @@ pub(crate) fn encrypt_with_header<K: ChunkKey>(
 pub(crate) fn decrypt<K: ChunkKey>(key: &K, object: &[u8]) -> Result<Vec<u8>, EnvelopeError> {
     let header: Header = Header::parse(object)?;
     let total: u64 = header.total_object_size()?;
+    let len: u64 = object.len() as u64;
 
-    // These two guards MUST run before the allocation below. `plaintext_length`
-    // comes from the header, which is attacker-controlled, and a failed
-    // allocation aborts the process rather than returning an error. Because the
-    // guards establish `object.len() == total`, the capacity requested below is
-    // bounded by input the caller already holds in memory.
-    if object.len() < total as usize {
+    // …compared in u64 deliberately: `total` comes from the header and can exceed
+    // usize on a 32-bit target, where casting it down first would truncate a huge
+    // claim into a small one that passes.
+    if len < total {
         return Err(EnvelopeError::ObjectTooShort {
             expected: total,
             got: object.len(),
         });
     }
 
-    if object.len() > total as usize {
+    if len > total {
         return Err(EnvelopeError::TrailingBytes {
             expected: total,
             got: object.len(),
@@ -177,7 +176,7 @@ mod tests {
     use crate::chunk::decrypt_chunk;
     use crate::header::Header;
     use crate::test_fixtures::{
-        ASSET_ID, BASE_NONCE, PLAINTEXT, PLAINTEXT_65, album_key, asset_key, hex,
+        ASSET_ID, BASE_NONCE, K_ALBUM, PLAINTEXT, PLAINTEXT_65, album_key, asset_key, hex,
     };
     #[cfg(target_arch = "wasm32")]
     use wasm_bindgen_test::wasm_bindgen_test as test;
@@ -505,6 +504,39 @@ mod tests {
 
         assert_eq!(Header::parse(&object).unwrap().chunk_size(), 64);
         assert_eq!(hex(&object), KNOWN_ANSWER_ENVELOPE);
+    }
+
+    #[test]
+    fn rejects_header_whose_total_truncates_on_32_bit() {
+        // The length guards must compare in u64: this header claims 2^33 + 128 bytes,
+        // which truncates to 128 on a 32-bit target and would pass both guards against
+        // a 128-byte object, then slice out of bounds.
+        let chunk_size = 2147483648; // 2^31
+        let plaintext_length = 8589934592; // 2^33 
+
+        let mut object_of_128_bytes = [0u8; 128];
+        let header = Header::new(
+            AssetId::from_bytes(ASSET_ID),
+            BASE_NONCE,
+            chunk_size,
+            plaintext_length,
+        )
+        .unwrap();
+
+        object_of_128_bytes[0..64].copy_from_slice(&header.to_bytes());
+
+        assert_eq!(
+            decrypt_asset(
+                &AlbumKey::from_bytes(K_ALBUM),
+                &AssetId::from_bytes(ASSET_ID),
+                &object_of_128_bytes
+            )
+            .unwrap_err(),
+            EnvelopeError::ObjectTooShort {
+                expected: 8_589_934_720,
+                got: 128
+            }
+        );
     }
 
     #[cfg(not(target_arch = "wasm32"))]
