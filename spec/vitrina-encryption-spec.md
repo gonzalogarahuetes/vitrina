@@ -1,7 +1,7 @@
 # Vitrina — Encryption Envelope Specification
 
 **Version:** 1 (envelope format version `0x01`)
-**Status:** Draft for review · last updated 11 August 2026 · §2, §7, §8 and §10 revised during C.1 and B.5
+**Status:** Draft for review · last updated 22 August 2026 · §2.2, §3.3, §5, §6.2, §6.3, §8, §9, §9.1, §9.2 and §9.3 revised during C.5–C.10 and exit-criterion review
 **Companion to:** `vitrina-project-brief.md` §6–§8
 
 ---
@@ -107,6 +107,8 @@ The header is **plaintext but authenticated** — it appears in full in the AAD 
 
 `chunk_size` is in the header rather than fixed by the version so that a future asset can use a different chunk size without a format version bump. Version 1 writers MUST write `262144` (256 KiB).
 
+**That MUST binds writers producing real objects; it does not bind test vectors.** §9 makes `chunk_size` a per-vector input precisely so conformance vectors can use a small value — categories 2 through 4 use 64, because full-size multi-chunk vectors would be a megabyte of hex per case. A vector carrying `chunk_size` 64 is conforming _as a vector_ and would be non-conforming _as an object_. A reader must honour whatever the header says; only a writer is constrained to 262144.
+
 ### 3.2 Derived quantities
 
 ```
@@ -168,12 +170,12 @@ AAD(i) = header (all 64 bytes) ‖ u64_le(i)
 
 That is the entire definition. It is deliberately simple, and it defends against four distinct attacks at once:
 
-| Attack                                             | Blocked by                       |
-| -------------------------------------------------- | -------------------------------- |
-| Reordering chunks                                  | `i` in the AAD                   |
-| Truncating the asset                               | `plaintext_length` in the header |
-| Splicing chunks between assets under one album key | `asset_id` in the header         |
-| Downgrading to an older format version             | `version` in the header          |
+| Attack                                             | Blocked by                                                                                                                                                           |
+| -------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Reordering chunks                                  | `i` in the AAD                                                                                                                                                       |
+| Truncating the asset                               | `plaintext_length` in the header, **plus §8's length check** — the AAD alone does not catch a missing chunk, since every chunk still present authenticates correctly |
+| Splicing chunks between assets under one album key | `asset_id` in the header                                                                                                                                             |
+| Downgrading to an older format version             | `version` in the header                                                                                                                                              |
 
 A tempting simplification is to authenticate only the chunk index. It blocks the first attack and none of the others, and the resulting vulnerabilities are silent — decryption succeeds and returns wrong data. Authenticate the whole header.
 
@@ -221,9 +223,9 @@ The server stores `salt`, the Argon2id parameters, `wrap_nonce`, and `wrapped`. 
 | `KEK`        | 32    | Argon2id output length                                            |
 | `wrapped`    | 48    | `K_album` (32) plus the Poly1305 tag (16)                         |
 
-The salt length needs enforcing in the crate, because **nothing else will enforce it.** RustCrypto's `argon2` accepts salts from 8 to 64 bytes, and since libsodium is not a dependency anywhere in Vitrina (brief §6 #4), no second implementation rejects a wrong length. Earlier revisions of this paragraph said the browser's libsodium would; that was written against a design that was never built. The 16 is kept because it is `crypto_pwhash_SALTBYTES`, so any libsodium-based tool or future client interoperates, and because it is already committed in the schema's `CHECK` — changing it now would be a format change. Not because anything would reject an alternative.
+The salt length needs enforcing in the crate, because **nothing else will enforce it.** RustCrypto's `argon2` imposes no practical upper bound on salt length (`MAX_SALT_LEN` is `0xFFFFFFFF` in the locked 0.6.0), and since libsodium is not a dependency anywhere in Vitrina (brief §6 #4), no second implementation rejects a wrong length. Earlier revisions of this paragraph said the browser's libsodium would; that was written against a design that was never built. The 16 is kept because it is `crypto_pwhash_SALTBYTES`, so any libsodium-based tool or future client interoperates, and because it is already committed in the schema's `CHECK` — changing it now would be a format change. Not because anything would reject an alternative.
 
-**Argon2id parameters for version 1:** memory 64 MiB, iterations 3, parallelism 1.
+**Argon2id parameters for version 1:** **Argon2id v1.3 (`0x13`)**, memory 64 MiB, iterations 3, parallelism 1. The version is normative: v1.0 and v1.3 produce different outputs from identical inputs, and categories 8 and 9 pin it only in practice — an implementer working from this document alone would otherwise have to guess.
 
 Parameters are stored per recipient, not hardcoded, so they can be raised later without invalidating existing invitations. 64 MiB is a floor chosen for a mobile browser running the crate under WASM; libsodium's `MODERATE` preset (256 MiB) is the figure it was chosen against, and would risk failing to allocate on the low-end Android devices in our audience. **Verify on real target devices before shipping**, not in a desktop browser.
 
@@ -244,9 +246,17 @@ Because the server stores `wrapped`, anyone with database access can mount an of
 **Normalisation is normative and identical on both sides.** The generator and the entry path MUST apply the same transformation before the string reaches Argon2id:
 
 1. Unicode NFKD
-2. Remove all combining marks
-3. Lowercase
+2. Remove every character whose **Canonical_Combining_Class is non-zero**. **Not** General_Category = Mark
+3. Apply the **unconditional** lowercase mapping. **Context-sensitive mappings MUST NOT be used**
 4. Collapse runs of whitespace to a single `U+0020`, and trim
+
+Steps 2 and 3 are pinned to Unicode properties rather than to a language's standard library, because the libraries disagree and the convenient function is the wrong one in both cases.
+
+**Step 2 must use Canonical_Combining_Class, not General_Category = Mark**, and the difference is destructive rather than cosmetic. GC=M is a strict superset: Indic dependent vowel signs such as `U+093E` and `U+0903` are `Mc` or `Mn` with CCC = 0, so a GC=M rule strips them. For Latin, Greek, Cyrillic, Hebrew and Arabic the two rules agree — every mark in those scripts has CCC ≠ 0 — so the divergence is invisible until the first script where it isn't. And there it is not decoration being removed but **vowels**: stripping matras collapses distinct words into the collisions §6.3's wordlist rule exists to prevent. Note that `unicode-normalization`'s `is_combining_mark` is GC=M; the CCC table is exposed separately and is the one to use.
+
+**Step 3 must be unconditional**, which is what excludes Greek final sigma: a context-sensitive mapping sends `Σ` to `ς` or `σ` depending on position, so two implementations derive different KEKs from one passphrase. Swift's `lowercased()` and Kotlin's `lowercase()` are context-sensitive by default; Rust's `char::to_lowercase` is unconditional. Simple-versus-full is _not_ the distinction — Rust performs the full unconditional mapping, which differs from the simple one only for `U+0130`, and that character cannot survive to step 3 because step 1 decomposes it and step 2 removes the resulting combining dot. **That safety depends on the step order**, so the steps are not reorderable.
+
+**Both choices are permanent interop decisions even though neither is a format change.** A blob wrapped under one rule will never unwrap under the other.
 
 So `Café  Roble` and `cafe roble` derive the same KEK. **A mismatch here is not a usability bug — it is an unwrappable blob**, discovered as an opaque AEAD failure with no diagnostic. This belongs in the C.8 test vectors: at least one vector whose passphrase contains diacritics, mixed case and irregular spacing, asserting it unwraps identically to its normalised form.
 
@@ -380,6 +390,11 @@ A reader MUST refuse to decrypt and surface a clear error if any of the followin
 | `padding` is not all zero                                                        | As above                                                   |
 | `plaintext_length` = 0                                                           | §3.2 — a zero-length asset is invalid                      |
 | `chunk_size` = 0                                                                 | Would make `chunk_count` undefined                         |
+| Object length ≠ `total_object_size` (§3.2), in either direction                  | Truncation and trailing-garbage defence — see below        |
+
+The last row is the only condition here not derivable from the header alone, and it is load-bearing: **§5's truncation defence depends on it.** The AAD binds each chunk to the header and to its index, so a missing final chunk leaves every _remaining_ chunk authenticating perfectly — nothing in the AEAD notices that an object is short. Only comparing the object's actual length against the derived total catches it. An implementer who builds §8's header checks and omits this has the vulnerability §5 says is closed.
+
+**Compare lengths in a width that cannot truncate.** A 64-bit `total_object_size` narrowed to a 32-bit `usize` before comparison turns an impossible claim into a small one, so a header claiming 2³³ + 128 bytes passes against a 128-byte object and the reader then slices out of bounds — a trap rather than the clear error this section requires. Found on `wasm32` during Phase 0, which is the only target that ships.
 
 In no case may a reader attempt best-effort parsing or partial recovery.
 
@@ -397,7 +412,7 @@ The reference Rust implementation MUST ship known-answer test vectors as JSON in
 
 **`spec/vectors/` is not scoped to the envelope format.** It carries two classes: envelope conformance (the categories below) and the protocol-level byte agreements in §9.1. Both belong in one file because the mechanism is what matters, not which document defines the value — and a second vectors directory for the same purpose is precisely the duplication this project keeps engineering against. CI MUST run every vector against every implementation, not only against the Rust crate.
 
-Each vector supplies hex-encoded `K_album`, `asset_id`, `base_nonce`, `chunk_size`, and plaintext, and the expected full envelope bytes.
+Each vector supplies hex-encoded `K_album`, `asset_id`, `base_nonce` and plaintext, an integer `chunk_size`, and the expected full envelope bytes. Negative vectors carry only the fields their case needs, and store mutated bytes rather than instructions for producing them.
 
 Required coverage:
 
@@ -414,6 +429,8 @@ Required coverage:
 11. **Negative:** chunks 0 and 1 swapped → decryption fails
 12. **Negative:** final chunk removed and `plaintext_length` adjusted → decryption fails
 13. **Negative:** `version` byte altered → rejected
+14. **Negative:** `cipher` byte set to an unimplemented value → rejected. §9.1's table names this, and category 13 does not cover it — `version` and `cipher` are separate rejection conditions in §8
+15. **Negative:** object truncated **without** adjusting the header → rejected. Distinct from category 12, which adjusts `plaintext_length` and therefore exercises the AAD. Here every present chunk authenticates correctly and only §8's length check catches it — the check found broken on 32-bit targets during exit-criterion review, which is why it needs a vector rather than an argument
 
 Categories 6, 7 and 8 are one per §1 primitive, deliberately contiguous — every primitive gets its own external anchor, and a missing one is visible as a gap in the sequence.
 
@@ -431,7 +448,7 @@ Every instance below was found by review rather than by test, which is why this 
 
 | Value                                           | How it fails                                                                                                        |
 | ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| Argon2id salt length                            | RustCrypto accepts 8–64 bytes; the format requires exactly 16 and nothing but the crate enforces it                 |
+| Argon2id salt length                            | RustCrypto imposes no practical upper bound; the format requires exactly 16 and nothing but the crate enforces it   |
 | Passphrase normalisation (§6.3)                 | Generator and entry path must transform identically; a mismatch is an unwrappable blob                              |
 | `cipher` byte rejection (§8)                    | Reader behaviour on an unknown value was undefined                                                                  |
 | Token hashing (`vitrina-schema.md` §6)          | SHA-256 over raw bytes versus over the base64url string; every invite fails identically                             |
@@ -481,7 +498,7 @@ The AAD must be non-empty. Vitrina's AAD is never empty (§5), and AAD length en
 
 **Categories 5 through 8 are likewise internal.** Checking key derivation requires reading a derived key, and §2.2 forbids any byte accessor on a key type; categories 6–8 anchor primitives a binding deliberately does not expose at all. The same property that stops a binding leaking `K_album` stops it checking how `K_album` was used.
 
-**What this means in practice.** Under brief §6 #4 there is one cryptographic implementation, reached by WASM and by FFI, so nothing diverges — these categories protect the implementation from its own future edits rather than one implementation from another. The externally verifiable set is the decrypt direction, the envelope layout, the negatives, and the protocol vectors. An independent implementation built from this document alone (§0) must construct its own internal equivalents of 5–8, which is why §9.2 names their external anchors rather than only their expected outputs.
+**What this means in practice.** Under brief §6 #4 there is one cryptographic implementation, reached by WASM and by FFI, so nothing diverges — these categories protect the implementation from its own future edits rather than one implementation from another. The externally verifiable set is the decrypt direction, the envelope layout, the negatives, and **those protocol vectors with a binding entry point**. Vector 3's rejection and vector 4's AAD have none and are checked only by proxy — the same limitation stated one paragraph above for categories 5–8, and reintroduced here in an earlier revision of this very section. An independent implementation built from this document alone (§0) must construct its own internal equivalents of 5–8, which is why §9.2 names their external anchors rather than only their expected outputs.
 
 ## 10. Accepted limitations
 
