@@ -1,6 +1,6 @@
 # Vitrina — Phase 0 Detailed Plan
 
-**Status:** Draft v0.1 · 6 August 2026
+**Status:** Draft v0.1 · last updated 13 September 2026
 **Supersedes:** the Phase 0 section of `vitrina-roadmap.md`
 **Companion to:** `vitrina-project-brief.md`, `vitrina-encryption-spec.md`, `vitrina-invite-spec.md`
 
