@@ -1,6 +1,6 @@
 # Vitrina — Project Brief
 
-**Status:** Draft v0.1 · last updated 11 August 2026 · §10.1 and §12 added
+**Status:** Draft v0.1 · last updated 13 September 2026
 **Purpose of this document:** the single canonical description of what Vitrina is, what it promises, and the constraints every implementation decision must respect. Paste this into any new chat or Claude Code session before asking for work.
 
 > `Vitrina` is a working codename, not a decision. Naming is an open item.
@@ -219,7 +219,7 @@ The cost is paid in Phase 3, where the roadmap already notes that video storage 
 
 **Therefore `Cache-Control` is set as object metadata at upload time** (`CacheControl` on `PutObject`), which is unforgettable by construction and also survives range requests. This applies when signed URLs arrive in Phase 3; in v1 the proxying API sets the header directly.
 
-**First measurement, 22 August 2026:** roughly one second per album open for twenty assets, fetch-dominated, over a 1.65 Mb/s LAN link — and the re-download was confirmed to be real rather than served from cache. One device and one link, so an existence proof rather than a characterisation. Decryption is not the cost: phase-0-plan §8 records 122 ms on iPhone and 495 ms on Android against render times several times larger, and fetch larger again.
+**First measurement — 09-11-2026, the device session:** roughly one second per album open for twenty assets, fetch-dominated, over a 1.65 Mb/s LAN link — and the re-download was confirmed to be real rather than served from cache. One device and one link, so an existence proof rather than a characterisation. Decryption is not the cost: phase-0-plan §8 records 122 ms on iPhone and 495 ms on Android against render times several times larger, and fetch larger again.
 
 **Accepted consequence:** `no-store` means a recipient re-downloads every thumbnail on every album open — a couple of megabytes for a hundred-photo album, on the mediocre connection Phase 1 explicitly targets. This follows from §10 rather than from proxying, and it is a real tension between the friction layer and usability for the audience least able to absorb it.
 

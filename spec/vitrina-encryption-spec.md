@@ -1,7 +1,7 @@
 # Vitrina — Encryption Envelope Specification
 
 **Version:** 1 (envelope format version `0x01`)
-**Status:** Draft for review · last updated 22 August 2026 · §2.2, §3.3, §5, §6.2, §6.3, §8, §9, §9.1, §9.2 and §9.3 revised during C.5–C.10 and exit-criterion review
+**Status:** Draft for review · last updated 13 September 2026 · §2.2, §3.3, §5, §6.2, §6.3, §8, §9, §9.1, §9.2 and §9.3 revised during C.5–C.10 and exit-criterion review
 **Companion to:** `vitrina-project-brief.md` §6–§8
 
 ---
@@ -465,7 +465,7 @@ Only two of these are envelope concerns. The rest are protocol-adjacent and belo
 4. A passphrase containing diacritics, mixed case and irregular whitespace, with its normalised form and the expected KEK under a fixed salt and parameters
 5. A `recipient_id` with the expected 31-byte AAD, hex-encoded
 6. An Argon2id wrap using a 16-byte salt, asserted to succeed, and one using a 32-byte salt, asserted to be rejected before it reaches the KDF
-7. **A passphrase containing a spacing combining mark — `General_Category = Mc`, `Canonical_Combining_Class = 0`, such as `U+0915 U+093E` — asserted to survive normalisation intact and produce a specific KEK.** Every other passphrase in this list is ASCII or carries only CCC ≠ 0 marks, so nothing else catches an implementation that **over-strips**: one filtering on `General_Category = M` removes the matra, derives a different KEK, and passes every other vector here. That is not a hypothetical divergence — it is the bug the reference implementation carried until 22 August 2026, found by reading its source rather than by any test. This vector exists so the next one is found by CI.
+7. **A passphrase containing a spacing combining mark — `General_Category = Mc`, `Canonical_Combining_Class = 0`, such as `U+0915 U+093E` — asserted to survive normalisation intact and produce a specific KEK.** Every other passphrase in this list is ASCII or carries only CCC ≠ 0 marks, so nothing else catches an implementation that **over-strips**: one filtering on `General_Category = M` removes the matra, derives a different KEK, and passes every other vector here. That is not a hypothetical divergence — it is the bug the reference implementation carried until 12 September 2026, found by reading its source rather than by any test. This vector exists so the next one is found by CI.
 
 ### 9.2 Self-generated vectors cannot catch a wrong primitive
 
@@ -477,7 +477,7 @@ This is the one place §9.1's rule needs a stronger form: **at least one vector 
 
 Two limits on what category 6 proves. It uses the streaming API, which for BLAKE2b agrees with one-shot for the same total input — so it still exercises the parameter block, but the message must be assembled identically (that test feeds its message three times). And it proves the _primitive_ matches libsodium; it says nothing about whether the domain-separation strings in §2 are right. Those remain category 5's job.
 
-**A vector written to detect a specific defect must be generated after that defect is fixed, not when it is found.** This sounds too obvious to state and is exactly the trap, because discovering a bug is precisely the moment one reaches for a vector. Protocol vector 7 is the worked example: its expected KEK comes from the same implementation whose over-stripping it exists to catch. Generated on 21 August it would have encoded that bug as the correct answer, every implementation matching it would have been wrong identically, and the vector would have looked entirely healthy. It is sound only because the defect was found by reading the source and fixed first. A self-generated vector inherits the state of its generator at the moment of generation — which is this section's whole argument, in the one case where getting the order wrong would have been invisible.
+**A vector written to detect a specific defect must be generated after that defect is fixed, not when it is found.** This sounds too obvious to state and is exactly the trap, because discovering a bug is precisely the moment one reaches for a vector. Protocol vector 7 is the worked example: its expected KEK comes from the same implementation whose over-stripping it exists to catch. Generated at any point before that fix it would have encoded the bug as the correct answer, every implementation matching it would have been wrong identically, and the vector would have looked entirely healthy. It is sound only because the defect was found by reading the source and fixed first. A self-generated vector inherits the state of its generator at the moment of generation — which is this section's whole argument, in the one case where getting the order wrong would have been invisible.
 
 **Every external anchor must pass before any self-generated vector that depends on it is produced.** Categories 6, 7 and 8 gate the rest: 6 gates category 5, 7 gates categories 1–4 and 10–15, 8 gates category 9. Generating the set first and checking the primitives afterwards means discovering at C.10 that most of the file needs regenerating. The rule was written about category 6 and applied three times during C.1–C.8, which is why it is stated generally here.
 

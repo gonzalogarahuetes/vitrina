@@ -1,6 +1,6 @@
 # Vitrina — Database Schema
 
-**Status:** Draft v0.1 · last updated 11 August 2026 · **provisional**
+**Status:** Draft v0.1 · last updated 13 September 2026 · **provisional**
 **Companion to:** `vitrina-project-brief.md` §9–§9.3, `vitrina-encryption-spec.md` §6
 **Implemented by:** the B.5 migration
 
