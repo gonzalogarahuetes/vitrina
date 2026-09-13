@@ -316,3 +316,36 @@ for (const v of file.protocol.wrap_salt_length) {
     }
   });
 }
+
+// §9.1: every salt a derivation reads must differ from every other. Pinned,
+// not inferred from the file: vector 3 is refused before any KDF runs and
+// vector 6's 32-byte entry at fromParts, so neither consumes its salt.
+const consumedSalts: { entry: string; salt: string }[] = [
+  { entry: "category 9: v1 parameters (§6.2)", salt: file.wrap[0]!.salt },
+  { entry: "category 9: low parameters", salt: file.wrap[1]!.salt },
+  { entry: "protocol 4: passphrase_normalisation", salt: file.protocol.passphrase_normalisation.salt },
+  { entry: "protocol 6: 16-byte salt (accept)", salt: file.protocol.wrap_salt_length[0]!.salt },
+  { entry: "protocol 7: passphrase_spacing_mark", salt: file.protocol.passphrase_spacing_mark.salt },
+];
+
+test("§9.1: the pinned salt entries are the ones the file carries", () => {
+  assert.deepEqual(file.wrap.map((w) => w.name), ["v1 parameters (§6.2)", "low parameters"]);
+  assert.equal(file.protocol.passphrase_normalisation.vector, 4);
+  assert.deepEqual(
+    file.protocol.wrap_salt_length.map((v) => [v.vector, v.expect, v.salt.length / 2]),
+    [[6, "accept", 16], [6, "reject", 32]],
+  );
+  assert.equal(file.protocol.passphrase_spacing_mark.vector, 7);
+  assert.equal(file.protocol.passphrase_empty.length, 3, "vector 3: out of scope, but its shape is pinned");
+});
+
+test("§9.1: every consumed salt in the file is pairwise distinct", () => {
+  const entriesBySalt = new Map<string, string[]>();
+  for (const { entry, salt } of consumedSalts) {
+    assert.equal(salt.length, 32, `${entry}: salt must be 16 bytes`);
+    entriesBySalt.set(salt, [...(entriesBySalt.get(salt) ?? []), entry]);
+  }
+  const shared = [...entriesBySalt].filter(([, entries]) => entries.length > 1);
+  const report = shared.map(([salt, entries]) => `${salt} is carried by: ${entries.join(", ")}`).join("\n");
+  assert.equal(shared.length, 0, `§9.1: consumed salts must be distinct\n${report}`);
+});
