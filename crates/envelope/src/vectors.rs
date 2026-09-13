@@ -18,6 +18,7 @@ use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::collections::BTreeSet;
 use std::fs;
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen_test::wasm_bindgen_test as test;
@@ -1023,4 +1024,224 @@ fn hex_round_trips() {
     let bytes: [u8; 4] = [0x00, 0x7f, 0x80, 0xff];
     assert_eq!(unhex(&hex(&bytes)), bytes);
     assert_eq!(unhex_array::<4>(&hex(&bytes)), bytes);
+}
+
+// Spec <-> file consistency: the lists in §9 and §9.1 are the source of truth
+// for which numbers exist, and the file must carry exactly those.
+// ---------------------------------------------------------------------------
+
+const SPEC_PATH: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../spec/vitrina-encryption-spec.md"
+);
+
+struct SpecItem {
+    number: u8,
+    text: String,
+}
+
+/// The `N. text` lines following `heading`, up to the first line that is not one.
+fn spec_list(spec: &str, heading: &str) -> Vec<SpecItem> {
+    spec.lines()
+        .skip_while(|l| !l.starts_with(heading))
+        .skip(1)
+        .skip_while(|l| l.trim().is_empty())
+        .map_while(|l| {
+            let (number, text) = l.split_once(". ")?;
+            Some(SpecItem {
+                number: number.parse().ok()?,
+                text: text.to_string(),
+            })
+        })
+        .collect()
+}
+
+type Entry = (u8, Option<Expect>);
+
+fn envelope_entries(f: &VectorFile) -> Vec<Entry> {
+    let anchors = &f.anchors;
+    let mut v: Vec<Entry> = Vec::new();
+    v.extend(f.envelope.iter().map(|e| (e.category, Some(e.expect))));
+    v.extend(
+        f.envelope_negative
+            .iter()
+            .map(|e| (e.category, Some(e.expect))),
+    );
+    v.extend(f.key_derivation.iter().map(|e| (e.category, None)));
+    v.extend(
+        [
+            anchors.blake2b_keyed.category,
+            anchors.xchacha20poly1305.category,
+            anchors.argon2id.category,
+        ]
+        .map(|c| (c, None)),
+    );
+    v.extend(f.wrap.iter().map(|e| (e.category, None)));
+    v
+}
+
+fn protocol_entries(p: &Protocol) -> Vec<Entry> {
+    let mut v: Vec<Entry> = vec![
+        (p.token.vector, Some(p.token.expect)),
+        (
+            p.token_noncanonical.vector,
+            Some(p.token_noncanonical.expect),
+        ),
+    ];
+    v.extend(
+        p.passphrase_empty
+            .iter()
+            .map(|e| (e.vector, Some(e.expect))),
+    );
+    v.push((p.passphrase_normalisation.vector, None));
+    v.push((p.wrap_aad.vector, None));
+    v.extend(
+        p.wrap_salt_length
+            .iter()
+            .map(|e| (e.vector, Some(e.expect))),
+    );
+    v
+}
+
+/// Category 9 carries two entries: §9 item 9, "at two distinct parameter sets".
+fn envelope_multiplicity(category: u8) -> usize {
+    match category {
+        9 => 2,
+        _ => 1,
+    }
+}
+
+/// Vector 3: §9.1's three passphrases. Vector 6: the 16-byte accept and the
+/// 32-byte reject. Vector 7 and every other vector: one entry.
+fn protocol_multiplicity(vector: u8) -> usize {
+    match vector {
+        3 => 3,
+        6 => 2,
+        _ => 1,
+    }
+}
+
+#[derive(Clone, Copy)]
+enum Polarity {
+    /// `**Negative:**` items reject in every entry; all other items in none.
+    Strict,
+    /// An item whose text says `rejected` has at least one rejecting entry.
+    Weak,
+}
+
+fn check_list(
+    side: &str,
+    items: &[SpecItem],
+    entries: &[Entry],
+    multiplicity: fn(u8) -> usize,
+    polarity: Polarity,
+    failures: &mut Vec<String>,
+) {
+    let spec: BTreeSet<u8> = items.iter().map(|i| i.number).collect();
+    let file: BTreeSet<u8> = entries.iter().map(|e| e.0).collect();
+
+    let only_spec: Vec<u8> = spec.difference(&file).copied().collect();
+    let only_file: Vec<u8> = file.difference(&spec).copied().collect();
+    if !only_spec.is_empty() {
+        failures.push(format!(
+            "{side}: in the spec, not in the file: {only_spec:?}"
+        ));
+    }
+    if !only_file.is_empty() {
+        failures.push(format!(
+            "{side}: in the file, not in the spec: {only_file:?}"
+        ));
+    }
+
+    let contiguous: BTreeSet<u8> = (1..=items.len() as u8).collect();
+    if spec != contiguous {
+        let got: Vec<u8> = items.iter().map(|i| i.number).collect();
+        failures.push(format!(
+            "{side}: spec numbers are not 1..={}: {got:?}",
+            items.len()
+        ));
+    }
+
+    for item in items {
+        let n = item.number;
+        let expects = entries.iter().filter(|e| e.0 == n).map(|e| e.1);
+        let broken: bool = match polarity {
+            Polarity::Strict if item.text.starts_with("**Negative:**") => {
+                expects.clone().any(|x| x != Some(Expect::Reject))
+            }
+            Polarity::Strict => expects.clone().any(|x| x == Some(Expect::Reject)),
+            Polarity::Weak if item.text.contains("rejected") => {
+                expects.clone().next().is_some()
+                    && !expects.clone().any(|x| x == Some(Expect::Reject))
+            }
+            Polarity::Weak => false,
+        };
+        if broken {
+            failures.push(format!(
+                "{side}: number {n} polarity disagrees with the spec text: {:?}",
+                expects.collect::<Vec<_>>()
+            ));
+        }
+    }
+
+    for n in spec.union(&file) {
+        let count: usize = entries.iter().filter(|e| e.0 == *n).count();
+        let pinned: usize = multiplicity(*n);
+        if count != pinned {
+            failures.push(format!(
+                "{side}: number {n} has {count} entries, pinned {pinned}"
+            ));
+        }
+    }
+}
+
+/// Every mismatch is collected and reported at once, so a divergence between
+/// the spec's lists and the file is visible whole rather than one line per run.
+#[test]
+fn spec_lists_and_committed_file_agree() {
+    let spec: String = fs::read_to_string(SPEC_PATH).expect("spec is committed");
+    let envelope_items: Vec<SpecItem> = spec_list(&spec, "Required coverage:");
+    let protocol_items: Vec<SpecItem> = spec_list(&spec, "**Required protocol vectors**");
+    assert!(
+        envelope_items.len() >= 5 && protocol_items.len() >= 5,
+        "PARSER: the spec's list format has changed (§9 parsed {} items, §9.1 parsed {}); \
+         fix spec_list before trusting any other assertion in this test",
+        envelope_items.len(),
+        protocol_items.len()
+    );
+
+    let file: VectorFile =
+        serde_json::from_str(&read_committed()).expect("well-formed vector file");
+    let mut failures: Vec<String> = Vec::new();
+
+    let named: &str = file.source.split_whitespace().next().unwrap_or("");
+    if named.is_empty() || !SPEC_PATH.ends_with(&format!("/{named}")) {
+        failures.push(format!(
+            "source: file names {:?}, this test read {SPEC_PATH}",
+            file.source
+        ));
+    }
+
+    check_list(
+        "§9 envelope categories",
+        &envelope_items,
+        &envelope_entries(&file),
+        envelope_multiplicity,
+        Polarity::Strict,
+        &mut failures,
+    );
+    check_list(
+        "§9.1 protocol vectors",
+        &protocol_items,
+        &protocol_entries(&file.protocol),
+        protocol_multiplicity,
+        Polarity::Weak,
+        &mut failures,
+    );
+
+    assert!(
+        failures.is_empty(),
+        "spec and vector file disagree:\n  {}",
+        failures.join("\n  ")
+    );
 }
