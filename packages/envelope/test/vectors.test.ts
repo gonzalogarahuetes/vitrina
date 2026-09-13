@@ -57,6 +57,14 @@ interface EmptyPassphraseVector {
   params: Params;
   expect: "accept" | "reject";
 }
+interface PassphraseVector {
+  vector: number;
+  passphrase: string;
+  normalized: string;
+  salt: string;
+  params: Params;
+  kek: string;
+}
 interface VectorFile {
   envelope_version: number;
   envelope: EnvelopeVector[];
@@ -68,9 +76,10 @@ interface VectorFile {
     token: { vector: number; token_raw: string; token_base64url: string; sha256: string; expect: string };
     token_noncanonical: { vector: number; token_base64url: string; expect: string };
     passphrase_empty: EmptyPassphraseVector[];
-    passphrase_normalisation: { vector: number; passphrase: string; normalized: string; salt: string; params: Params; kek: string };
+    passphrase_normalisation: PassphraseVector;
     wrap_aad: { vector: number; recipient_id: string; aad: string };
     wrap_salt_length: SaltLengthVector[];
+    passphrase_spacing_mark: PassphraseVector;
   };
 }
 
@@ -207,6 +216,7 @@ const protocolTests: Record<string, string> = {
   passphrase_normalisation: "protocol 4: messy and normalised passphrases derive the same KEK",
   wrap_aad: "protocol 5: the wrap is bound to recipient_id",
   wrap_salt_length: "protocol 6: salt length is enforced at fromParts",
+  passphrase_spacing_mark: "protocol 7: a spacing combining mark survives normalisation",
 };
 
 test("every protocol group has a test", () => {
@@ -299,3 +309,19 @@ for (const v of file.protocol.wrap_salt_length) {
     }
   });
 }
+
+// Protocol vector 7 — the KEK is not exposed, so the mark surviving is shown
+// by a blob wrapped under the passphrase refusing the General_Category = M
+// stripped spelling, which is the KEK an over-stripping implementation derives.
+test(protocolTests.passphrase_spacing_mark!, () => {
+  const p = file.protocol.passphrase_spacing_mark;
+  assert.equal(p.vector, 7);
+  assert.equal(p.normalized, p.passphrase);
+  const stripped = p.passphrase.replace(/\p{M}/gu, "");
+  assert.notEqual(stripped, p.passphrase);
+  const album = e.AlbumKey.fromBytes(unhex(reference.k_album));
+  const recipient = unhex(file.protocol.wrap_aad.recipient_id);
+  const wrapped = e.wrapAlbumKey(album, p.passphrase, params(p.params), recipient);
+  assertIsTheAlbumKey(e.unwrapAlbumKey(p.normalized, params(p.params), recipient, wrapped));
+  assert.equal(caught(() => e.unwrapAlbumKey(stripped, params(p.params), recipient, wrapped)).code, "AuthenticationFailed");
+});
