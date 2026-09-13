@@ -146,9 +146,9 @@ Phase 0 is done when all of the following are true. Not "mostly."
 - [x] The binding validates every length it accepts and errors rather than panicking, with a harness assertion per wrong-length input (§7, C.10) — **done (C.10)**
 - [ ] V.1 passes on real low-end Android hardware, or the spec has been amended
 - [x] V.2 passes on real iOS Safari, or the chunk size has been amended — **passed; 256 KiB stands** (§8)
-- [ ] The encryption spec has been corrected to match the implementation exactly, with every ambiguity found during C.1–C.8 resolved in the document
+- [x] The encryption spec has been corrected to match the implementation exactly, with every ambiguity found during C.1–C.8 resolved in the document — **done, 13 September 2026.** Uniform pass over §0–§10 against the crate, with §7's unimplemented metadata pipeline as an unannounced control (correctly returned as not located). Zero divergences across 29 sections; five findings, all resolved _in the document_ rather than listed
 - [x] Exported JSON vectors live in `spec/vectors/` and CI runs against them — **pending regeneration**: the spec now specifies 15 envelope categories and 7 protocol vectors and the committed file carries fewer
-- [ ] Repo skeleton exists, CI is green, `docker-compose` brings up Postgres and an S3-compatible store
+- [x] Repo skeleton exists, CI is green, `docker-compose` brings up Postgres and an S3-compatible store — **done, 13 September 2026.** CI runs a hermetic `checks` job and a `docker` job on every PR; the seeder's exit status is polled rather than slept on, and it now fails loudly rather than swallowing every error
 - [x] API surface sketch written (B.6) — **all six parts, 13 September 2026.** 22 routes plus `/health`, each with a path, scheme, body, success shape and error list; §11.8 is the single enumeration. The checklist is superseded and deleted
 - [x] Onboarding copy written (B.7) — **done**, brief §16
 
