@@ -140,14 +140,14 @@ Two consequences for Phase 1. **Chunk size is retired as a performance question*
 
 Phase 0 is done when all of the following are true. Not "mostly."
 
-- [x] `crates/envelope` passes every vector category in encryption spec §9, **including every negative case** — **done**, 13 categories incl. negatives
+- [x] `crates/envelope` passes every vector category in encryption spec §9, **including every negative case** — **done**, 15 categories incl. negatives
 - [x] Chunk _i_ decrypts given only the header and that chunk's bytes (C.7) — **done (C.7)**
 - [x] The WASM module loads in a browser and round-trips a 3 MB buffer — **done on two devices** (§8)
 - [x] The binding validates every length it accepts and errors rather than panicking, with a harness assertion per wrong-length input (§7, C.10) — **done (C.10)**
 - [ ] V.1 passes on real low-end Android hardware, or the spec has been amended
 - [x] V.2 passes on real iOS Safari, or the chunk size has been amended — **passed; 256 KiB stands** (§8)
 - [ ] The encryption spec has been corrected to match the implementation exactly, with every ambiguity found during C.1–C.8 resolved in the document
-- [x] Exported JSON vectors live in `spec/vectors/` and CI runs against them — **done**, pending the protocol-vector renumbering
+- [x] Exported JSON vectors live in `spec/vectors/` and CI runs against them — **pending regeneration**: the spec now specifies 15 envelope categories and 7 protocol vectors and the committed file carries fewer
 - [ ] Repo skeleton exists, CI is green, `docker-compose` brings up Postgres and an S3-compatible store
 - [ ] API surface sketch written (B.6) — PR1 and PR2 shipped; **PR2b–PR5 outstanding, and they are Phase 1 work**
 - [x] Onboarding copy written (B.7) — **done**, brief §16

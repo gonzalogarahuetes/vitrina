@@ -48,6 +48,15 @@ interface SaltLengthVector extends Omit<WrapVector, "wrapped" | "category"> {
   wrapped?: string;
   expect: "accept" | "reject";
 }
+interface EmptyPassphraseVector {
+  vector: number;
+  name: string;
+  passphrase: string;
+  normalized: string;
+  salt: string;
+  params: Params;
+  expect: "accept" | "reject";
+}
 interface VectorFile {
   envelope_version: number;
   envelope: EnvelopeVector[];
@@ -58,6 +67,7 @@ interface VectorFile {
   protocol: {
     token: { vector: number; token_raw: string; token_base64url: string; sha256: string; expect: string };
     token_noncanonical: { vector: number; token_base64url: string; expect: string };
+    passphrase_empty: EmptyPassphraseVector[];
     passphrase_normalisation: { vector: number; passphrase: string; normalized: string; salt: string; params: Params; kek: string };
     wrap_aad: { vector: number; recipient_id: string; aad: string };
     wrap_salt_length: SaltLengthVector[];
@@ -80,7 +90,7 @@ function assertIsTheAlbumKey(key: AlbumKey) {
 test("vector file targets envelope version 1", () => {
   assert.equal(file.envelope_version, 1);
   assert.deepEqual(file.envelope.map((v) => v.category), [1, 2, 3, 4]);
-  assert.deepEqual(file.envelope_negative.map((v) => v.category), [10, 11, 12, 13]);
+  assert.deepEqual(file.envelope_negative.map((v) => v.category), [10, 11, 12, 13, 14, 15]);
 });
 
 // Categories 1–4 — decrypt direction is byte-exact. The encrypt direction
@@ -112,18 +122,49 @@ for (const v of file.envelope) {
   });
 }
 
-// Categories 10–13 — every negative is rejected. Category 13 must also be
-// rejected for the §8 reason a caller can act on, not as an opaque failure.
+/** §3.2's total_object_size, from the header's own fields (all little-endian). */
+function declaredTotal(object: Uint8Array): number {
+  const view = new DataView(object.buffer, object.byteOffset, object.byteLength);
+  const chunkSize = view.getUint32(24, true);
+  const plaintextLength = Number(view.getBigUint64(28, true));
+  return 64 + plaintextLength + 16 * Math.ceil(plaintextLength / chunkSize);
+}
+
+interface NegativeExpectation {
+  code: string;
+  reason?: string;
+  fields?: (object: Uint8Array) => Record<string, number>;
+}
+
+// Categories 10–15 — the §8 rejection each must surface, no default. 13, 14
+// and 15 are header and length conditions a caller can act on; the rest are
+// AEAD failures and carry no reason. 15's lengths match the crate's assertion.
+const negativeExpectations: Record<number, NegativeExpectation> = {
+  10: { code: "AuthenticationFailed" },
+  11: { code: "AuthenticationFailed" },
+  12: { code: "AuthenticationFailed" },
+  13: { code: "Header", reason: "WrongVersion", fields: (o) => ({ version: o[4]! }) },
+  14: { code: "Header", reason: "WrongCipher", fields: (o) => ({ cipher: o[5]! }) },
+  15: { code: "ObjectTooShort", fields: (o) => ({ expected: declaredTotal(o), got: o.length }) },
+};
+
+test("every envelope_negative category has an expectation row", () => {
+  const missing = file.envelope_negative.map((v) => v.category).filter((c) => !(c in negativeExpectations));
+  assert.equal(missing.length, 0, `no expectation defined for category ${missing.join(", ")}`);
+});
+
 for (const v of file.envelope_negative) {
   test(`category ${v.category}: ${v.name} — rejected`, () => {
     assert.equal(v.expect, "reject");
+    const expected = negativeExpectations[v.category];
+    assert.ok(expected, `no expectation defined for category ${v.category}`);
     const key = e.AlbumKey.fromBytes(unhex(v.k_album));
-    const err = caught(() => e.decryptAsset(key, unhex(v.asset_id), unhex(v.object)));
-    if (v.category === 13) {
-      assert.equal(err.code, "Header");
-      assert.equal(err.reason, "WrongVersion");
-    } else {
-      assert.equal(err.code, "AuthenticationFailed");
+    const object = unhex(v.object);
+    const err = caught(() => e.decryptAsset(key, unhex(v.asset_id), object));
+    assert.equal(err.code, expected.code);
+    assert.equal(err.reason, expected.reason);
+    for (const [k, value] of Object.entries(expected.fields?.(object) ?? {})) {
+      assert.equal((err as unknown as Record<string, unknown>)[k], value, k);
     }
   });
 }
@@ -182,9 +223,27 @@ test("protocol 2: a non-canonical spelling of the same token is rejected", () =>
   assert.equal(strictDecodeToken(t.token_base64url), undefined);
 });
 
-// Protocol vector 3 — the KEK is not exposed, so normalisation is shown by a
+// Protocol vector 3 — §6.3: empty after normalisation is refused before any
+// KDF runs, on both the wrap and the unwrap path (§9.3: unwrapAlbumKey is the
+// public entry point). Whatever entries the file carries are all run.
+test("protocol 3: passphrases that normalise to empty are rejected, not hashed", () => {
+  assert.ok(file.protocol.passphrase_empty.length > 0);
+  const stored = file.wrap.find((w) => w.params.m_cost_kib === 8)!;
+  const album = e.AlbumKey.fromBytes(unhex(stored.k_album));
+  const recipient = unhex(stored.recipient_id);
+  const wrapped = e.WrappedKey.fromParts(unhex(stored.wrapped), unhex(stored.wrap_nonce), unhex(stored.salt));
+  for (const v of file.protocol.passphrase_empty) {
+    assert.equal(v.vector, 3, v.name);
+    assert.equal(v.expect, "reject", v.name);
+    assert.equal(v.normalized, "", v.name);
+    assert.equal(caught(() => e.wrapAlbumKey(album, v.passphrase, params(v.params), recipient)).code, "EmptyPassphrase", v.name);
+    assert.equal(caught(() => e.unwrapAlbumKey(v.passphrase, params(v.params), recipient, wrapped)).code, "EmptyPassphrase", v.name);
+  }
+});
+
+// Protocol vector 4 — the KEK is not exposed, so normalisation is shown by a
 // blob wrapped under the messy spelling unwrapping under the normalised one.
-test("protocol 3: messy and normalised passphrases derive the same KEK", () => {
+test("protocol 4: messy and normalised passphrases derive the same KEK", () => {
   const p = file.protocol.passphrase_normalisation;
   const album = e.AlbumKey.fromBytes(unhex(reference.k_album));
   const recipient = unhex(file.protocol.wrap_aad.recipient_id);
@@ -194,9 +253,9 @@ test("protocol 3: messy and normalised passphrases derive the same KEK", () => {
   assertIsTheAlbumKey(e.unwrapAlbumKey(p.passphrase, params(p.params), recipient, wrappedNormalised));
 });
 
-// Protocol vector 4 — the AAD bytes are not exposed; the recipient_id being
+// Protocol vector 5 — the AAD bytes are not exposed; the recipient_id being
 // bound into the wrap is shown by a one-byte change failing to unwrap.
-test("protocol 4: the wrap is bound to recipient_id", () => {
+test("protocol 5: the wrap is bound to recipient_id", () => {
   const v = file.wrap.find((w) => w.params.m_cost_kib === 8)!;
   assert.equal(v.recipient_id, file.protocol.wrap_aad.recipient_id);
   const wrapped = e.WrappedKey.fromParts(unhex(v.wrapped), unhex(v.wrap_nonce), unhex(v.salt));
@@ -205,11 +264,11 @@ test("protocol 4: the wrap is bound to recipient_id", () => {
   assert.equal(caught(() => e.unwrapAlbumKey(v.passphrase, params(v.params), other, wrapped)).code, "AuthenticationFailed");
 });
 
-// Protocol vector 5 — the one the Rust verifier cannot fail: Salt is [u8; 16]
+// Protocol vector 6 — the one the Rust verifier cannot fail: Salt is [u8; 16]
 // there. From JavaScript a 32-byte salt is representable, and must be refused
 // at fromParts, before any KDF runs.
 for (const v of file.protocol.wrap_salt_length) {
-  test(`protocol 5: ${v.name} — ${v.expect}`, () => {
+  test(`protocol 6: ${v.name} — ${v.expect}`, () => {
     const salt = unhex(v.salt);
     if (v.expect === "accept") {
       const wrapped = e.WrappedKey.fromParts(unhex(v.wrapped!), unhex(v.wrap_nonce), salt);
