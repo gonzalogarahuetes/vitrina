@@ -12,7 +12,7 @@ This specification is normative and self-contained. An implementer should be abl
 
 MUST, MUST NOT, SHOULD, and MAY carry their usual RFC 2119 meanings.
 
-**This document is parsed by the test suite.** A consistency check reads §9's coverage list and §9.1's protocol-vector list at test time and compares their counts and multiplicities against `spec/vectors/`. Two consequences for anyone editing here: **a spec edit is a code-affecting change** and can turn `cargo test` red, and those two numbered lists have a parse format the check depends on — reformatting them fails with a distinct "list format has changed" error rather than a count mismatch.
+**This document is parsed by the test suite.** A consistency check reads §9's coverage list and §9.1's protocol-vector list at test time and compares their counts, multiplicities, contiguity and accept/reject polarity against `spec/vectors/`. Two consequences for anyone editing here: **a spec edit is a code-affecting change** and can turn `cargo test` red, and those two numbered lists have a parse format the check depends on — reformatting them fails with a distinct "list format has changed" error rather than a count mismatch.
 
 The check is number-level. It has no opinion about which _fields_ a vector carries, so field-level completeness — the failure that left `wrap_nonce` undocumented while the file carried it — remains a human check.
 
@@ -64,7 +64,7 @@ The domain-separation strings are ASCII, without a null terminator, and are part
 
 **`K_album` is wrapped by `K_master`, never derived from it.** A derived key cannot be re-wrapped, which would make password change, recovery keys and rotation permanently impossible (brief §11). Wrapping costs 32 bytes per album.
 
-**The construction, specified 13 September 2026** — it had none, which an implementation surfaced:
+**The construction, specified 13 September 2026.** The _gap_ was surfaced by writing the album-create route, which needed to know whether the id came first; the construction itself is new here and **nothing implements it**:
 
 ```
 wrapped_key = XChaCha20-Poly1305(
@@ -78,7 +78,9 @@ wrapped_key = XChaCha20-Poly1305(
 
 **Binding `album_id` makes `albums.id` client-generated**, on the same rule as `asset_id` and `recipient_id`: a value inside an AAD must exist before the thing it authenticates is computed, so the client cannot wait for a server-assigned id. Three identifiers, three AADs, one rule.
 
-What the binding buys is worth stating, because it is not confidentiality. A wrapping moved between two albums of the same owner unwraps perfectly without it, yielding the wrong `K_album` — after which every asset in that album fails to decrypt, several layers from the cause. With the binding, the unwrap itself fails. That is §5's argument applied one level up: make the tamper fail where it happens rather than where it surfaces. Note that this is a **key-management** relationship, not a format one: the envelope has no idea where `K_album` came from, so §3 through §5 are untouched by it.
+What the binding buys is worth stating, because it is not confidentiality. A wrapping moved between two albums of the same owner unwraps perfectly without it, yielding the wrong `K_album` — after which every asset in that album fails to decrypt, several layers from the cause. With the binding, the unwrap itself fails. That is §5's argument applied one level up: make the tamper fail where it happens rather than where it surfaces.
+
+**Status, stated because the paragraphs above read like a description of running code and are not.** No implementation exercises this wrap, no vector covers it, and no anchor touches it — the XChaCha20-Poly1305 primitive is anchored by §9 category 7, but this _composition_ is unverified. **A round-trip vector for this wrap is required before any account exists, and joins §9's coverage list when the code that generates it does.** It is deliberately _not_ in that list today: the list is read by the consistency check at test time (§0), so a category nothing can satisfy would hold the build red for a gap that is recorded rather than a defect. The reasoning is category 9's, for the passphrase wrap: the construction is format-permanent, the relay cannot re-wrap what it cannot read, and an independent implementation built from this document alone (§0) would otherwise implement bytes nobody has checked. Note that §6.6's "not yet fully specified" refers to the **Argon2id parameters** pending V.1, not to this construction; the two are separate and were reading as one. Note that this is a **key-management** relationship, not a format one: the envelope has no idea where `K_album` came from, so §3 through §5 are untouched by it.
 
 ### 2.1 Why derive per-asset keys at all
 
@@ -159,6 +161,8 @@ Implementations SHOULD expose the half-open form internally and convert only whe
 This is what makes an HTTP `Range` request sufficient to fetch and independently decrypt any chunk of an asset stored as a **single** object. It is why video seeking in Phase 3 requires no format change, and why storage is one object per asset rather than one per chunk.
 
 An implementation MUST be able to decrypt chunk _i_ given only `K_asset`, the 64-byte header, and the bytes of chunk _i_. If your implementation cannot do that, it is not conforming, and video will not work later.
+
+**An implementation that does not _expose_ this is not thereby non-conforming — but no consumer of it has the property.** As of Phase 0 that applies to the Rust crate's own public surface as much as to its WASM binding: `decrypt_chunk` is crate-private and neither `Header` nor the key types are exported, so a Rust consumer has the same whole-object API a JavaScript one does. The requirement is satisfied _inside_ the crate and is reachable from nowhere outside it.
 
 **A binding that does not expose this is not a conformance failure of the implementation behind it — but a client reaching that implementation only through such a binding does not have the property.** As of Phase 0 that is the actual situation: `crates/envelope` satisfies the requirement and its WASM binding does not surface it, because nothing in Phase 1 needs random access. Phase 3 requires a public entry point. Recorded so "the crate conforms" is not mistaken for "the client can seek".
 
@@ -268,7 +272,7 @@ Because the server stores `wrapped`, anyone with database access can mount an of
 1. Unicode NFKD
 2. Remove every character whose **Canonical_Combining_Class is non-zero**. **Not** General_Category = Mark
 3. Apply the **unconditional** lowercase mapping. **Context-sensitive mappings MUST NOT be used**
-4. Collapse runs of whitespace to a single `U+0020`, and trim
+4. Collapse runs of characters with the Unicode **`White_Space`** property to a single `U+0020`, and trim the same. **Not** ASCII space and tab alone — `U+0085`, `U+2028` and `U+2029` are included, and a document that says only "whitespace" leaves the reference implementation's choice deciding a permanent interop question
 
 Steps 2 and 3 are pinned to Unicode properties rather than to a language's standard library, because the libraries disagree and the convenient function is the wrong one in both cases.
 
@@ -400,17 +404,18 @@ The relay learns nothing about filenames or image dimensions either way. The cos
 
 A reader MUST refuse to decrypt and surface a clear error if any of the following holds:
 
-| Condition                                                                        | Reason                                                     |
-| -------------------------------------------------------------------------------- | ---------------------------------------------------------- |
-| Input shorter than 64 bytes                                                      | No complete header                                         |
-| `magic` ≠ `VTRN`                                                                 | Not a Vitrina envelope                                     |
-| `version` is not one the reader implements                                       | Unknown format                                             |
-| `cipher` is not one the reader implements — version 1 readers accept only `0x01` | Unknown algorithm                                          |
-| `reserved` ≠ `0x0000`                                                            | Reserved space in use by a format the reader does not know |
-| `padding` is not all zero                                                        | As above                                                   |
-| `plaintext_length` = 0                                                           | §3.2 — a zero-length asset is invalid                      |
-| `chunk_size` = 0                                                                 | Would make `chunk_count` undefined                         |
-| Object length ≠ `total_object_size` (§3.2), in either direction                  | Truncation and trailing-garbage defence — see below        |
+| Condition                                                                        | Reason                                                                                                     |
+| -------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| Input shorter than 64 bytes                                                      | No complete header                                                                                         |
+| `magic` ≠ `VTRN`                                                                 | Not a Vitrina envelope                                                                                     |
+| `version` is not one the reader implements                                       | Unknown format                                                                                             |
+| `cipher` is not one the reader implements — version 1 readers accept only `0x01` | Unknown algorithm                                                                                          |
+| `reserved` ≠ `0x0000`                                                            | Reserved space in use by a format the reader does not know                                                 |
+| `padding` is not all zero                                                        | As above                                                                                                   |
+| `plaintext_length` = 0                                                           | §3.2 — a zero-length asset is invalid                                                                      |
+| `chunk_size` = 0                                                                 | Would make `chunk_count` undefined                                                                         |
+| Object length ≠ `total_object_size` (§3.2), in either direction                  | Truncation and trailing-garbage defence — see below                                                        |
+| `total_object_size` (§3.2) overflows `u64`                                       | A header describing an object that cannot exist. Rejected rather than saturated — see the width note below |
 
 The last row is the only condition here not derivable from the header alone, and it is load-bearing: **§5's truncation defence depends on it.** The AAD binds each chunk to the header and to its index, so a missing final chunk leaves every _remaining_ chunk authenticating perfectly — nothing in the AEAD notices that an object is short. Only comparing the object's actual length against the derived total catches it. An implementer who builds §8's header checks and omits this has the vulnerability §5 says is closed.
 
@@ -477,6 +482,8 @@ Every instance below was found by review rather than by test, which is why this 
 
 Only two of these are envelope concerns. The rest are protocol-adjacent and belong in `spec/vectors/` regardless, per the scope note above.
 
+**Every vector whose salt is actually consumed MUST carry a different one.** Vectors 4, 6 and 7 and both of category 9's parameter sets each take a distinct 16-byte salt. **Vector 3's three entries are out of scope and stay as they are**: an empty-after-normalisation passphrase is rejected before the KDF runs, so no KEK is derived and a different salt would change nothing — varying it would be motion without coverage. The rule is about salts a derivation reads, not salts a vector happens to carry. Stated because the file did not: every salt in it was the same 16 bytes, which means **nothing in the published set distinguishes an implementation that reads the salt field from one that hardcodes the value it first saw.** That is vector 7's own hole reproduced — a partial implementation passing everything because no vector varies the thing it ignores — and the fix is free, since the salts are arbitrary bytes. The same rule applies to any future vector carrying a per-row value _that the derivation consumes_: vary it, or the vector cannot catch a reader that does not read it. **Note this is field-level and the consistency check cannot enforce it** — that check compares counts, multiplicities, contiguity and polarity, and has no opinion about field values. The only mechanical guard is a harness test that varies salts deliberately.
+
 **Required protocol vectors**, in addition to §9's envelope categories:
 
 1. A token in both forms — 32 raw bytes and its canonical 43-character base64url — with the expected SHA-256 of the raw bytes
@@ -485,7 +492,7 @@ Only two of these are envelope concerns. The rest are protocol-adjacent and belo
 4. A passphrase containing diacritics, mixed case and irregular whitespace, with its normalised form, the expected KEK under a fixed salt and parameters, **and a `wrapped` blob with its 24-byte `wrap_nonce` — `K_album` wrapped under that KEK, with the vector's own salt and the same `recipient_id` as vector 5**. The nonce is not optional and is easy to omit from a description: §6.2 makes it mandatory, and without it a consumer has a blob it cannot open. One `recipient_id` across the file is one thing to get wrong rather than three, and it must be named here because an independent implementer cannot guess it: the wrap AAD is `"vitrina-wrap-v1" ‖ recipient_id` (§6.2), so a different value yields a different blob. The blob is what makes the KEK externally checkable: unwrap it and assert the result is the album key. Without it a consumer can only demonstrate that two spellings agree, not that either derived the value specified here
 5. A `recipient_id` with the expected 31-byte AAD, hex-encoded
 6. An Argon2id wrap using a 16-byte salt, asserted to succeed, and one using a 32-byte salt, asserted to be rejected before it reaches the KDF
-7. **A passphrase containing a spacing combining mark — `General_Category = Mc`, `Canonical_Combining_Class = 0`, such as `U+0915 U+093E` — asserted to survive normalisation intact and produce a specific KEK, carrying a `wrapped` blob and its `wrap_nonce` on the same terms as vector 4 — same `recipient_id`, its own salt.** Every other passphrase in this list is ASCII or carries only CCC ≠ 0 marks, so nothing else catches an implementation that **over-strips**: one filtering on `General_Category = M` removes the matra, derives a different KEK, and passes every other vector here. That is not a hypothetical divergence — it is the bug the reference implementation carried until 12 September 2026, found by reading its source rather than by any test. This vector exists so the next one is found by CI.
+7. **A passphrase containing a spacing combining mark — `General_Category = Mc`, `Canonical_Combining_Class = 0`, such as `U+0915 U+093E` — asserted to survive normalisation intact and produce a specific KEK, carrying a `wrapped` blob and its `wrap_nonce` on the same terms as vector 4 — same `recipient_id`, **a salt distinct from every other in the file**.** Every other passphrase in this list is ASCII or carries only CCC ≠ 0 marks, so nothing else catches an implementation that **over-strips**: one filtering on `General_Category = M` removes the matra, derives a different KEK, and passes every other vector here. That is not a hypothetical divergence — it is the bug the reference implementation carried until 12 September 2026, found by reading its source rather than by any test. This vector exists so the next one is found by CI.
 
 ### 9.2 Self-generated vectors cannot catch a wrong primitive
 
