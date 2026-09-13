@@ -62,7 +62,23 @@ K_album  (32 bytes, random, one per album)
 
 The domain-separation strings are ASCII, without a null terminator, and are part of the format. Changing one is a breaking change.
 
-**`K_album` is wrapped by `K_master`, never derived from it.** A derived key cannot be re-wrapped, which would make password change, recovery keys and rotation permanently impossible (brief §11). Wrapping costs 32 bytes per album. Note that this is a **key-management** relationship, not a format one: the envelope has no idea where `K_album` came from, so §3 through §5 are untouched by it.
+**`K_album` is wrapped by `K_master`, never derived from it.** A derived key cannot be re-wrapped, which would make password change, recovery keys and rotation permanently impossible (brief §11). Wrapping costs 32 bytes per album.
+
+**The construction, specified 13 September 2026** — it had none, which an implementation surfaced:
+
+```
+wrapped_key = XChaCha20-Poly1305(
+                  key   = K_master,
+                  nonce = wrap_nonce (24 random bytes, fresh per album),
+                  msg   = K_album,
+                  aad   = "vitrina-album-wrap-v1" ‖ album_id)
+```
+
+`wrapped_key` is 48 bytes — `K_album` (32) plus the Poly1305 tag (16) — and `wrap_nonce` is 24, the same arithmetic as §6.2's passphrase wrap and for the same reasons. The domain string is 21 ASCII bytes, no null terminator and no length prefix; `album_id` is the **16 raw UUID bytes**, never its 36-character text form. The AAD is therefore exactly 37 bytes.
+
+**Binding `album_id` makes `albums.id` client-generated**, on the same rule as `asset_id` and `recipient_id`: a value inside an AAD must exist before the thing it authenticates is computed, so the client cannot wait for a server-assigned id. Three identifiers, three AADs, one rule.
+
+What the binding buys is worth stating, because it is not confidentiality. A wrapping moved between two albums of the same owner unwraps perfectly without it, yielding the wrong `K_album` — after which every asset in that album fails to decrypt, several layers from the cause. With the binding, the unwrap itself fails. That is §5's argument applied one level up: make the tamper fail where it happens rather than where it surfaces. Note that this is a **key-management** relationship, not a format one: the envelope has no idea where `K_album` came from, so §3 through §5 are untouched by it.
 
 ### 2.1 Why derive per-asset keys at all
 

@@ -149,7 +149,7 @@ Phase 0 is done when all of the following are true. Not "mostly."
 - [ ] The encryption spec has been corrected to match the implementation exactly, with every ambiguity found during C.1–C.8 resolved in the document
 - [x] Exported JSON vectors live in `spec/vectors/` and CI runs against them — **pending regeneration**: the spec now specifies 15 envelope categories and 7 protocol vectors and the committed file carries fewer
 - [ ] Repo skeleton exists, CI is green, `docker-compose` brings up Postgres and an S3-compatible store
-- [ ] API surface sketch written (B.6) — PR1 and PR2 shipped; **PR2b–PR5 outstanding, and they are Phase 1 work**
+- [x] API surface sketch written (B.6) — **all six parts, 13 September 2026.** 22 routes plus `/health`, each with a path, scheme, body, success shape and error list; §11.8 is the single enumeration. The checklist is superseded and deleted
 - [x] Onboarding copy written (B.7) — **done**, brief §16
 
 The sixth item is the one most likely to be skipped and the most valuable. You will find ambiguities. Fix the document, not just the code.

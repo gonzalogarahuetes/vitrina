@@ -2,7 +2,7 @@
 
 **Version:** 1
 **Status:** Draft for review · last updated 11 August 2026 · §4 corrected, §8 added
-**Companion to:** `vitrina-encryption-spec.md`, `vitrina-project-brief.md` §6 #7
+**Companion to:** `vitrina-encryption-spec.md`, `vitrina-project-brief.md` §6.7
 
 ---
 
@@ -96,6 +96,8 @@ The payload omits `key`:
 ```
 https://{relay}/v/#v=1&a={album}&t={token}
 ```
+
+**The payload does NOT carry `recipient_id`, and that is deliberate.** A passphrase recipient needs it — it is inside the wrap AAD (`"vitrina-wrap-v1" ‖ recipient_id`, encryption spec §6.2), so no unwrap is possible without it — and they get it from the key-material route that hands back the wrapped blob, which they must call anyway. Adding it here would duplicate a value the relay already returns, and §6 makes any added field a version increment. A QR recipient needs it not at all: their key is in the payload rather than wrapped, so there is no AAD to reconstruct. _Stated 13 September 2026 because the API document had to ask, and a reader could not tell from §1 whether the omission was a decision._
 
 The recipient receives the link (or scans a QR of it) **and, separately, a 5-word passphrase**. The client fetches the wrapped key, salt, and Argon2id parameters from the relay, derives the KEK, and unwraps `K_album` per encryption spec §6.2.
 

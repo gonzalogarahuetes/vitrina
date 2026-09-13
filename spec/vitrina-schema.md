@@ -16,15 +16,15 @@ Reasoning lives in brief §9.1 (why two auth mechanisms), §9.2 (what is deliber
 
 ## 1. Conventions
 
-| Convention            | Rule                                                                                                                           |
-| --------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| Identifiers           | UUIDv4 in `uuid` columns, everywhere                                                                                           |
-| Timestamps            | `timestamptz` always, never `timestamp`                                                                                        |
-| ID generation         | Server-assigned (`gen_random_uuid()`) **except** `media.id` and `recipients.id`, which are client-supplied with **no default** |
-| Enumerations          | `text` plus a `CHECK`, not native Postgres `ENUM` — a provisional schema needs values that are cheap to change                 |
-| Token hashes          | **SHA-256 over the 32 raw token bytes**, never over any textual encoding of them. Stored `bytea` (32 bytes). See §6            |
-| Password / passphrase | Argon2id, never SHA-256                                                                                                        |
-| Deletion              | `ON DELETE CASCADE` on every foreign key — see §5, and the constraint it does _not_ satisfy                                    |
+| Convention            | Rule                                                                                                                                                                                                                  |
+| --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Identifiers           | UUIDv4 in `uuid` columns, everywhere                                                                                                                                                                                  |
+| Timestamps            | `timestamptz` always, never `timestamp`                                                                                                                                                                               |
+| ID generation         | Server-assigned (`gen_random_uuid()`) **except** `albums.id`, `media.id` and `recipients.id`, which are client-supplied with **no default**. All three are inside an AAD, which is the rule rather than a coincidence |
+| Enumerations          | `text` plus a `CHECK`, not native Postgres `ENUM` — a provisional schema needs values that are cheap to change                                                                                                        |
+| Token hashes          | **SHA-256 over the 32 raw token bytes**, never over any textual encoding of them. Stored `bytea` (32 bytes). See §6                                                                                                   |
+| Password / passphrase | Argon2id, never SHA-256                                                                                                                                                                                               |
+| Deletion              | `ON DELETE CASCADE` on every foreign key — see §5, and the constraint it does _not_ satisfy                                                                                                                           |
 
 **The two client-generated IDs are not a style choice.** `media.id` _is_ the envelope's `asset_id`, fixed before encryption begins. `recipients.id` sits inside the wrap AAD (`"vitrina-wrap-v1" ‖ recipient_id`, encryption spec §6.2), so the client must know it before it can compute `wrapped`. A `DEFAULT gen_random_uuid()` on either column produces blobs that cannot be unwrapped, works fine for QR recipients, and fails as an opaque AEAD error.
 
@@ -176,27 +176,31 @@ CHECK (
 
 ### `albums`
 
-| Column       | Type          | Constraints                     |
-| ------------ | ------------- | ------------------------------- |
-| `id`         | `uuid`        | PK, default `gen_random_uuid()` |
-| `owner_id`   | `uuid`        | NOT NULL, FK → `owners(id)`     |
-| `title`      | `text`        | NOT NULL                        |
-| `created_at` | `timestamptz` | NOT NULL, default `now()`       |
+| Column        | Type          | Constraints                                                                                                                                                                                                |
+| ------------- | ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `id`          | `uuid`        | PK, **no default** — client-supplied. **Changed 13 September 2026**: it is inside the album-wrap AAD (encryption spec §2), so the client must hold it before wrapping. A Phase 1 `ALTER` drops the default |
+| `owner_id`    | `uuid`        | NOT NULL, FK → `owners(id)`                                                                                                                                                                                |
+| `title`       | `text`        | NOT NULL                                                                                                                                                                                                   |
+| `wrapped_key` | `bytea`       | NOT NULL, 48 bytes — `K_album` under `K_master`. **Owed by the Phase 1 migration**; brief §11's wrap-never-derive requires it and this table had no column for it                                          |
+| `wrap_nonce`  | `bytea`       | NOT NULL, 24 bytes                                                                                                                                                                                         |
+| `created_at`  | `timestamptz` | NOT NULL, default `now()`                                                                                                                                                                                  |
 
-No `status` column — brief §9.2. `title` is plaintext on the relay; that is a recorded limitation (encryption spec §10), coupled to the unresolved owner-key question in brief §11, and it must not be read as settled design.
+No `status` column — brief §9.2. `title` is plaintext on the relay; that is a recorded limitation (encryption spec §10). **It is no longer coupled to the owner-key question** — brief §11 closed that, and closed it in the direction that dissolves the coupling, since an owner who unwraps `K_master` at login can decrypt their own titles. This note said otherwise until 13 September 2026 and contradicted §5.
+
+`CHECK (octet_length(wrapped_key) = 48 AND octet_length(wrap_nonce) = 24)`, for the same reason as `recipients` and `owner_keys`.
 
 ### `media`
 
-| Column       | Type          | Constraints                                                                                  |
-| ------------ | ------------- | -------------------------------------------------------------------------------------------- |
-| `id`         | `uuid`        | PK, **no default** — client-supplied                                                         |
-| `album_id`   | `uuid`        | NOT NULL, FK → `albums(id)`                                                                  |
-| `kind`       | `text`        | NOT NULL, `CHECK (kind IN ('photo','video'))`                                                |
-| `status`     | `text`        | NOT NULL, default `'pending'`, `CHECK (status IN ('pending','processing','ready','failed'))` |
-| `byte_size`  | `bigint`      | NULL                                                                                         |
-| `metadata`   | `bytea`       | NULL                                                                                         |
-| `created_at` | `timestamptz` | NOT NULL, default `now()`                                                                    |
-| `updated_at` | `timestamptz` | NOT NULL, default `now()`                                                                    |
+| Column       | Type          | Constraints                                                                                                                                                                                                 |
+| ------------ | ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `id`         | `uuid`        | PK, **no default** — client-supplied                                                                                                                                                                        |
+| `album_id`   | `uuid`        | NOT NULL, FK → `albums(id)`                                                                                                                                                                                 |
+| `kind`       | `text`        | NOT NULL, `CHECK (kind IN ('photo','video'))`                                                                                                                                                               |
+| `status`     | `text`        | NOT NULL, default `'pending'`, `CHECK (status IN ('pending','processing','ready','failed'))`                                                                                                                |
+| `byte_size`  | `bigint`      | NULL                                                                                                                                                                                                        |
+| `metadata`   | `bytea`       | NULL today; **the Phase 1 migration should make it `NOT NULL`** — the API posts the envelope at media create and never writes a null (api-sketch §9.6), so the nullability admits a state no route produces |
+| `created_at` | `timestamptz` | NOT NULL, default `now()`                                                                                                                                                                                   |
+| `updated_at` | `timestamptz` | NOT NULL, default `now()`                                                                                                                                                                                   |
 
 `id` is the envelope's `asset_id`. Asset and thumbnail object keys derive from it; there is no object-key column (brief §9.2).
 
