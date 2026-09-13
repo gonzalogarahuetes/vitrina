@@ -146,7 +146,7 @@
       "name": "v1 parameters (§6.2)",
       "k_album": "c0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedf",
       "passphrase": "Café Roble",
-      "salt": "8f2c41d705ba6319e47a2f90c8115d36",
+      "salt": "f8c444feca1c86082a14a9980226e065",
       "params": {
         "m_cost_kib": 65536,
         "t_cost": 3,
@@ -154,7 +154,7 @@
       },
       "recipient_id": "3f2a91c78b4e4d169f05c2a7d81e6b34",
       "wrap_nonce": "6dc41a832f0b975ea138d6724ce905bf81279a60f34dcb16",
-      "wrapped": "36446cfbf45d62c487bebeed6548dbbcc6452179f7edb09314cadcc2ab060bfdfdd881ccede87ec90e1fbba90f6c270b"
+      "wrapped": "cb82ed3e911b49edba8bd186fa957ddfe9101827569a3c8a73d8222ab59fdfb0b55de83318470496b284e371063e7126"
     },
     {
       "category": 9,
@@ -230,7 +230,7 @@
       "vector": 4,
       "passphrase": "  Café  ROBLE\tÑandú ",
       "normalized": "cafe roble nandu",
-      "salt": "8f2c41d705ba6319e47a2f90c8115d36",
+      "salt": "2e5e859f1fe50b7297b93ef660f94da3",
       "params": {
         "m_cost_kib": 8,
         "t_cost": 1,
@@ -238,8 +238,8 @@
       },
       "recipient_id": "3f2a91c78b4e4d169f05c2a7d81e6b34",
       "wrap_nonce": "6dc41a832f0b975ea138d6724ce905bf81279a60f34dcbc4",
-      "wrapped": "be9734e023eecee4a50e3efc0082bf4636769ad5ac04c8c813fa2eb032499927bb8c335d79387428fc5e3d0775c37d6e",
-      "kek": "5ec92ffd16125658113b8dd0e547535266d1cb5753dc25e78f280ce710b55cb2"
+      "wrapped": "bf9cda87d174c253711209d24eb5e2ba057e92e922c335cce65877a9e88de0e6d9c8b8f7eb8dae0d23ccd675bf9f8381",
+      "kek": "14b1862d72ed8584fb4f76c72e3aa4614cec0c7acbb54d1221cf75a92dc17ecc"
     },
     "wrap_aad": {
       "vector": 5,
@@ -252,7 +252,7 @@
         "name": "16-byte salt",
         "k_album": "c0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedf",
         "passphrase": "Café Roble",
-        "salt": "8f2c41d705ba6319e47a2f90c8115d36",
+        "salt": "d82ad68092df3e703bd26ae06bef33bf",
         "params": {
           "m_cost_kib": 8,
           "t_cost": 1,
@@ -260,7 +260,7 @@
         },
         "recipient_id": "3f2a91c78b4e4d169f05c2a7d81e6b34",
         "wrap_nonce": "6dc41a832f0b975ea138d6724ce905bf81279a60f34dcb16",
-        "wrapped": "2b2b3d1289ac7c793735f7bd2ac86824f0b44878ba75b8865acdf827ab812da67f076808904b46b8600a535b6754ba61",
+        "wrapped": "652fa178f6906c4f03674d904f26d91aee4f31cd8326f39a7b37477e58475ce327df64057aa875ebfdc184bd2ddc367e",
         "expect": "accept"
       },
       {
@@ -283,7 +283,7 @@
       "vector": 7,
       "passphrase": "का",
       "normalized": "का",
-      "salt": "8f2c41d705ba6319e47a2f90c8115d36",
+      "salt": "e470184c1054af561e09017af6f9c0cf",
       "params": {
         "m_cost_kib": 8,
         "t_cost": 1,
@@ -291,8 +291,8 @@
       },
       "recipient_id": "3f2a91c78b4e4d169f05c2a7d81e6b34",
       "wrap_nonce": "6dc41a832f0b975ea138d6724ce905bf81279a60f34dcbc7",
-      "wrapped": "30e9e1a39ca0c468758fbb4b7f585a73fe8f93d93f2cf3ce2ee664529a17e4c5c311b9611903250e055c1e44ade08e7f",
-      "kek": "a73d96cc442d900e66da149435ed73f1f38d9e3222ef065effae05141ea3654b"
+      "wrapped": "8b3f8b8204539d2177c1c10872a133e30e6a1e1056ee1383236178c492d9232f1683b841255ce6406f19cc6620d8c5a4",
+      "kek": "ff5d835b53bb3266885c565b9ff2f196357c44ed9b41c8c9ef95b17877c5259a"
     }
   }
 }

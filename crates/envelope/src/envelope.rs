@@ -542,6 +542,7 @@ mod tests {
     #[cfg(not(target_arch = "wasm32"))]
     mod properties {
         use super::*;
+        use proptest::prelude::*;
         use std::fs::File;
         use std::io::{Read, Seek, SeekFrom, Write};
         use tempfile::NamedTempFile;
@@ -611,6 +612,28 @@ mod tests {
 
                 assert_eq!(got.as_slice(), &plaintext[start..end]);
                 assert_eq!(file.bytes_read(), 64 + len);
+            }
+        }
+
+        // §9: round-trip identity for random lengths from 1 byte to several
+        // times chunk_size. Small chunk sizes so the boundary cases the fixed
+        // lengths 64/65/128/129 never reach (remainders 2..cs-1, 4+ chunks) are hit.
+        proptest! {
+            #[test]
+            fn envelope_round_trips_at_any_length(
+                chunk_size in 1u32..=64,
+                plaintext in proptest::collection::vec(any::<u8>(), 1..=320),
+            ) {
+                let header = Header::new(
+                    AssetId::from_bytes(ASSET_ID),
+                    BASE_NONCE,
+                    chunk_size,
+                    plaintext.len() as u64,
+                )
+                .unwrap();
+                let object = encrypt_with_header(&asset_key(), &header, &plaintext).unwrap();
+                prop_assert_eq!(object.len() as u64, header.total_object_size().unwrap());
+                prop_assert_eq!(decrypt(&asset_key(), &object).unwrap(), plaintext);
             }
         }
     }

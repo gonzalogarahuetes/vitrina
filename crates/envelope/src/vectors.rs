@@ -380,6 +380,20 @@ fn rfc9106_argon2id(
 const SALT: [u8; 16] = [
     0x8f, 0x2c, 0x41, 0xd7, 0x05, 0xba, 0x63, 0x19, 0xe4, 0x7a, 0x2f, 0x90, 0xc8, 0x11, 0x5d, 0x36,
 ];
+// §9.1: one salt per consumed derivation. SALT stays on category 9's low set,
+// on vector 3 (refused before the KDF) and on vector 6's 32-byte reject entry.
+const SALT_V1_PARAMS: [u8; 16] = [
+    0xf8, 0xc4, 0x44, 0xfe, 0xca, 0x1c, 0x86, 0x08, 0x2a, 0x14, 0xa9, 0x98, 0x02, 0x26, 0xe0, 0x65,
+];
+const SALT_VECTOR_4: [u8; 16] = [
+    0x2e, 0x5e, 0x85, 0x9f, 0x1f, 0xe5, 0x0b, 0x72, 0x97, 0xb9, 0x3e, 0xf6, 0x60, 0xf9, 0x4d, 0xa3,
+];
+const SALT_VECTOR_6: [u8; 16] = [
+    0xd8, 0x2a, 0xd6, 0x80, 0x92, 0xdf, 0x3e, 0x70, 0x3b, 0xd2, 0x6a, 0xe0, 0x6b, 0xef, 0x33, 0xbf,
+];
+const SALT_VECTOR_7: [u8; 16] = [
+    0xe4, 0x70, 0x18, 0x4c, 0x10, 0x54, 0xaf, 0x56, 0x1e, 0x09, 0x01, 0x7a, 0xf6, 0xf9, 0xc0, 0xcf,
+];
 /// UUIDv4 3f2a91c7-8b4e-4d16-9f05-c2a7d81e6b34.
 const RECIPIENT_ID: [u8; 16] = [
     0x3f, 0x2a, 0x91, 0xc7, 0x8b, 0x4e, 0x4d, 0x16, 0x9f, 0x05, 0xc2, 0xa7, 0xd8, 0x1e, 0x6b, 0x34,
@@ -392,11 +406,11 @@ const PASSPHRASE: &str = "Café Roble";
 /// Diacritics, mixed case, leading, doubled, tab and trailing whitespace.
 const MESSY_PASSPHRASE: &str = "  Café  ROBLE\tÑandú ";
 
-fn wrapped_for(passphrase: &str, params: Params) -> [u8; 48] {
+fn wrapped_for(passphrase: &str, salt: [u8; 16], params: Params) -> [u8; 48] {
     wrap_with_salt_and_nonce(
         &album_key(),
         passphrase,
-        Salt::from_bytes(SALT),
+        Salt::from_bytes(salt),
         params.wrap_params(),
         &RecipientId::from_bytes(RECIPIENT_ID),
         &WRAP_NONCE,
@@ -404,24 +418,24 @@ fn wrapped_for(passphrase: &str, params: Params) -> [u8; 48] {
     .unwrap()
 }
 
-fn wrap_vector(name: &str, params: Params) -> WrapVector {
+fn wrap_vector(name: &str, salt: [u8; 16], params: Params) -> WrapVector {
     WrapVector {
         category: 9,
         name: name.to_string(),
         k_album: hex(&K_ALBUM),
         passphrase: PASSPHRASE.to_string(),
-        salt: hex(&SALT),
+        salt: hex(&salt),
         params,
         recipient_id: hex(&RECIPIENT_ID),
         wrap_nonce: hex(&WRAP_NONCE),
-        wrapped: hex(&wrapped_for(PASSPHRASE, params)),
+        wrapped: hex(&wrapped_for(PASSPHRASE, salt, params)),
     }
 }
 
 fn wrap_vectors() -> Vec<WrapVector> {
     vec![
-        wrap_vector("v1 parameters (§6.2)", Params::V1),
-        wrap_vector("low parameters", Params::LOW),
+        wrap_vector("v1 parameters (§6.2)", SALT_V1_PARAMS, Params::V1),
+        wrap_vector("low parameters", SALT, Params::LOW),
     ]
 }
 
@@ -523,20 +537,25 @@ fn wrap_nonce_for(vector: u8) -> [u8; 24] {
     n
 }
 
-fn passphrase_vector(vector: u8, passphrase: &str, expected_normalized: &str) -> PassphraseVector {
+fn passphrase_vector(
+    vector: u8,
+    salt: [u8; 16],
+    passphrase: &str,
+    expected_normalized: &str,
+) -> PassphraseVector {
     let normalized: String = normalize_passphrase(passphrase);
     assert_eq!(normalized, expected_normalized);
     let kek = derive_kek(
         passphrase,
         Params::LOW.wrap_params(),
-        Salt::from_bytes(SALT),
+        Salt::from_bytes(salt),
     )
     .unwrap();
     let wrap_nonce: [u8; 24] = wrap_nonce_for(vector);
     let wrapped: [u8; 48] = wrap_with_salt_and_nonce(
         &album_key(),
         passphrase,
-        Salt::from_bytes(SALT),
+        Salt::from_bytes(salt),
         Params::LOW.wrap_params(),
         &RecipientId::from_bytes(RECIPIENT_ID),
         &wrap_nonce,
@@ -546,7 +565,7 @@ fn passphrase_vector(vector: u8, passphrase: &str, expected_normalized: &str) ->
         vector,
         passphrase: passphrase.to_string(),
         normalized,
-        salt: hex(&SALT),
+        salt: hex(&salt),
         params: Params::LOW,
         recipient_id: hex(&RECIPIENT_ID),
         wrap_nonce: hex(&wrap_nonce),
@@ -566,7 +585,12 @@ fn protocol() -> Protocol {
             empty_passphrase_vector("whitespace only", " "),
             empty_passphrase_vector("lone combining acute accent", "\u{0301}"),
         ],
-        passphrase_normalisation: passphrase_vector(4, MESSY_PASSPHRASE, "cafe roble nandu"),
+        passphrase_normalisation: passphrase_vector(
+            4,
+            SALT_VECTOR_4,
+            MESSY_PASSPHRASE,
+            "cafe roble nandu",
+        ),
         wrap_aad: WrapAadVector {
             vector: 5,
             recipient_id: hex(&RECIPIENT_ID),
@@ -575,14 +599,15 @@ fn protocol() -> Protocol {
         wrap_salt_length: vec![
             salt_length_vector(
                 "16-byte salt",
-                &SALT,
-                Some(wrapped_for(PASSPHRASE, Params::LOW)),
+                &SALT_VECTOR_6,
+                Some(wrapped_for(PASSPHRASE, SALT_VECTOR_6, Params::LOW)),
                 Expect::Accept,
             ),
             salt_length_vector("32-byte salt", &SALT.repeat(2), None, Expect::Reject),
         ],
         passphrase_spacing_mark: passphrase_vector(
             7,
+            SALT_VECTOR_7,
             SPACING_MARK_PASSPHRASE,
             SPACING_MARK_PASSPHRASE,
         ),
