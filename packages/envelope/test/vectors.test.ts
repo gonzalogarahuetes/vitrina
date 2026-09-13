@@ -63,6 +63,9 @@ interface PassphraseVector {
   normalized: string;
   salt: string;
   params: Params;
+  recipient_id: string;
+  wrap_nonce: string;
+  wrapped: string;
   kek: string;
 }
 interface VectorFile {
@@ -213,10 +216,10 @@ const protocolTests: Record<string, string> = {
   token: "protocol 1: token hashes over the 32 raw bytes and encodes canonically",
   token_noncanonical: "protocol 2: a non-canonical spelling of the same token is rejected",
   passphrase_empty: "protocol 3: passphrases that normalise to empty are rejected, not hashed",
-  passphrase_normalisation: "protocol 4: messy and normalised passphrases derive the same KEK",
+  passphrase_normalisation: "protocol 4: the committed blob unwraps under the messy passphrase and its normalised form",
   wrap_aad: "protocol 5: the wrap is bound to recipient_id",
   wrap_salt_length: "protocol 6: salt length is enforced at fromParts",
-  passphrase_spacing_mark: "protocol 7: a spacing combining mark survives normalisation",
+  passphrase_spacing_mark: "protocol 7: the committed blob unwraps under a passphrase carrying a spacing mark",
 };
 
 test("every protocol group has a test", () => {
@@ -268,17 +271,21 @@ test(protocolTests.passphrase_empty!, () => {
   }
 });
 
-// Protocol vector 4 — the KEK is not exposed, so normalisation is shown by a
-// blob wrapped under the messy spelling unwrapping under the normalised one.
-test(protocolTests.passphrase_normalisation!, () => {
-  const p = file.protocol.passphrase_normalisation;
-  const album = e.AlbumKey.fromBytes(unhex(reference.k_album));
-  const recipient = unhex(file.protocol.wrap_aad.recipient_id);
-  const wrapped = e.wrapAlbumKey(album, p.passphrase, params(p.params), recipient);
-  assertIsTheAlbumKey(e.unwrapAlbumKey(p.normalized, params(p.params), recipient, wrapped));
-  const wrappedNormalised = e.wrapAlbumKey(album, p.normalized, params(p.params), recipient);
-  assertIsTheAlbumKey(e.unwrapAlbumKey(p.passphrase, params(p.params), recipient, wrappedNormalised));
-});
+// Protocol vectors 4 and 7 — the KEK is not exposed, so the committed blob is
+// unwrapped with the vector's own inputs and must open the album key, as
+// category 9 does (§9.3). A wrong KEK fails here without any key being read.
+for (const [group, p] of [
+  ["passphrase_normalisation", file.protocol.passphrase_normalisation],
+  ["passphrase_spacing_mark", file.protocol.passphrase_spacing_mark],
+] as const) {
+  test(protocolTests[group]!, () => {
+    assert.equal(p.recipient_id, file.protocol.wrap_aad.recipient_id, "§9.1: vector 5's recipient_id");
+    const wrapped = e.WrappedKey.fromParts(unhex(p.wrapped), unhex(p.wrap_nonce), unhex(p.salt));
+    for (const passphrase of [p.passphrase, p.normalized]) {
+      assertIsTheAlbumKey(e.unwrapAlbumKey(passphrase, params(p.params), unhex(p.recipient_id), wrapped));
+    }
+  });
+}
 
 // Protocol vector 5 — the AAD bytes are not exposed; the recipient_id being
 // bound into the wrap is shown by a one-byte change failing to unwrap.
@@ -309,19 +316,3 @@ for (const v of file.protocol.wrap_salt_length) {
     }
   });
 }
-
-// Protocol vector 7 — the KEK is not exposed, so the mark surviving is shown
-// by a blob wrapped under the passphrase refusing the General_Category = M
-// stripped spelling, which is the KEK an over-stripping implementation derives.
-test(protocolTests.passphrase_spacing_mark!, () => {
-  const p = file.protocol.passphrase_spacing_mark;
-  assert.equal(p.vector, 7);
-  assert.equal(p.normalized, p.passphrase);
-  const stripped = p.passphrase.replace(/\p{M}/gu, "");
-  assert.notEqual(stripped, p.passphrase);
-  const album = e.AlbumKey.fromBytes(unhex(reference.k_album));
-  const recipient = unhex(file.protocol.wrap_aad.recipient_id);
-  const wrapped = e.wrapAlbumKey(album, p.passphrase, params(p.params), recipient);
-  assertIsTheAlbumKey(e.unwrapAlbumKey(p.normalized, params(p.params), recipient, wrapped));
-  assert.equal(caught(() => e.unwrapAlbumKey(stripped, params(p.params), recipient, wrapped)).code, "AuthenticationFailed");
-});
