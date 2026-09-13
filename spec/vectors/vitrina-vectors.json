@@ -211,6 +211,19 @@
           "p_cost": 1
         },
         "expect": "reject"
+      },
+      {
+        "vector": 3,
+        "name": "lone combining acute accent",
+        "passphrase": "́",
+        "normalized": "",
+        "salt": "8f2c41d705ba6319e47a2f90c8115d36",
+        "params": {
+          "m_cost_kib": 8,
+          "t_cost": 1,
+          "p_cost": 1
+        },
+        "expect": "reject"
       }
     ],
     "passphrase_normalisation": {
@@ -262,6 +275,18 @@
         "wrap_nonce": "6dc41a832f0b975ea138d6724ce905bf81279a60f34dcb16",
         "expect": "reject"
       }
-    ]
+    ],
+    "passphrase_spacing_mark": {
+      "vector": 7,
+      "passphrase": "का",
+      "normalized": "का",
+      "salt": "8f2c41d705ba6319e47a2f90c8115d36",
+      "params": {
+        "m_cost_kib": 8,
+        "t_cost": 1,
+        "p_cost": 1
+      },
+      "kek": "a73d96cc442d900e66da149435ed73f1f38d9e3222ef065effae05141ea3654b"
+    }
   }
 }

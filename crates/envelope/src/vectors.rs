@@ -150,6 +150,7 @@ struct Protocol {
     passphrase_normalisation: PassphraseVector,
     wrap_aad: WrapAadVector,
     wrap_salt_length: Vec<SaltLengthVector>,
+    passphrase_spacing_mark: PassphraseVector,
 }
 
 /// vitrina-schema.md §6: the hash is over the 32 raw bytes, never the string.
@@ -184,6 +185,7 @@ struct EmptyPassphraseVector {
     expect: Expect,
 }
 
+/// §9.1 vectors 4 and 7: a passphrase, its normalised form, and the KEK.
 #[derive(Serialize, Deserialize)]
 struct PassphraseVector {
     vector: u8,
@@ -525,6 +527,7 @@ fn protocol() -> Protocol {
         passphrase_empty: vec![
             empty_passphrase_vector("already empty", ""),
             empty_passphrase_vector("whitespace only", " "),
+            empty_passphrase_vector("lone combining acute accent", "\u{0301}"),
         ],
         passphrase_normalisation: PassphraseVector {
             vector: 4,
@@ -548,6 +551,31 @@ fn protocol() -> Protocol {
             ),
             salt_length_vector("32-byte salt", &SALT.repeat(2), None, Expect::Reject),
         ],
+        passphrase_spacing_mark: spacing_mark_vector(),
+    }
+}
+
+/// §9.1 vector 7. U+093E is General_Category Mc with CCC 0: NFKD leaves it,
+/// step 2 must keep it. A General_Category = M filter strips it and derives a
+/// different KEK, which is the defect this crate carried until 22 August 2026.
+const SPACING_MARK_PASSPHRASE: &str = "\u{0915}\u{093E}";
+
+fn spacing_mark_vector() -> PassphraseVector {
+    let normalized: String = normalize_passphrase(SPACING_MARK_PASSPHRASE);
+    assert_eq!(normalized, SPACING_MARK_PASSPHRASE);
+    let kek = derive_kek(
+        SPACING_MARK_PASSPHRASE,
+        Params::LOW.wrap_params(),
+        Salt::from_bytes(SALT),
+    )
+    .unwrap();
+    PassphraseVector {
+        vector: 7,
+        passphrase: SPACING_MARK_PASSPHRASE.to_string(),
+        normalized,
+        salt: hex(&SALT),
+        params: Params::LOW,
+        kek: hex(kek.expose_bytes()),
     }
 }
 
@@ -928,9 +956,11 @@ fn verify_protocol(p: &Protocol) {
 
     // §9.1 vector 3: the empty form fails the emptiness test as typed, the
     // whitespace form only after normalisation. Neither reaches Argon2id.
-    assert_eq!(p.passphrase_empty.len(), 2);
+    assert_eq!(p.passphrase_empty.len(), 3);
     assert!(p.passphrase_empty[0].passphrase.is_empty());
     assert!(!p.passphrase_empty[1].passphrase.is_empty());
+    assert!(p.passphrase_empty[1].passphrase.trim().is_empty());
+    assert!(!p.passphrase_empty[2].passphrase.trim().is_empty());
     for v in &p.passphrase_empty {
         assert_eq!((v.vector, v.expect), (3, Expect::Reject));
         assert_eq!(v.normalized, "");
@@ -979,6 +1009,17 @@ fn verify_protocol(p: &Protocol) {
             other => panic!("unexpected salt-length vector shape: {other:?}"),
         }
     }
+
+    let sm = &p.passphrase_spacing_mark;
+    assert_eq!(sm.vector, 7);
+    assert_eq!(
+        sm.normalized, sm.passphrase,
+        "the spacing mark must survive"
+    );
+    assert_eq!(normalize_passphrase(&sm.passphrase), sm.normalized);
+    let salt: Salt = Salt::from_bytes(unhex_array(&sm.salt));
+    let kek = derive_kek(&sm.passphrase, sm.params.wrap_params(), salt).unwrap();
+    assert_eq!(hex(kek.expose_bytes()), sm.kek);
 }
 
 #[test]
@@ -1100,6 +1141,7 @@ fn protocol_entries(p: &Protocol) -> Vec<Entry> {
             .iter()
             .map(|e| (e.vector, Some(e.expect))),
     );
+    v.push((p.passphrase_spacing_mark.vector, None));
     v
 }
 
