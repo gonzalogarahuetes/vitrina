@@ -236,6 +236,9 @@
         "t_cost": 1,
         "p_cost": 1
       },
+      "recipient_id": "3f2a91c78b4e4d169f05c2a7d81e6b34",
+      "wrap_nonce": "6dc41a832f0b975ea138d6724ce905bf81279a60f34dcbc4",
+      "wrapped": "be9734e023eecee4a50e3efc0082bf4636769ad5ac04c8c813fa2eb032499927bb8c335d79387428fc5e3d0775c37d6e",
       "kek": "5ec92ffd16125658113b8dd0e547535266d1cb5753dc25e78f280ce710b55cb2"
     },
     "wrap_aad": {
@@ -286,6 +289,9 @@
         "t_cost": 1,
         "p_cost": 1
       },
+      "recipient_id": "3f2a91c78b4e4d169f05c2a7d81e6b34",
+      "wrap_nonce": "6dc41a832f0b975ea138d6724ce905bf81279a60f34dcbc7",
+      "wrapped": "30e9e1a39ca0c468758fbb4b7f585a73fe8f93d93f2cf3ce2ee664529a17e4c5c311b9611903250e055c1e44ade08e7f",
       "kek": "a73d96cc442d900e66da149435ed73f1f38d9e3222ef065effae05141ea3654b"
     }
   }

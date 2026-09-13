@@ -185,7 +185,9 @@ struct EmptyPassphraseVector {
     expect: Expect,
 }
 
-/// §9.1 vectors 4 and 7: a passphrase, its normalised form, and the KEK.
+/// §9.1 vectors 4 and 7. `kek` is the known answer read from inside; `wrapped`
+/// is K_album under that KEK, checked from outside by unwrapping it (§9.3).
+/// `recipient_id` is vector 5's; `wrap_nonce` is what §6.2 needs and §9.1 omits.
 #[derive(Serialize, Deserialize)]
 struct PassphraseVector {
     vector: u8,
@@ -193,6 +195,9 @@ struct PassphraseVector {
     normalized: String,
     salt: String,
     params: Params,
+    recipient_id: String,
+    wrap_nonce: String,
+    wrapped: String,
     kek: String,
 }
 
@@ -510,16 +515,48 @@ fn empty_passphrase_vector(name: &str, passphrase: &str) -> EmptyPassphraseVecto
     }
 }
 
-fn protocol() -> Protocol {
-    let (token, token_noncanonical) = token_vectors();
-    let normalized: String = normalize_passphrase(MESSY_PASSPHRASE);
-    assert_eq!(normalized, "cafe roble nandu");
+/// §6.2: a wrap nonce is never reused under one KEK, so each vector's blob
+/// gets its own fixed nonce rather than sharing category 9's.
+fn wrap_nonce_for(vector: u8) -> [u8; 24] {
+    let mut n: [u8; 24] = WRAP_NONCE;
+    n[23] = 0xC0 + vector;
+    n
+}
+
+fn passphrase_vector(vector: u8, passphrase: &str, expected_normalized: &str) -> PassphraseVector {
+    let normalized: String = normalize_passphrase(passphrase);
+    assert_eq!(normalized, expected_normalized);
     let kek = derive_kek(
-        MESSY_PASSPHRASE,
+        passphrase,
         Params::LOW.wrap_params(),
         Salt::from_bytes(SALT),
     )
     .unwrap();
+    let wrap_nonce: [u8; 24] = wrap_nonce_for(vector);
+    let wrapped: [u8; 48] = wrap_with_salt_and_nonce(
+        &album_key(),
+        passphrase,
+        Salt::from_bytes(SALT),
+        Params::LOW.wrap_params(),
+        &RecipientId::from_bytes(RECIPIENT_ID),
+        &wrap_nonce,
+    )
+    .unwrap();
+    PassphraseVector {
+        vector,
+        passphrase: passphrase.to_string(),
+        normalized,
+        salt: hex(&SALT),
+        params: Params::LOW,
+        recipient_id: hex(&RECIPIENT_ID),
+        wrap_nonce: hex(&wrap_nonce),
+        wrapped: hex(&wrapped),
+        kek: hex(kek.expose_bytes()),
+    }
+}
+
+fn protocol() -> Protocol {
+    let (token, token_noncanonical) = token_vectors();
 
     Protocol {
         token,
@@ -529,14 +566,7 @@ fn protocol() -> Protocol {
             empty_passphrase_vector("whitespace only", " "),
             empty_passphrase_vector("lone combining acute accent", "\u{0301}"),
         ],
-        passphrase_normalisation: PassphraseVector {
-            vector: 4,
-            passphrase: MESSY_PASSPHRASE.to_string(),
-            normalized,
-            salt: hex(&SALT),
-            params: Params::LOW,
-            kek: hex(kek.expose_bytes()),
-        },
+        passphrase_normalisation: passphrase_vector(4, MESSY_PASSPHRASE, "cafe roble nandu"),
         wrap_aad: WrapAadVector {
             vector: 5,
             recipient_id: hex(&RECIPIENT_ID),
@@ -551,7 +581,11 @@ fn protocol() -> Protocol {
             ),
             salt_length_vector("32-byte salt", &SALT.repeat(2), None, Expect::Reject),
         ],
-        passphrase_spacing_mark: spacing_mark_vector(),
+        passphrase_spacing_mark: passphrase_vector(
+            7,
+            SPACING_MARK_PASSPHRASE,
+            SPACING_MARK_PASSPHRASE,
+        ),
     }
 }
 
@@ -559,25 +593,6 @@ fn protocol() -> Protocol {
 /// step 2 must keep it. A General_Category = M filter strips it and derives a
 /// different KEK, which is the defect this crate carried until 22 August 2026.
 const SPACING_MARK_PASSPHRASE: &str = "\u{0915}\u{093E}";
-
-fn spacing_mark_vector() -> PassphraseVector {
-    let normalized: String = normalize_passphrase(SPACING_MARK_PASSPHRASE);
-    assert_eq!(normalized, SPACING_MARK_PASSPHRASE);
-    let kek = derive_kek(
-        SPACING_MARK_PASSPHRASE,
-        Params::LOW.wrap_params(),
-        Salt::from_bytes(SALT),
-    )
-    .unwrap();
-    PassphraseVector {
-        vector: 7,
-        passphrase: SPACING_MARK_PASSPHRASE.to_string(),
-        normalized,
-        salt: hex(&SALT),
-        params: Params::LOW,
-        kek: hex(kek.expose_bytes()),
-    }
-}
 
 fn ascending(len: u64) -> Vec<u8> {
     (0..len).map(|b| b as u8).collect()
@@ -980,6 +995,21 @@ fn verify_protocol(p: &Protocol) {
     assert_eq!(hex(kek.expose_bytes()), pn.kek);
     let kek_from_normalized = derive_kek(&pn.normalized, pn.params.wrap_params(), salt).unwrap();
     assert_eq!(kek_from_normalized.expose_bytes(), kek.expose_bytes());
+    assert_eq!(
+        pn.recipient_id, p.wrap_aad.recipient_id,
+        "§9.1: vector 5's recipient_id"
+    );
+    for passphrase in [&pn.passphrase, &pn.normalized] {
+        verify_wrap(
+            &hex(&K_ALBUM),
+            passphrase,
+            &pn.salt,
+            pn.params,
+            &pn.recipient_id,
+            &pn.wrap_nonce,
+            &pn.wrapped,
+        );
+    }
 
     let a = &p.wrap_aad;
     assert_eq!(a.vector, 5);
@@ -1020,6 +1050,19 @@ fn verify_protocol(p: &Protocol) {
     let salt: Salt = Salt::from_bytes(unhex_array(&sm.salt));
     let kek = derive_kek(&sm.passphrase, sm.params.wrap_params(), salt).unwrap();
     assert_eq!(hex(kek.expose_bytes()), sm.kek);
+    assert_eq!(
+        sm.recipient_id, p.wrap_aad.recipient_id,
+        "§9.1: vector 5's recipient_id"
+    );
+    verify_wrap(
+        &hex(&K_ALBUM),
+        &sm.passphrase,
+        &sm.salt,
+        sm.params,
+        &sm.recipient_id,
+        &sm.wrap_nonce,
+        &sm.wrapped,
+    );
 }
 
 #[test]
