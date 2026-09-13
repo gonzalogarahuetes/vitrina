@@ -80,7 +80,7 @@ function assertIsTheAlbumKey(key: AlbumKey) {
 test("vector file targets envelope version 1", () => {
   assert.equal(file.envelope_version, 1);
   assert.deepEqual(file.envelope.map((v) => v.category), [1, 2, 3, 4]);
-  assert.deepEqual(file.envelope_negative.map((v) => v.category), [10, 11, 12, 13]);
+  assert.deepEqual(file.envelope_negative.map((v) => v.category), [10, 11, 12, 13, 14, 15]);
 });
 
 // Categories 1–4 — decrypt direction is byte-exact. The encrypt direction
@@ -112,18 +112,49 @@ for (const v of file.envelope) {
   });
 }
 
-// Categories 10–13 — every negative is rejected. Category 13 must also be
-// rejected for the §8 reason a caller can act on, not as an opaque failure.
+/** §3.2's total_object_size, from the header's own fields (all little-endian). */
+function declaredTotal(object: Uint8Array): number {
+  const view = new DataView(object.buffer, object.byteOffset, object.byteLength);
+  const chunkSize = view.getUint32(24, true);
+  const plaintextLength = Number(view.getBigUint64(28, true));
+  return 64 + plaintextLength + 16 * Math.ceil(plaintextLength / chunkSize);
+}
+
+interface NegativeExpectation {
+  code: string;
+  reason?: string;
+  fields?: (object: Uint8Array) => Record<string, number>;
+}
+
+// Categories 10–15 — the §8 rejection each must surface, no default. 13, 14
+// and 15 are header and length conditions a caller can act on; the rest are
+// AEAD failures and carry no reason. 15's lengths match the crate's assertion.
+const negativeExpectations: Record<number, NegativeExpectation> = {
+  10: { code: "AuthenticationFailed" },
+  11: { code: "AuthenticationFailed" },
+  12: { code: "AuthenticationFailed" },
+  13: { code: "Header", reason: "WrongVersion", fields: (o) => ({ version: o[4]! }) },
+  14: { code: "Header", reason: "WrongCipher", fields: (o) => ({ cipher: o[5]! }) },
+  15: { code: "ObjectTooShort", fields: (o) => ({ expected: declaredTotal(o), got: o.length }) },
+};
+
+test("every envelope_negative category has an expectation row", () => {
+  const missing = file.envelope_negative.map((v) => v.category).filter((c) => !(c in negativeExpectations));
+  assert.equal(missing.length, 0, `no expectation defined for category ${missing.join(", ")}`);
+});
+
 for (const v of file.envelope_negative) {
   test(`category ${v.category}: ${v.name} — rejected`, () => {
     assert.equal(v.expect, "reject");
+    const expected = negativeExpectations[v.category];
+    assert.ok(expected, `no expectation defined for category ${v.category}`);
     const key = e.AlbumKey.fromBytes(unhex(v.k_album));
-    const err = caught(() => e.decryptAsset(key, unhex(v.asset_id), unhex(v.object)));
-    if (v.category === 13) {
-      assert.equal(err.code, "Header");
-      assert.equal(err.reason, "WrongVersion");
-    } else {
-      assert.equal(err.code, "AuthenticationFailed");
+    const object = unhex(v.object);
+    const err = caught(() => e.decryptAsset(key, unhex(v.asset_id), object));
+    assert.equal(err.code, expected.code);
+    assert.equal(err.reason, expected.reason);
+    for (const [k, value] of Object.entries(expected.fields?.(object) ?? {})) {
+      assert.equal((err as unknown as Record<string, unknown>)[k], value, k);
     }
   });
 }
