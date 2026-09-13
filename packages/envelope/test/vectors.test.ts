@@ -57,6 +57,14 @@ interface EmptyPassphraseVector {
   params: Params;
   expect: "accept" | "reject";
 }
+interface PassphraseVector {
+  vector: number;
+  passphrase: string;
+  normalized: string;
+  salt: string;
+  params: Params;
+  kek: string;
+}
 interface VectorFile {
   envelope_version: number;
   envelope: EnvelopeVector[];
@@ -68,9 +76,10 @@ interface VectorFile {
     token: { vector: number; token_raw: string; token_base64url: string; sha256: string; expect: string };
     token_noncanonical: { vector: number; token_base64url: string; expect: string };
     passphrase_empty: EmptyPassphraseVector[];
-    passphrase_normalisation: { vector: number; passphrase: string; normalized: string; salt: string; params: Params; kek: string };
+    passphrase_normalisation: PassphraseVector;
     wrap_aad: { vector: number; recipient_id: string; aad: string };
     wrap_salt_length: SaltLengthVector[];
+    passphrase_spacing_mark: PassphraseVector;
   };
 }
 
@@ -197,6 +206,24 @@ for (const v of file.wrap) {
   });
 }
 
+// §9: every vector against every implementation. Each group under
+// file.protocol names the test below that exercises it; a group with no row
+// fails by name, as the negatives table does for categories.
+const protocolTests: Record<string, string> = {
+  token: "protocol 1: token hashes over the 32 raw bytes and encodes canonically",
+  token_noncanonical: "protocol 2: a non-canonical spelling of the same token is rejected",
+  passphrase_empty: "protocol 3: passphrases that normalise to empty are rejected, not hashed",
+  passphrase_normalisation: "protocol 4: messy and normalised passphrases derive the same KEK",
+  wrap_aad: "protocol 5: the wrap is bound to recipient_id",
+  wrap_salt_length: "protocol 6: salt length is enforced at fromParts",
+  passphrase_spacing_mark: "protocol 7: a spacing combining mark survives normalisation",
+};
+
+test("every protocol group has a test", () => {
+  const missing = Object.keys(file.protocol).filter((k) => !(k in protocolTests));
+  assert.equal(missing.length, 0, `no test defined for protocol group ${missing.join(", ")}`);
+});
+
 // §9.1 protocol vectors 1 and 2 — vitrina-schema.md §6. The crate has no token
 // code, so this is the TypeScript rule itself, run against the vector.
 function strictDecodeToken(s: string): Uint8Array | undefined {
@@ -206,7 +233,7 @@ function strictDecodeToken(s: string): Uint8Array | undefined {
   return new Uint8Array(bytes);
 }
 
-test("protocol 1: token hashes over the 32 raw bytes and encodes canonically", () => {
+test(protocolTests.token!, () => {
   const t = file.protocol.token;
   assert.equal(t.expect, "accept");
   const raw = unhex(t.token_raw);
@@ -215,7 +242,7 @@ test("protocol 1: token hashes over the 32 raw bytes and encodes canonically", (
   assert.equal(hex(strictDecodeToken(t.token_base64url)!), t.token_raw);
 });
 
-test("protocol 2: a non-canonical spelling of the same token is rejected", () => {
+test(protocolTests.token_noncanonical!, () => {
   const t = file.protocol.token_noncanonical;
   assert.equal(t.expect, "reject");
   // A lenient decoder yields the same bytes — that is exactly why rule 3 re-encodes.
@@ -226,7 +253,7 @@ test("protocol 2: a non-canonical spelling of the same token is rejected", () =>
 // Protocol vector 3 — §6.3: empty after normalisation is refused before any
 // KDF runs, on both the wrap and the unwrap path (§9.3: unwrapAlbumKey is the
 // public entry point). Whatever entries the file carries are all run.
-test("protocol 3: passphrases that normalise to empty are rejected, not hashed", () => {
+test(protocolTests.passphrase_empty!, () => {
   assert.ok(file.protocol.passphrase_empty.length > 0);
   const stored = file.wrap.find((w) => w.params.m_cost_kib === 8)!;
   const album = e.AlbumKey.fromBytes(unhex(stored.k_album));
@@ -243,7 +270,7 @@ test("protocol 3: passphrases that normalise to empty are rejected, not hashed",
 
 // Protocol vector 4 — the KEK is not exposed, so normalisation is shown by a
 // blob wrapped under the messy spelling unwrapping under the normalised one.
-test("protocol 4: messy and normalised passphrases derive the same KEK", () => {
+test(protocolTests.passphrase_normalisation!, () => {
   const p = file.protocol.passphrase_normalisation;
   const album = e.AlbumKey.fromBytes(unhex(reference.k_album));
   const recipient = unhex(file.protocol.wrap_aad.recipient_id);
@@ -255,7 +282,7 @@ test("protocol 4: messy and normalised passphrases derive the same KEK", () => {
 
 // Protocol vector 5 — the AAD bytes are not exposed; the recipient_id being
 // bound into the wrap is shown by a one-byte change failing to unwrap.
-test("protocol 5: the wrap is bound to recipient_id", () => {
+test(protocolTests.wrap_aad!, () => {
   const v = file.wrap.find((w) => w.params.m_cost_kib === 8)!;
   assert.equal(v.recipient_id, file.protocol.wrap_aad.recipient_id);
   const wrapped = e.WrappedKey.fromParts(unhex(v.wrapped), unhex(v.wrap_nonce), unhex(v.salt));
@@ -268,7 +295,7 @@ test("protocol 5: the wrap is bound to recipient_id", () => {
 // there. From JavaScript a 32-byte salt is representable, and must be refused
 // at fromParts, before any KDF runs.
 for (const v of file.protocol.wrap_salt_length) {
-  test(`protocol 6: ${v.name} — ${v.expect}`, () => {
+  test(`${protocolTests.wrap_salt_length!}: ${v.name} — ${v.expect}`, () => {
     const salt = unhex(v.salt);
     if (v.expect === "accept") {
       const wrapped = e.WrappedKey.fromParts(unhex(v.wrapped!), unhex(v.wrap_nonce), salt);
@@ -282,3 +309,19 @@ for (const v of file.protocol.wrap_salt_length) {
     }
   });
 }
+
+// Protocol vector 7 — the KEK is not exposed, so the mark surviving is shown
+// by a blob wrapped under the passphrase refusing the General_Category = M
+// stripped spelling, which is the KEK an over-stripping implementation derives.
+test(protocolTests.passphrase_spacing_mark!, () => {
+  const p = file.protocol.passphrase_spacing_mark;
+  assert.equal(p.vector, 7);
+  assert.equal(p.normalized, p.passphrase);
+  const stripped = p.passphrase.replace(/\p{M}/gu, "");
+  assert.notEqual(stripped, p.passphrase);
+  const album = e.AlbumKey.fromBytes(unhex(reference.k_album));
+  const recipient = unhex(file.protocol.wrap_aad.recipient_id);
+  const wrapped = e.wrapAlbumKey(album, p.passphrase, params(p.params), recipient);
+  assertIsTheAlbumKey(e.unwrapAlbumKey(p.normalized, params(p.params), recipient, wrapped));
+  assert.equal(caught(() => e.unwrapAlbumKey(stripped, params(p.params), recipient, wrapped)).code, "AuthenticationFailed");
+});
