@@ -76,10 +76,34 @@ impl RecipientId {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct AlbumId([u8; 16]);
+
+impl AlbumId {
+    pub const LEN: usize = 16;
+
+    pub fn from_bytes(bytes: [u8; Self::LEN]) -> Self {
+        AlbumId(bytes)
+    }
+    pub fn as_bytes(&self) -> &[u8; Self::LEN] {
+        &self.0
+    }
+
+    pub fn try_from_slice(bytes: &[u8]) -> Result<AlbumId, WrongLength> {
+        let bytes: [u8; Self::LEN] = bytes.try_into().map_err(|_| WrongLength {
+            expected: Self::LEN,
+            got: bytes.len(),
+        })?;
+        Ok(AlbumId::from_bytes(bytes))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::{
         AlbumKey, AssetId, RecipientId, Salt, WrappedKey, WrongLength,
+        ids::AlbumId,
+        keys::MasterKey,
         test_fixtures::{ASSET_ID, RECIPIENT_ID, SALT},
     };
     #[cfg(target_arch = "wasm32")]
@@ -221,5 +245,7 @@ mod tests {
         assert_eq!(RecipientId::LEN, 16); // §6.2
         assert_eq!(WrappedKey::WRAPPED_LEN, 48); // §6.2 — K_album + tag
         assert_eq!(WrappedKey::WRAP_NONCE_LEN, 24); // §6.2
+        assert_eq!(MasterKey::LEN, 32); // §2
+        assert_eq!(AlbumId::LEN, 16); // §2 — 16 raw UUID bytes
     }
 }
