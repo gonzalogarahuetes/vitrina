@@ -102,6 +102,7 @@ impl AlbumId {
 mod tests {
     use crate::{
         AlbumKey, AssetId, RecipientId, Salt, WrappedKey, WrongLength,
+        album_wrap::ALBUM_WRAP_AAD_LABEL,
         ids::AlbumId,
         keys::MasterKey,
         test_fixtures::{ASSET_ID, RECIPIENT_ID, SALT},
@@ -247,5 +248,6 @@ mod tests {
         assert_eq!(WrappedKey::WRAP_NONCE_LEN, 24); // §6.2
         assert_eq!(MasterKey::LEN, 32); // §2
         assert_eq!(AlbumId::LEN, 16); // §2 — 16 raw UUID bytes
+        assert_eq!(ALBUM_WRAP_AAD_LABEL.len(), 21); // §2
     }
 }

@@ -1,4 +1,22 @@
-use crate::WrongLength;
+use crate::{WrongLength, aead::AeadError, ids::AlbumId};
+
+#[derive(Debug, PartialEq)]
+pub enum WrapAlbumError {
+    AuthenticationFailed,
+    UnexpectedWrappedLength,
+    RandomnessUnavailable,
+    UnexpectedKeyLength,
+}
+
+impl From<AeadError> for WrapAlbumError {
+    /// Exhaustive on purpose: if `AeadError` gains a variant that isn't an
+    /// authentication failure, this must fail to compile.
+    fn from(e: AeadError) -> Self {
+        match e {
+            AeadError::AuthenticationFailed => WrapAlbumError::AuthenticationFailed,
+        }
+    }
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct MasterWrappedKey {
@@ -30,5 +48,38 @@ impl MasterWrappedKey {
             wrapped: wrapped_bytes,
             wrap_nonce: wrap_nonce_bytes,
         })
+    }
+}
+
+pub(crate) const ALBUM_WRAP_AAD_LABEL: &[u8; 21] = b"vitrina-album-wrap-v1";
+
+pub(crate) fn album_wrap_aad(album_id: &AlbumId) -> [u8; 37] {
+    let mut bytes_aad: [u8; 37] = [0u8; 37];
+
+    bytes_aad[..21].copy_from_slice(ALBUM_WRAP_AAD_LABEL);
+    bytes_aad[21..].copy_from_slice(album_id.as_bytes());
+
+    bytes_aad
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        album_wrap::ALBUM_WRAP_AAD_LABEL,
+        test_fixtures::{ALBUM_ID, ALBUM_WRAP_AAD},
+    };
+
+    #[test]
+    fn label_equals_literal_bytes() {
+        assert_eq!(ALBUM_WRAP_AAD_LABEL, b"vitrina-album-wrap-v1");
+    }
+
+    #[test]
+    fn concatenated_album_aad_matches_hex_literal() {
+        assert_eq!(
+            album_wrap_aad(&AlbumId::from_bytes(ALBUM_ID)),
+            ALBUM_WRAP_AAD
+        );
     }
 }
