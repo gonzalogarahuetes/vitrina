@@ -12,6 +12,8 @@ This document describes the shape the applied migrations implement — `001_init
 
 If this document and the migration ever disagree, that is a bug in one of them. Fix it deliberately and note which. Do not let them drift.
 
+**"Applied" is a fact about a database, not about a repository**. `track-b-status` recorded B.5 as applied to `vitrina`, which was true of a volume that no longer exists — the compose database was empty when `002` ran, so `001` had never touched it. A migration file is reproducible; its application is not, and a document that records the latter records something nobody can verify later. What makes this safe is a runner that applies migrations idempotently wherever the database is, so applied becomes a property anyone can re-establish rather than a claim in a status document.
+
 Reasoning lives in brief §9.1 (why two auth mechanisms), §9.2 (what is deliberately absent), and §9.3 (constraints DDL cannot express). This document does not repeat it.
 
 ## 1. Conventions
