@@ -53,6 +53,12 @@ jobs:
       - name: No forbidden crypto constructions
         run: ./scripts/check-forbidden-constructions.sh
 
+      # Also toolchain-free. A test module in crates/envelope without the
+      # `wasm_bindgen_test as test` alias compiles for wasm32 and silently
+      # never runs there; this names the file rather than leaving a count unmoved.
+      - name: wasm32 test alias present in every envelope test module
+        run: ./scripts/check-wasm-test-alias.sh
+
       - name: Set up Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:

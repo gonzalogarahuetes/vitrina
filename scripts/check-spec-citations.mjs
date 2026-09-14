@@ -106,6 +106,9 @@ const ALIASES = {
 // count is extracted from the document at run time.
 const LIST_DOC = 'vitrina-project-brief.md';
 const LIST_SECTION = '6';
+// Transcribed from vitrina-project-brief.md §6, never read from it: a pin
+// that lived in the brief would move with the list and agree with itself.
+const EXPECTED_LIST_COUNT = 17;
 
 // How far back from a `#N` token to look for the thing that gives it a
 // referent. Only the text immediately to the left is consulted (see
@@ -545,10 +548,13 @@ if (brokenAliases.length > 0) {
 
 const listDoc = docs.get(LIST_DOC);
 const listCount = listDoc ? countListItems(listDoc, LIST_SECTION) : null;
-if (listCount === null) {
+// Zero or one item is a parse failure, not a deletion: report it as the
+// brief's list format changing, so nobody "fixes" it by moving the pin.
+if (listCount === null || listCount < 2) {
 	console.error(
-		`check-spec-citations: found no numbered list under §${LIST_SECTION} of ${LIST_DOC}; ` +
-			'LIST-OVERFLOW cannot be checked. Fix the extractor rather than hardcoding a count.'
+		`check-spec-citations: PARSER: found ${listCount ?? 'no'} numbered items under ` +
+			`§${LIST_SECTION} of ${LIST_DOC}; the brief's list format has changed. ` +
+			'Fix countListItems rather than the pinned count.'
 	);
 	process.exit(1);
 }
@@ -686,6 +692,20 @@ if (findings.length > 0) {
 	console.log('');
 }
 
+const countMoved = listCount !== EXPECTED_LIST_COUNT;
+if (countMoved) {
+	const moved = listCount > EXPECTED_LIST_COUNT ? 'added' : 'removed';
+	console.log(
+		`check-spec-citations: §${LIST_SECTION} of ${LIST_DOC} has ${listCount} non-negotiables, ` +
+			`pinned at ${EXPECTED_LIST_COUNT} \u2014 a non-negotiable was ${moved}.`
+	);
+	console.log('');
+	console.log('If that was deliberate, update EXPECTED_LIST_COUNT in scripts/check-spec-citations.mjs.');
+	console.log('The pin is transcribed from the brief so that editing the brief alone cannot');
+	console.log('move the list and the check together.');
+	console.log('');
+}
+
 if (hardCount > 0) {
 	console.log(
 		`check-spec-citations: ${hardCount} citation${hardCount === 1 ? '' : 's'} ` +
@@ -698,10 +718,10 @@ if (hardCount > 0) {
 	process.exit(1);
 }
 
-if (findings.length === 0) {
+if (findings.length === 0 && !countMoved) {
 	console.log(
 		`check-spec-citations: clean \u2014 ${resolved}/${citationCount} citations resolved ` +
 			`across ${fileNames.length} documents`
 	);
 }
-process.exit(0);
+process.exit(countMoved ? 1 : 0);

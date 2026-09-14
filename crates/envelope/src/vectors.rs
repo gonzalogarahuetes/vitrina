@@ -3,7 +3,7 @@
 //! reads it back under plain `cargo test`.
 
 use crate::aead::aead_encrypt;
-use crate::album_wrap::wrap_with_nonce;
+use crate::album_wrap::{album_wrap_aad, wrap_with_nonce};
 use crate::chunk::decrypt_chunk;
 use crate::envelope::encrypt_with_header;
 use crate::header::{Header, HeaderError};
@@ -169,6 +169,7 @@ struct Protocol {
     wrap_aad: WrapAadVector,
     wrap_salt_length: Vec<SaltLengthVector>,
     passphrase_spacing_mark: PassphraseVector,
+    album_wrap_aad: AlbumWrapAadVector,
 }
 
 /// vitrina-schema.md §6: the hash is over the 32 raw bytes, never the string.
@@ -223,6 +224,14 @@ struct PassphraseVector {
 struct WrapAadVector {
     vector: u8,
     recipient_id: String,
+    aad: String,
+}
+
+/// §9.1 vector 8: vector 5's shape for §2's 37-byte album-wrap AAD.
+#[derive(Serialize, Deserialize)]
+struct AlbumWrapAadVector {
+    vector: u8,
+    album_id: String,
     aad: String,
 }
 
@@ -650,6 +659,11 @@ fn protocol() -> Protocol {
             SPACING_MARK_PASSPHRASE,
             SPACING_MARK_PASSPHRASE,
         ),
+        album_wrap_aad: AlbumWrapAadVector {
+            vector: 8,
+            album_id: hex(&ALBUM_ID),
+            aad: hex(&album_wrap_aad(&AlbumId::from_bytes(ALBUM_ID))),
+        },
     }
 }
 
@@ -1156,6 +1170,14 @@ fn verify_protocol(p: &Protocol) {
         &sm.wrap_nonce,
         &sm.wrapped,
     );
+    let aw = &p.album_wrap_aad;
+    assert_eq!(aw.vector, 8);
+    assert_eq!(
+        hex(&album_wrap_aad(&AlbumId::from_bytes(unhex_array(
+            &aw.album_id
+        )))),
+        aw.aad
+    );
 }
 
 #[test]
@@ -1195,6 +1217,10 @@ fn committed_vectors_verify() {
 
     assert_eq!(file.album_wrap.len(), 1);
     verify_album_wrap(&file.album_wrap[0], &file.envelope[0]);
+    assert_eq!(
+        file.protocol.album_wrap_aad.album_id, file.album_wrap[0].album_id,
+        "§9.1: vector 8's album_id is category 16's"
+    );
 
     verify_protocol(&file.protocol);
 }
@@ -1282,6 +1308,7 @@ fn protocol_entries(p: &Protocol) -> Vec<Entry> {
             .map(|e| (e.vector, Some(e.expect))),
     );
     v.push((p.passphrase_spacing_mark.vector, None));
+    v.push((p.album_wrap_aad.vector, None));
     v
 }
 
