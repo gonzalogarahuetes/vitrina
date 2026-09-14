@@ -98,9 +98,8 @@ These exist because they are cheap now and expensive or impossible later. Any im
 
 ### Forward compatibility
 
-8. **The domain object is `media`, not `photos`** — in the schema, API routes, and types. With a `kind` discriminator and a nullable metadata column.
-9. **Asynchronous ingest with a status field:** `pending → processing → ready → failed`. For photos this resolves in 200 ms and feels like pointless machinery. It exists so that video, which takes minutes, does not require touching every UI surface that assumed "uploaded means viewable."
-10. **A renderer interface**, with a single photo implementation behind it.
+8. **The domain object is `media`, not `photos`** — in the schema, API routes, and types. With a `kind` discriminator and a status field. This clause read "and a nullable metadata column" until 14 September 2026; the API posts the metadata envelope at media create, so no row ever exists without one and the column is `NOT NULL` (api-sketch §9.6). The nullability was incidental detail in a rule about the domain object's name and shape, and it went stale when the envelope moved onto the create.
+9. **Asynchronous ingest with a status field:** `pending → processing → ready → failed`. For photos this resolves in 200 ms and feels like pointless machinery. It exists so that video, which takes minutes, does not require touching every UI surface that assumed "uploaded means viewable." 10. **A renderer interface**, with a single photo implementation behind it.
 
 ### Privacy hygiene
 
@@ -173,7 +172,7 @@ Since §10.1 settles v1 on proxying, revocation is checked per request and there
 
 The migration is the canonical column list — this section records only what DDL cannot state.
 
-**`media.id` and `recipients.id` are client-generated and MUST NOT carry a database default.** `media.id` _is_ the envelope's `asset_id`, which the client creates before encrypting. `recipients.id` is inside the wrap AAD (encryption spec §6.2: `"vitrina-wrap-v1" ‖ recipient_id`), so the client needs it before it can compute `wrapped`. A server-assigned default breaks unwrapping, works fine for QR recipients, and fails as an opaque AEAD error. Every other `id` is server-assigned.
+**`media.id`, `albums.id` and `recipients.id` are client-generated and MUST NOT carry a database default.** `media.id` _is_ the envelope's `asset_id`, which the client creates before encrypting. `recipients.id` is inside the wrap AAD (encryption spec §6.2: `"vitrina-wrap-v1" ‖ recipient_id`), so the client needs it before it can compute `wrapped`. A server-assigned default breaks unwrapping, works fine for QR recipients, and fails as an opaque AEAD error. `albums.id` joined them on 13 September 2026, when encryption spec §2 bound `album_id` into the album-wrap AAD. Three client-generated ids, and one rule rather than three exceptions: every id that sits inside an AAD is client-generated, because a value the AAD authenticates must exist before the thing it authenticates is computed. Every other `id` is server-assigned.
 
 **Every timestamp is `timestamptz`.** The canonical user story spans Spain and Argentina; `timestamp without time zone` looks right in development and misorders the access log in production.
 
