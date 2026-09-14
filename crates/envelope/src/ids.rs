@@ -166,7 +166,7 @@ mod tests {
             Salt::try_from_slice(&[0u8; 15]).err(),
             Some(WrongLength {
                 got: 15,
-                expected: Salt::LEN
+                expected: 16
             })
         );
     }
@@ -177,7 +177,7 @@ mod tests {
             Salt::try_from_slice(&[0u8; 20]).err(),
             Some(WrongLength {
                 got: 20,
-                expected: Salt::LEN
+                expected: 16
             })
         );
     }
@@ -188,7 +188,7 @@ mod tests {
             Salt::try_from_slice(&[]).err(),
             Some(WrongLength {
                 got: 0,
-                expected: RecipientId::LEN
+                expected: 16
             })
         );
     }
@@ -209,7 +209,7 @@ mod tests {
             AssetId::try_from_slice(&[0u8; 15]).err(),
             Some(WrongLength {
                 got: 15,
-                expected: AssetId::LEN
+                expected: 16
             })
         );
     }
@@ -220,7 +220,7 @@ mod tests {
             AssetId::try_from_slice(&[0u8; 20]).err(),
             Some(WrongLength {
                 got: 20,
-                expected: AssetId::LEN
+                expected: 16
             })
         );
     }
@@ -231,12 +231,12 @@ mod tests {
             AssetId::try_from_slice(&[]).err(),
             Some(WrongLength {
                 got: 0,
-                expected: RecipientId::LEN
+                expected: 16
             })
         );
     }
 
-    // Asset ID Length Tests
+    // All Lengths Tests
     // ----------------------------------------------------
     #[test]
     fn all_lengths_match_expected_values() {

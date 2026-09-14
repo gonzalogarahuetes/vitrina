@@ -131,6 +131,8 @@ mod tests {
     use crate::test_fixtures::{
         ALBUM_ID, ALBUM_WRAP_AAD, ALBUM_WRAP_NONCE, album_key, hex, master_key,
     };
+    #[cfg(target_arch = "wasm32")]
+    use wasm_bindgen_test::wasm_bindgen_test as test;
 
     fn wrapped_of_valid_length() -> [u8; MasterWrappedKey::WRAPPED_LEN] {
         std::array::from_fn(|i| i as u8)
