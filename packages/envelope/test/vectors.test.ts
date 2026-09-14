@@ -43,6 +43,15 @@ interface WrapVector {
   wrap_nonce: string;
   wrapped: string;
 }
+interface AlbumWrapVector {
+  category: number;
+  name: string;
+  k_album: string;
+  k_master: string;
+  album_id: string;
+  wrap_nonce: string;
+  wrapped: string;
+}
 interface SaltLengthVector extends Omit<WrapVector, "wrapped" | "category"> {
   vector: number;
   wrapped?: string;
@@ -75,6 +84,7 @@ interface VectorFile {
   key_derivation: { category: number }[];
   anchors: Record<string, { category: number }>;
   wrap: WrapVector[];
+  album_wrap: AlbumWrapVector[];
   protocol: {
     token: { vector: number; token_raw: string; token_base64url: string; sha256: string; expect: string };
     token_noncanonical: { vector: number; token_base64url: string; expect: string };
@@ -103,6 +113,7 @@ test("vector file targets envelope version 1", () => {
   assert.equal(file.envelope_version, 1);
   assert.deepEqual(file.envelope.map((v) => v.category), [1, 2, 3, 4]);
   assert.deepEqual(file.envelope_negative.map((v) => v.category), [10, 11, 12, 13, 14, 15]);
+  assert.deepEqual(file.album_wrap.map((v) => v.category), [16]);
 });
 
 // Categories 1–4 — decrypt direction is byte-exact. The encrypt direction
@@ -206,6 +217,31 @@ for (const v of file.wrap) {
     assert.equal(wrapped.wrapNonce.length, e.wrapNonceLen());
     assert.equal(wrapped.kdfSalt.length, e.saltLen());
     assertIsTheAlbumKey(e.unwrapAlbumKey(v.passphrase, params(v.params), unhex(v.recipient_id), wrapped));
+  });
+}
+
+// Category 16 — §2's wrap of K_album under K_master. Unwrap direction from the
+// committed blob; the wrap direction draws its own nonce, so round trip instead.
+// The unwrapped key is proven by what it opens, never read (§2.2, §9.3).
+for (const v of file.album_wrap) {
+  test(`category 16: ${v.name} — unwraps to K_album`, () => {
+    const master = e.MasterKey.fromBytes(unhex(v.k_master));
+    const wrapped = e.MasterWrappedKey.fromParts(unhex(v.wrapped), unhex(v.wrap_nonce));
+    assertIsTheAlbumKey(e.unwrapAlbumKeyWithMaster(wrapped, master, unhex(v.album_id)));
+
+    const other = unhex(v.album_id);
+    other[15]! ^= 0x01;
+    assert.equal(caught(() => e.unwrapAlbumKeyWithMaster(wrapped, master, other)).code, "AuthenticationFailed");
+  });
+
+  test(`category 16: ${v.name} — wrap then unwrap round-trips`, () => {
+    const album = e.AlbumKey.fromBytes(unhex(v.k_album));
+    const master = e.MasterKey.fromBytes(unhex(v.k_master));
+    const wrapped = e.wrapAlbumKeyWithMaster(album, master, unhex(v.album_id));
+    assert.equal(wrapped.wrapped.length, e.masterWrappedLen());
+    assert.equal(wrapped.wrapNonce.length, e.masterWrapNonceLen());
+    assert.notEqual(hex(wrapped.wrapNonce), v.wrap_nonce, "wrap_nonce is fresh (§2)");
+    assertIsTheAlbumKey(e.unwrapAlbumKeyWithMaster(wrapped, master, unhex(v.album_id)));
   });
 }
 
