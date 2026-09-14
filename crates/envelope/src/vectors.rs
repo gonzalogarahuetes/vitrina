@@ -159,7 +159,9 @@ struct AlbumWrapVector {
     wrapped: String,
 }
 
-/// §9.1's required protocol vectors, keyed by name in §9.1's order.
+/// §9.1's protocol vectors, keyed by name in §9.1's order. Every field is
+/// mandatory on purpose: deleting a group then fails at the parser for
+/// every consumer, not only in the crate's own test run. Not `Option`.
 #[derive(Serialize, Deserialize)]
 struct Protocol {
     token: TokenVector,

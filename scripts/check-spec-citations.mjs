@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 //
-// Spec citation checker — report-only, no dependencies, Node stdlib only.
+// Spec citation checker — no dependencies, Node stdlib only. Some findings
+// are reported only; others fail the build — see the HARD set and the pin.
 //
 // The documents in spec/ cite each other by section number, constantly:
 // "brief §6", "encryption spec §6.2", "vitrina-server-architecture.md §8",
