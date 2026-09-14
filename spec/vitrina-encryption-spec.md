@@ -64,7 +64,7 @@ The domain-separation strings are ASCII, without a null terminator, and are part
 
 **`K_album` is wrapped by `K_master`, never derived from it.** A derived key cannot be re-wrapped, which would make password change, recovery keys and rotation permanently impossible (brief §11). Wrapping costs 32 bytes per album.
 
-**The construction, specified 13 September 2026.** The _gap_ was surfaced by writing the album-create route, which needed to know whether the id came first; the construction itself is new here and **nothing implements it**:
+**The construction, specified 13 September 2026.** The _gap_ was surfaced by writing the album-create route, which needed to know whether the id came first; the construction itself is new here:
 
 ```
 wrapped_key = XChaCha20-Poly1305(
@@ -80,7 +80,7 @@ wrapped_key = XChaCha20-Poly1305(
 
 What the binding buys is worth stating, because it is not confidentiality. A wrapping moved between two albums of the same owner unwraps perfectly without it, yielding the wrong `K_album` — after which every asset in that album fails to decrypt, several layers from the cause. With the binding, the unwrap itself fails. That is §5's argument applied one level up: make the tamper fail where it happens rather than where it surfaces.
 
-**Status, stated because the paragraphs above read like a description of running code and are not.** No implementation exercises this wrap, no vector covers it, and no anchor touches it — the XChaCha20-Poly1305 primitive is anchored by §9 category 7, but this _composition_ is unverified. **A round-trip vector for this wrap is required before any account exists, and joins §9's coverage list when the code that generates it does.** It is deliberately _not_ in that list today: the list is read by the consistency check at test time (§0), so a category nothing can satisfy would hold the build red for a gap that is recorded rather than a defect. The reasoning is category 9's, for the passphrase wrap: the construction is format-permanent, the relay cannot re-wrap what it cannot read, and an independent implementation built from this document alone (§0) would otherwise implement bytes nobody has checked. Note that §6.6's "not yet fully specified" refers to the **Argon2id parameters** pending V.1, not to this construction; the two are separate and were reading as one. Note that this is a **key-management** relationship, not a format one: the envelope has no idea where `K_album` came from, so §3 through §5 are untouched by it.
+**Status**. The crate and its binding implement this wrap; **the vector does not yet exist**. A round-trip vector is required before any account exists, and joins §9's coverage list when it lands — the list is read by the consistency check at test time (§0), so it is added in the same commit as the vector rather than ahead of it. The reasoning is category 9's, for the passphrase wrap: the construction is format-permanent, the relay cannot re-wrap what it cannot read, and an independent implementation built from this document alone (§0) would otherwise implement bytes nobody has checked. The XChaCha20-Poly1305 primitive is anchored by §9 category 7; this composition is not, until the vector exists.
 
 ### 2.1 Why derive per-asset keys at all
 
