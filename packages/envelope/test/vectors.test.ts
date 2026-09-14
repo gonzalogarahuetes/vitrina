@@ -93,6 +93,7 @@ interface VectorFile {
     wrap_aad: { vector: number; recipient_id: string; aad: string };
     wrap_salt_length: SaltLengthVector[];
     passphrase_spacing_mark: PassphraseVector;
+    album_wrap_aad: { vector: number; album_id: string; aad: string };
   };
 }
 
@@ -256,6 +257,7 @@ const protocolTests: Record<string, string> = {
   wrap_aad: "protocol 5: the wrap is bound to recipient_id",
   wrap_salt_length: "protocol 6: salt length is enforced at fromParts",
   passphrase_spacing_mark: "protocol 7: the committed blob unwraps under a passphrase carrying a spacing mark",
+  album_wrap_aad: "protocol 8: the album wrap is bound to album_id",
 };
 
 test("every protocol group has a test", () => {
@@ -332,6 +334,21 @@ test(protocolTests.wrap_aad!, () => {
   const other = unhex(v.recipient_id);
   other[15]! ^= 0x01;
   assert.equal(caught(() => e.unwrapAlbumKey(v.passphrase, params(v.params), other, wrapped)).code, "AuthenticationFailed");
+});
+
+// Protocol vector 8 — vector 5's proxy for the 37-byte AAD (§9.3): the vector's
+// own album_id must open category 16's blob, and a one-byte change must not.
+test(protocolTests.album_wrap_aad!, () => {
+  const v = file.protocol.album_wrap_aad;
+  const c16 = file.album_wrap[0]!;
+  const master = e.MasterKey.fromBytes(unhex(c16.k_master));
+  const wrapped = e.MasterWrappedKey.fromParts(unhex(c16.wrapped), unhex(c16.wrap_nonce));
+  assertIsTheAlbumKey(e.unwrapAlbumKeyWithMaster(wrapped, master, unhex(v.album_id)));
+  assert.equal(v.album_id, c16.album_id, "§9.1: vector 8's album_id is category 16's");
+  assert.equal(v.aad.length / 2, 37);
+  const other = unhex(v.album_id);
+  other[15]! ^= 0x01;
+  assert.equal(caught(() => e.unwrapAlbumKeyWithMaster(wrapped, master, other)).code, "AuthenticationFailed");
 });
 
 // Protocol vector 6 — the one the Rust verifier cannot fail: Salt is [u8; 16]
