@@ -14,6 +14,8 @@ MUST, MUST NOT, SHOULD, and MAY carry their usual RFC 2119 meanings.
 
 **This document is parsed by the test suite.** A consistency check reads §9's coverage list and §9.1's protocol-vector list at test time and compares their counts, multiplicities, contiguity and accept/reject polarity against `spec/vectors/`. Two consequences for anyone editing here: **a spec edit is a code-affecting change** and can turn `cargo test` red, and those two numbered lists have a parse format the check depends on — reformatting them fails with a distinct "list format has changed" error rather than a count mismatch.
 
+**The check forces a spec change and a vector change into the same commit, in both directions**. A category added to §9 that the file cannot yet satisfy holds the build red for a gap that is recorded rather than a defect — so a category is added when the vector that satisfies it is generated, never ahead of it. And a vector added to the file without its category is equally red. The rule is not "spec first" but "together": the two are one artefact with two halves, and the check exists to stop either half moving alone.
+
 The check is number-level. It has no opinion about which _fields_ a vector carries, so field-level completeness — the failure that left `wrap_nonce` undocumented while the file carried it — remains a human check.
 
 **This format is effectively permanent.** The relay server cannot decrypt, therefore the relay server cannot migrate its own stored data. A format change means either lazy client-side re-encryption on next access (complex, and only reaches assets someone actually opens) or asking every user to re-upload everything. Treat changes here with more care than any other part of the system.
@@ -77,8 +79,6 @@ wrapped_key = XChaCha20-Poly1305(
 `wrapped_key` is 48 bytes — `K_album` (32) plus the Poly1305 tag (16) — and `wrap_nonce` is 24, the same arithmetic as §6.2's passphrase wrap and for the same reasons. The domain string is 21 ASCII bytes, no null terminator and no length prefix; `album_id` is the **16 raw UUID bytes**, never its 36-character text form. The AAD is therefore exactly 37 bytes.
 
 **Binding `album_id` makes `albums.id` client-generated**, on the same rule as `asset_id` and `recipient_id`: a value inside an AAD must exist before the thing it authenticates is computed, so the client cannot wait for a server-assigned id. Three identifiers, three AADs, one rule.
-
-What the binding buys is worth stating, because it is not confidentiality. A wrapping moved between two albums of the same owner unwraps perfectly without it, yielding the wrong `K_album` — after which every asset in that album fails to decrypt, several layers from the cause. With the binding, the unwrap itself fails. That is §5's argument applied one level up: make the tamper fail where it happens rather than where it surfaces.
 
 **Status**. The crate and its binding implement this wrap; **the vector does not yet exist**. A round-trip vector is required before any account exists, and joins §9's coverage list when it lands — the list is read by the consistency check at test time (§0), so it is added in the same commit as the vector rather than ahead of it. The reasoning is category 9's, for the passphrase wrap: the construction is format-permanent, the relay cannot re-wrap what it cannot read, and an independent implementation built from this document alone (§0) would otherwise implement bytes nobody has checked. The XChaCha20-Poly1305 primitive is anchored by §9 category 7; this composition is not, until the vector exists.
 
@@ -542,7 +542,7 @@ That makes most of what earlier revisions of this section excluded verifiable af
 **What genuinely cannot be verified from outside, and why each is structural:**
 
 - **The encrypt direction**, because reproducing a vector's bytes needs its `base_nonce` and §4.1 forbids an entry point accepting one.
-- **Protocol vector 5's AAD**, which has no binding entry point at all.
+- **Protocol vectors 5 and 8's AADs**, which have no binding entry point at all.
 
 **Transitive verification catches a divergence, not a wrong reference.** If the implementation's BLAKE2b is wrong _and_ categories 1–4 were generated with that same wrong BLAKE2b, every one of them passes. That is §9.2's argument, and it is why categories 6–8 exist as external anchors regardless of being transitively covered here. The two sections answer different questions: this one asks what a consumer can check, §9.2 asks what any self-generated vector can establish.
 
