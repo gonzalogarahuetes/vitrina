@@ -1,14 +1,14 @@
 # Vitrina — Database Schema
 
-**Status:** Draft v0.1 · last updated 13 September 2026 · **provisional**
+**Status:** Draft v0.1 · last updated 14 September 2026 · **provisional**
 **Companion to:** `vitrina-project-brief.md` §9–§9.3, `vitrina-encryption-spec.md` §6
-**Implemented by:** the B.5 migration
+**Implemented by:** `001_initial_schema.sql` (B.5) and `002` (Phase 1)
 
 ---
 
 ## 0. Status and authority
 
-This document specifies the shape the B.5 migration implements. It is **provisional** — Phase 1 will change it, and that is expected rather than a failure.
+This document describes the shape the applied migrations implement — `001_initial_schema.sql` from B.5 and `002` from Phase 1. It is **provisional** — Phase 1 will change it, and that is expected rather than a failure.
 
 If this document and the migration ever disagree, that is a bug in one of them. Fix it deliberately and note which. Do not let them drift.
 
@@ -30,11 +30,12 @@ Reasoning lives in brief §9.1 (why two auth mechanisms), §9.2 (what is deliber
 
 ## 2. Diagram
 
-_Illustrative only. The §3 tables are normative — Mermaid cannot express nullability, defaults, or `CHECK` constraints, so nothing about those should be inferred from here._
+_Illustrative only. The §3 tables are normative — Mermaid cannot express nullability, defaults or `CHECK` constraints, so nothing about those should be inferred from here. **The caveat covers what Mermaid cannot say, not what this diagram forgot**: entities, relationships and id provenance must match §3, and did not between 13 and 14 September 2026._
 
 ```mermaid
 erDiagram
     owners ||--o{ owner_tokens : "authenticates with"
+    owners ||--o{ owner_keys : "wraps K_master under"
     owners ||--o{ albums : owns
     albums ||--o{ media : contains
     albums ||--o{ recipients : "is shared with"
@@ -43,6 +44,21 @@ erDiagram
 
     owners {
         uuid id PK "server-generated"
+        text email UK "normalised - api 8.2"
+        bytea auth_hash "HMAC(pepper, proof) - 32 bytes"
+        timestamptz created_at
+    }
+
+    owner_keys {
+        uuid id PK "server-generated"
+        uuid owner_id FK
+        text kind "CHECK password recovery"
+        bytea wrapped_master "48 bytes"
+        bytea wrap_nonce "24 bytes"
+        bytea kdf_salt "password only - 16 bytes"
+        integer kdf_memory_kib "password only"
+        integer kdf_iterations "password only"
+        integer kdf_parallelism "password only"
         timestamptz created_at
     }
 
@@ -56,9 +72,11 @@ erDiagram
     }
 
     albums {
-        uuid id PK "server-generated"
+        uuid id PK "CLIENT-generated - in album-wrap AAD"
         uuid owner_id FK
         text title "PLAINTEXT - spec 10"
+        bytea wrapped_key "K_album under K_master - 48 bytes"
+        bytea wrap_nonce "24 bytes"
         timestamptz created_at
     }
 
@@ -68,7 +86,7 @@ erDiagram
         text kind "CHECK photo video"
         text status "CHECK pending processing ready failed"
         bigint byte_size "nullable - cache, storage authoritative"
-        bytea metadata "nullable - encrypted metadata envelope"
+        bytea metadata "encrypted metadata envelope"
         timestamptz created_at
         timestamptz updated_at
     }
@@ -107,18 +125,20 @@ erDiagram
 | `id`         | `uuid`        | PK, default `gen_random_uuid()` |
 | `created_at` | `timestamptz` | NOT NULL, default `now()`       |
 
-**Resolved 20 August 2026 (brief §12), but not in the Phase 0 migration.** The account model is email and password. The columns below land in a **Phase 1 migration**, not the applied `001_initial_schema.sql` — recording the target here does not retrospectively change what shipped.
+The account model is email and password (brief §12). These columns landed in `002`:
 
-| Column      | Type                                           | Constraints                                            |
-| ----------- | ---------------------------------------------- | ------------------------------------------------------ |
-| `email`     | `citext` or `text` with a lowercase constraint | NOT NULL, UNIQUE                                       |
-| `auth_hash` | `bytea`                                        | NOT NULL — `HMAC(pepper, proof)`. Encryption spec §6.6 |
+| Column      | Type    | Constraints                                                                              |
+| ----------- | ------- | ---------------------------------------------------------------------------------------- |
+| `email`     | `text`  | NOT NULL, UNIQUE (`UQ_owners_email`). Holds the **normalised** address — api-sketch §8.2 |
+| `auth_hash` | `bytea` | NOT NULL, 32 bytes — `HMAC(pepper, proof)`. Encryption spec §6.6                         |
+
+**`text` rather than `citext`, and no `lower()` constraint.** Either would be a _second_ normaliser: `citext` folds by its own rules and `lower()` is collation-dependent, so either can disagree with the unconditional mapping api-sketch §8.2 specifies — in cases nobody finds until an owner cannot log in. §8.2's whole argument is that the rule is simple _because_ it has one implementation; a fold in the database is the same mistake as one in the client, only closer.
 
 **No `auth_salt` and no server-side KDF columns.** The relay applies a peppered fast hash, not Argon2id, so there is nothing per-account to parameterise. An earlier revision of this document added those columns; withdrawn.
 
 **One KDF parameter set exists**, on `owner_keys`, client-side, sized for the weakest phone. It is what `/login/params` returns.
 
-Case-folding `email` matters: two rows differing only in case would be two accounts one user cannot tell apart.
+Case-folding `email` matters — two rows differing only in case would be two accounts one user cannot tell apart — and it happens in exactly one place, before any lookup, uniqueness check or decoy computation (api-sketch §8.2).
 
 ### `owner_tokens`
 
@@ -135,9 +155,7 @@ Hashed rows with expiry, **not** server-side sessions — non-negotiable #6. Sev
 
 ### `owner_keys`
 
-_Phase 1 migration, not the Phase 0 one._
-
-**That migration also owes three `COMMENT ON` corrections.** `001_initial_schema.sql` has applied, and its comments are now false: the header calls the owner account model an open decision, one line says an owner password "needs Argon2id as well", and another calls the title/label question coupled and undecidable. An applied migration is not edited — and editing the file would not reach the comments anyway, since `COMMENT ON` text is live data. The forward migration is the only mechanism that fixes both.
+_Added by `002`._
 
 | Column            | Type          | Constraints                                                     |
 | ----------------- | ------------- | --------------------------------------------------------------- |
@@ -164,26 +182,38 @@ They are nullable because a **recovery key is high-entropy random and needs no p
 CHECK (
   kind <> 'password' OR (
         kdf_salt IS NOT NULL AND octet_length(kdf_salt) = 16
-    AND kdf_memory_kib IS NOT NULL AND kdf_iterations IS NOT NULL
-    AND kdf_parallelism IS NOT NULL
+    AND kdf_memory_kib  IS NOT NULL AND kdf_memory_kib  >= 16384
+    AND kdf_iterations  IS NOT NULL AND kdf_iterations  >= 2
+    AND kdf_parallelism IS NOT NULL AND kdf_parallelism >= 1
   )
 )
 ```
 
+**The floors are floors, not the chosen values.** 16384/2/1, matching `recipients` as corrected by `002`. A client may post _higher_ parameters — that is the entire reason they are stored per row — so a constraint pinned to v1's 65536/3/1 would reject every account created after Phase 2 raises the default. See `recipients` below for the same argument and the same correction.
+
 `CHECK (octet_length(wrapped_master) = 48 AND octet_length(wrap_nonce) = 24)`, for the same reason as `recipients`.
 
-**v1 has exactly one row per owner**, `kind = 'password'`. Recovery is Phase 2. The table shape is what makes that additive.
+**Exactly one password row per owner, enforced rather than assumed:**
+
+```sql
+CREATE UNIQUE INDEX "UQ_owner_keys_one_password"
+  ON "owner_keys" ("owner_id") WHERE kind = 'password';
+```
+
+Two routes select by that predicate — `/login/params` and `/owner/key` (api-sketch §7.5, §8.3) — and a `SELECT … LIMIT 1` without it works until a second row exists. The rule was prose in two documents with no mechanism until `002`; a partial unique index is the mechanism.
+
+**v1 has exactly one row per owner** in practice as well as by constraint, `kind = 'password'`. Recovery is Phase 2, and arrives as an `INSERT` the index above permits.
 
 ### `albums`
 
-| Column        | Type          | Constraints                                                                                                                                                                                                |
-| ------------- | ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `id`          | `uuid`        | PK, **no default** — client-supplied. **Changed 13 September 2026**: it is inside the album-wrap AAD (encryption spec §2), so the client must hold it before wrapping. A Phase 1 `ALTER` drops the default |
-| `owner_id`    | `uuid`        | NOT NULL, FK → `owners(id)`                                                                                                                                                                                |
-| `title`       | `text`        | NOT NULL                                                                                                                                                                                                   |
-| `wrapped_key` | `bytea`       | NOT NULL, 48 bytes — `K_album` under `K_master`. **Owed by the Phase 1 migration**; brief §11's wrap-never-derive requires it and this table had no column for it                                          |
-| `wrap_nonce`  | `bytea`       | NOT NULL, 24 bytes                                                                                                                                                                                         |
-| `created_at`  | `timestamptz` | NOT NULL, default `now()`                                                                                                                                                                                  |
+| Column        | Type          | Constraints                                                                                                                                                                 |
+| ------------- | ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `id`          | `uuid`        | PK, **no default** — client-supplied. It is inside the album-wrap AAD (encryption spec §2), so the client must hold it before wrapping. `002` dropped the default `001` had |
+| `owner_id`    | `uuid`        | NOT NULL, FK → `owners(id)`                                                                                                                                                 |
+| `title`       | `text`        | NOT NULL                                                                                                                                                                    |
+| `wrapped_key` | `bytea`       | NOT NULL, 48 bytes — `K_album` under `K_master`, added by `002`. Brief §11's wrap-never-derive requires it and `001` had no column for it                                   |
+| `wrap_nonce`  | `bytea`       | NOT NULL, 24 bytes                                                                                                                                                          |
+| `created_at`  | `timestamptz` | NOT NULL, default `now()`                                                                                                                                                   |
 
 No `status` column — brief §9.2. `title` is plaintext on the relay; that is a recorded limitation (encryption spec §10). **It is no longer coupled to the owner-key question** — brief §11 closed that, and closed it in the direction that dissolves the coupling, since an owner who unwraps `K_master` at login can decrypt their own titles. This note said otherwise until 13 September 2026 and contradicted §5.
 
@@ -191,16 +221,16 @@ No `status` column — brief §9.2. `title` is plaintext on the relay; that is a
 
 ### `media`
 
-| Column       | Type          | Constraints                                                                                                                                                                                                 |
-| ------------ | ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `id`         | `uuid`        | PK, **no default** — client-supplied                                                                                                                                                                        |
-| `album_id`   | `uuid`        | NOT NULL, FK → `albums(id)`                                                                                                                                                                                 |
-| `kind`       | `text`        | NOT NULL, `CHECK (kind IN ('photo','video'))`                                                                                                                                                               |
-| `status`     | `text`        | NOT NULL, default `'pending'`, `CHECK (status IN ('pending','processing','ready','failed'))`                                                                                                                |
-| `byte_size`  | `bigint`      | NULL                                                                                                                                                                                                        |
-| `metadata`   | `bytea`       | NULL today; **the Phase 1 migration should make it `NOT NULL`** — the API posts the envelope at media create and never writes a null (api-sketch §9.6), so the nullability admits a state no route produces |
-| `created_at` | `timestamptz` | NOT NULL, default `now()`                                                                                                                                                                                   |
-| `updated_at` | `timestamptz` | NOT NULL, default `now()`                                                                                                                                                                                   |
+| Column       | Type          | Constraints                                                                                                                                                                    |
+| ------------ | ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `id`         | `uuid`        | PK, **no default** — client-supplied                                                                                                                                           |
+| `album_id`   | `uuid`        | NOT NULL, FK → `albums(id)`                                                                                                                                                    |
+| `kind`       | `text`        | NOT NULL, `CHECK (kind IN ('photo','video'))`                                                                                                                                  |
+| `status`     | `text`        | NOT NULL, default `'pending'`, `CHECK (status IN ('pending','processing','ready','failed'))`                                                                                   |
+| `byte_size`  | `bigint`      | NULL                                                                                                                                                                           |
+| `metadata`   | `bytea`       | NOT NULL, as of `002`. The API posts the envelope at media create (api-sketch §9.6), so no row ever exists without one; `001`'s nullability admitted a state no route produces |
+| `created_at` | `timestamptz` | NOT NULL, default `now()`                                                                                                                                                      |
+| `updated_at` | `timestamptz` | NOT NULL, default `now()`                                                                                                                                                      |
 
 `id` is the envelope's `asset_id`. Asset and thumbnail object keys derive from it; there is no object-key column (brief §9.2).
 
@@ -259,7 +289,11 @@ For QR recipients every column is NULL, the right-hand side evaluates to NULL, a
 
 The `48` is coupled to version 1 of the wrap format. If §6.2 ever changes, this constraint must change with it — which is a feature: it forces the format change to be deliberate rather than silent.
 
-**The KDF floors are deliberately well below v1's chosen parameters** (64 MiB, t=3, p=1 — encryption spec §6.2). They are an absolute minimum, not a restatement of the current value, and the distinction matters: Phase 0 plan §8 schedules V.1 to test whether 64 MiB allocates in a WASM heap on a low-end Android phone, and states that a failure there _is_ a spec change. A floor pinned to 65536 would block the corrected value rather than protect anything.
+**The KDF floors are deliberately well below v1's chosen parameters** (64 MiB, t=3, p=1 — encryption spec §6.2). They are an absolute minimum, not a restatement of the current value, and the distinction is what makes them useful: a client may post _higher_ parameters, which is the entire reason they are stored per row, so a floor pinned to 65536 rejects every **invite** created after Phase 2 raises the default. (On `owner_keys` the same argument is about accounts; here it is invites, and the tables differ in what a row is.)
+
+**`001` shipped the chosen values where floors belong** — `>= 65536` and `>= 3` — and `002` corrected them to 16384/2/1. That looks like weakening a constraint and is not: it is the difference between a minimum and a current setting, and getting it backwards is the specific bug `001` had.
+
+_A second argument stood here until 14 September 2026: that V.1 might lower 64 MiB and a floor at 65536 would block the corrected value. V.1 passed at 2239 ms against a 3000 ms ceiling (phase-0-plan §8), so the figures are confirmed rather than provisional and that half no longer applies. The floors are unchanged, on the Phase 2 argument alone._
 
 What the floor does protect against is degradation to something pointless — a bug or a careless migration setting memory to a few hundred KiB, which would make the offline attack §6.3 exists to manage effectively free.
 
@@ -287,7 +321,7 @@ Retention is a Phase 2 GDPR item — viewing behaviour is personal data.
 
 ## 4. Indexes
 
-Beyond primary keys and the two unique constraints, six indexes exist as created by the B.5 migration:
+Beyond primary keys and the unique constraints, eight indexes exist — six from `001`, two from `002`:
 
 ```sql
 CREATE INDEX "IDX_album_owner_id"          ON "albums"       ("owner_id");
@@ -296,7 +330,13 @@ CREATE INDEX "IDX_media_album_id"          ON "media"        ("album_id");
 CREATE INDEX "IDX_recipient_album_id"      ON "recipients"   ("album_id");
 CREATE INDEX "IDX_access_log_recipient_id" ON "access_log"   ("recipient_id", occurred_at DESC);
 CREATE INDEX "IDX_access_log_media_id"     ON "access_log"   ("media_id");
+
+-- 002
+CREATE INDEX        "IDX_owner_key_owner_id"     ON "owner_keys" ("owner_id");
+CREATE UNIQUE INDEX "UQ_owner_keys_one_password" ON "owner_keys" ("owner_id") WHERE kind = 'password';
 ```
+
+**The partial unique index is also the access path.** Both routes that read a wrapping — `/login/params` and `/owner/key` — filter `kind = 'password'`, which is exactly its predicate, so it serves the reads as well as enforcing the constraint. The plain `owner_keys(owner_id)` index is `001`'s index-every-FK convention carried forward, and what it serves is the cascade when an owner is deleted.
 
 `albums(owner_id)` serves the most frequent query in the owner flow — listing an owner's albums. The two `access_log` indexes serve the two questions the log exists to answer: what has this recipient seen, and who has seen this photograph. The composite one carries `occurred_at DESC` so the common "most recent activity" read is satisfied by the index alone.
 
@@ -307,6 +347,7 @@ CREATE INDEX "IDX_access_log_media_id"     ON "access_log"   ("media_id");
 | Foreign key (where the constraint lives)     | On delete | What that means in practice                   |
 | -------------------------------------------- | --------- | --------------------------------------------- |
 | `owner_tokens.owner_id` → `owners(id)`       | `CASCADE` | Delete an **owner** → their auth tokens go    |
+| `owner_keys.owner_id` → `owners(id)`         | `CASCADE` | Delete an **owner** → their key wrappings go  |
 | `albums.owner_id` → `owners(id)`             | `CASCADE` | Delete an **owner** → their albums go         |
 | `media.album_id` → `albums(id)`              | `CASCADE` | Delete an **album** → its media rows go       |
 | `recipients.album_id` → `albums(id)`         | `CASCADE` | Delete an **album** → its recipients go       |
@@ -336,7 +377,7 @@ Cascade makes it worse rather than better, because the rows it removes are the o
 
 This is a **B.6 requirement**: the API sketch must state that no endpoint deletes an album or owner row without first having deleted the corresponding storage objects.
 
-**~~`owners` shape~~ — closed.** Brief §12 decided email and password on 20 August 2026. The columns and the `owner_keys` table are specified in §3 and land in a **Phase 1 migration**.
+**~~`owners` shape~~ — closed and shipped.** Brief §12 decided email and password; the columns and the `owner_keys` table landed in `002` and are described in §3.
 
 **Whether `albums.title` and `recipients.label` stay plaintext** — still open, but **no longer blocked**. It was parked because it was coupled to owner key retention; brief §11 closed that, and an owner who unwraps `K_master` at login can decrypt their own titles (encryption spec §10). Note deferring is not free: the relay cannot re-encrypt what it cannot read, so shipping plaintext means a client-side lazy migration later.
 
