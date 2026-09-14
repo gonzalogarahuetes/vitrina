@@ -64,7 +64,42 @@ test("AlbumKey is opaque: no method or property returns its bytes", () => {
   assert.doesNotMatch(JSON.stringify(key), new RegExp(Buffer.from(ALBUM_KEY).toString("hex")));
 });
 
-test("the exported lengths are §6.2's and §3.1's", () => {
+// §2.2 one level up: K_master unwraps every album in the account.
+test("MasterKey is opaque: no method or property returns its bytes", () => {
+  const MASTER_KEY = Uint8Array.from({ length: 32 }, (_, i) => 0xe0 + i);
+  const master = e.MasterKey.fromBytes(MASTER_KEY);
+  const visible = (o: object) => Object.getOwnPropertyNames(o).filter((n) => !n.startsWith("__"));
+  assert.deepEqual(visible(e.MasterKey.prototype), ["constructor", "free"]);
+  assert.deepEqual(visible(e.MasterKey), ["length", "name", "prototype", "fromBytes"]);
+  assert.doesNotMatch(JSON.stringify(master), new RegExp(Buffer.from(MASTER_KEY).toString("hex")));
+});
+
+// §2: the album wrap binds album_id through the AAD, so the wrong id is an
+// unwrap failure rather than a wrong K_album that fails several layers later.
+test("K_album round-trips under K_master and is bound to album_id (§2)", () => {
+  const master = e.MasterKey.fromBytes(new Uint8Array(randomBytes(32)));
+  const albumId = new Uint8Array(randomBytes(16));
+  const plaintext = new Uint8Array(randomBytes(100));
+
+  const stored = e.wrapAlbumKeyWithMaster(key, master, albumId);
+  assert.equal(stored.wrapped.length, 48);
+  assert.equal(stored.wrapNonce.length, 24);
+  const again = e.wrapAlbumKeyWithMaster(key, master, albumId);
+  assert.notDeepEqual(again.wrapNonce, stored.wrapNonce, "fresh wrap_nonce per wrap");
+
+  const reloaded = e.MasterWrappedKey.fromParts(stored.wrapped, stored.wrapNonce);
+  const unwrapped = e.unwrapAlbumKeyWithMaster(reloaded, master, albumId);
+  const object = e.encryptAsset(key, ASSET_ID, plaintext);
+  assert.deepEqual(e.decryptAsset(unwrapped, ASSET_ID, object), plaintext);
+
+  const otherId = albumId.slice();
+  otherId[15]! ^= 1;
+  assert.equal(caught(() => e.unwrapAlbumKeyWithMaster(reloaded, master, otherId)).code, "AuthenticationFailed");
+  const otherMaster = e.MasterKey.fromBytes(new Uint8Array(randomBytes(32)));
+  assert.equal(caught(() => e.unwrapAlbumKeyWithMaster(reloaded, otherMaster, albumId)).code, "AuthenticationFailed");
+});
+
+test("the exported lengths are §6.2's, §3.1's and §2's", () => {
   assert.equal(e.chunkSize(), 262144);
   assert.equal(e.albumKeyLen(), 32);
   assert.equal(e.assetIdLen(), 16);
@@ -72,4 +107,8 @@ test("the exported lengths are §6.2's and §3.1's", () => {
   assert.equal(e.recipientIdLen(), 16);
   assert.equal(e.wrappedLen(), 48);
   assert.equal(e.wrapNonceLen(), 24);
+  assert.equal(e.albumIdLen(), 16);
+  assert.equal(e.masterKeyLen(), 32);
+  assert.equal(e.masterWrappedLen(), 48);
+  assert.equal(e.masterWrapNonceLen(), 24);
 });
