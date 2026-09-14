@@ -3,15 +3,19 @@
 //! reads it back under plain `cargo test`.
 
 use crate::aead::aead_encrypt;
+use crate::album_wrap::wrap_with_nonce;
 use crate::chunk::decrypt_chunk;
 use crate::envelope::encrypt_with_header;
 use crate::header::{Header, HeaderError};
 use crate::keys::{cipher_for, keyed_blake2b_256};
-use crate::test_fixtures::{ASSET_ID, BASE_NONCE, K_ALBUM, album_key, hex};
+use crate::test_fixtures::{
+    ALBUM_ID, ALBUM_WRAP_NONCE, ASSET_ID, BASE_NONCE, K_ALBUM, K_MASTER, album_key, hex,
+};
 use crate::wrap::{derive_kek, normalize_passphrase, wrap_aad, wrap_with_salt_and_nonce};
 use crate::{
-    AlbumKey, AssetId, CHUNK_SIZE, EnvelopeError, RecipientId, Salt, WrapError, WrapParams,
-    WrappedKey, decrypt_asset, unwrap_album_key,
+    AlbumId, AlbumKey, AssetId, CHUNK_SIZE, EnvelopeError, MasterKey, MasterWrappedKey,
+    RecipientId, Salt, WrapError, WrapParams, WrappedKey, decrypt_asset, unwrap_album_key,
+    unwrap_album_key_with_master,
 };
 use argon2::{Algorithm, Argon2, AssociatedData, ParamsBuilder, Version};
 use base64::Engine;
@@ -85,6 +89,7 @@ struct VectorFile {
     key_derivation: Vec<KeyDerivationVector>,
     anchors: Anchors,
     wrap: Vec<WrapVector>,
+    album_wrap: Vec<AlbumWrapVector>,
     protocol: Protocol,
 }
 
@@ -137,6 +142,19 @@ struct WrapVector {
     salt: String,
     params: Params,
     recipient_id: String,
+    wrap_nonce: String,
+    wrapped: String,
+}
+
+/// §9 category 16: `K_album` under `K_master`, bound to `album_id` (§2).
+/// No salt and no params — there is no KDF; `K_master` is given, not derived.
+#[derive(Serialize, Deserialize)]
+struct AlbumWrapVector {
+    category: u8,
+    name: String,
+    k_album: String,
+    k_master: String,
+    album_id: String,
     wrap_nonce: String,
     wrapped: String,
 }
@@ -437,6 +455,27 @@ fn wrap_vectors() -> Vec<WrapVector> {
         wrap_vector("v1 parameters (§6.2)", SALT_V1_PARAMS, Params::V1),
         wrap_vector("low parameters", SALT, Params::LOW),
     ]
+}
+
+/// The fixtures are album_wrap.rs's, so this entry coincides with its
+/// KNOWN_ANSWER_WRAPPED. The nonce is fixed here and drawn fresh in production.
+fn album_wrap_vectors() -> Vec<AlbumWrapVector> {
+    let wrapped: [u8; 48] = wrap_with_nonce(
+        &album_key(),
+        &MasterKey::from_bytes(K_MASTER),
+        &AlbumId::from_bytes(ALBUM_ID),
+        &ALBUM_WRAP_NONCE,
+    )
+    .unwrap();
+    vec![AlbumWrapVector {
+        category: 16,
+        name: "K_album under K_master, bound to album_id (§2)".to_string(),
+        k_album: hex(&K_ALBUM),
+        k_master: hex(&K_MASTER),
+        album_id: hex(&ALBUM_ID),
+        wrap_nonce: hex(&ALBUM_WRAP_NONCE),
+        wrapped: hex(&wrapped),
+    }]
 }
 
 fn salt_length_vector(
@@ -796,6 +835,7 @@ fn build() -> VectorFile {
         key_derivation: key_derivation_vectors(),
         anchors,
         wrap: wrap_vectors(),
+        album_wrap: album_wrap_vectors(),
         protocol: protocol(),
     }
 }
@@ -981,6 +1021,34 @@ fn verify_wrap(
     assert_eq!(unwrapped.expose_bytes(), album.expose_bytes());
 }
 
+/// §9.3: the unwrapped key is proven by what it opens — category 1's object —
+/// never by reading its bytes (§2.2).
+fn verify_album_wrap(v: &AlbumWrapVector, reference: &EnvelopeVector) {
+    assert_eq!(v.category, 16);
+    let master: MasterKey = MasterKey::from_bytes(unhex_array(&v.k_master));
+    let album_id: AlbumId = AlbumId::from_bytes(unhex_array(&v.album_id));
+    let wrap_nonce: [u8; 24] = unhex_array(&v.wrap_nonce);
+    let got: [u8; 48] =
+        wrap_with_nonce(&album_from(&v.k_album), &master, &album_id, &wrap_nonce).unwrap();
+    assert_eq!(hex(&got), v.wrapped, "category 16: wrap");
+
+    let stored: MasterWrappedKey =
+        MasterWrappedKey::try_from_parts(&unhex(&v.wrapped), &wrap_nonce).unwrap();
+    let unwrapped: AlbumKey =
+        unwrap_album_key_with_master(&stored, &master, &album_id).expect("category 16: unwrap");
+    assert_eq!(reference.category, 1);
+    assert_eq!(
+        hex(&decrypt_asset(
+            &unwrapped,
+            &AssetId::from_bytes(unhex_array(&reference.asset_id)),
+            &unhex(&reference.object),
+        )
+        .unwrap()),
+        reference.plaintext,
+        "category 16: the unwrapped key opens category 1"
+    );
+}
+
 fn verify_protocol(p: &Protocol) {
     let t = &p.token;
     assert_eq!((t.vector, t.expect), (1, Expect::Accept));
@@ -1125,6 +1193,9 @@ fn committed_vectors_verify() {
         );
     }
 
+    assert_eq!(file.album_wrap.len(), 1);
+    verify_album_wrap(&file.album_wrap[0], &file.envelope[0]);
+
     verify_protocol(&file.protocol);
 }
 
@@ -1186,6 +1257,7 @@ fn envelope_entries(f: &VectorFile) -> Vec<Entry> {
         .map(|c| (c, None)),
     );
     v.extend(f.wrap.iter().map(|e| (e.category, None)));
+    v.extend(f.album_wrap.iter().map(|e| (e.category, None)));
     v
 }
 

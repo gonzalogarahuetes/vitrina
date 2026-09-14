@@ -172,6 +172,17 @@
       "wrapped": "2b2b3d1289ac7c793735f7bd2ac86824f0b44878ba75b8865acdf827ab812da67f076808904b46b8600a535b6754ba61"
     }
   ],
+  "album_wrap": [
+    {
+      "category": 16,
+      "name": "K_album under K_master, bound to album_id (§2)",
+      "k_album": "c0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedf",
+      "k_master": "c1f4f2b3110e6e485c477492ec981a77b6678768d8359ee816235ac1b45cf3c2",
+      "album_id": "a9397813939b4e919f1e9b054d86fb7f",
+      "wrap_nonce": "14f0ec7fbead5395106dc2346416cde44e2d322408c387d7",
+      "wrapped": "940643c00f8692b602146b14b1dc7c70245230628ef840b1342c97e0b272c718df385349d9ce16c4953eaf6ad50a2c11"
+    }
+  ],
   "protocol": {
     "token": {
       "vector": 1,
