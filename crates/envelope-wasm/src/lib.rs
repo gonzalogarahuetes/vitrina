@@ -241,6 +241,88 @@ pub fn unwrap_album_key(
     .map_err(|e| Failure::from(e).into())
 }
 
+fn album_id(bytes: &[u8]) -> Result<envelope::AlbumId, JsValue> {
+    envelope::AlbumId::try_from_slice(bytes).map_err(|e| wrong_length("albumId", e).into())
+}
+
+/// `K_master` as an opaque handle (§2, §6.6). It unwraps every album in the
+/// account, so like `AlbumKey` it crosses the boundary inward only (§2.2):
+/// there is deliberately no method returning its bytes.
+#[wasm_bindgen]
+pub struct MasterKey(envelope::MasterKey);
+
+#[wasm_bindgen]
+impl MasterKey {
+    #[wasm_bindgen(js_name = fromBytes)]
+    pub fn from_bytes(
+        #[wasm_bindgen(js_name = masterKey)] master_key: &[u8],
+    ) -> Result<MasterKey, JsValue> {
+        envelope::MasterKey::try_from_slice(master_key)
+            .map(MasterKey)
+            .map_err(|e| wrong_length("masterKey", e).into())
+    }
+}
+
+/// What the relay stores for an album wrapped under `K_master` (§2). No salt:
+/// there is no KDF, `K_master` is given rather than derived. Both parts are
+/// ciphertext or public values.
+#[wasm_bindgen]
+pub struct MasterWrappedKey(envelope::MasterWrappedKey);
+
+#[wasm_bindgen]
+impl MasterWrappedKey {
+    #[wasm_bindgen(js_name = fromParts)]
+    pub fn from_parts(
+        wrapped: &[u8],
+        #[wasm_bindgen(js_name = wrapNonce)] wrap_nonce: &[u8],
+    ) -> Result<MasterWrappedKey, JsValue> {
+        // try_from_parts checks `wrapped` first, then `wrap_nonce`, and reports
+        // the first mismatch; the expected length tells the caller which.
+        envelope::MasterWrappedKey::try_from_parts(wrapped, wrap_nonce)
+            .map(MasterWrappedKey)
+            .map_err(|e| {
+                let param = if e.expected == envelope::MasterWrappedKey::WRAPPED_LEN {
+                    "wrapped"
+                } else {
+                    "wrapNonce"
+                };
+                wrong_length(param, e).into()
+            })
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn wrapped(&self) -> Vec<u8> {
+        self.0.wrapped.to_vec()
+    }
+
+    #[wasm_bindgen(getter, js_name = wrapNonce)]
+    pub fn wrap_nonce(&self) -> Vec<u8> {
+        self.0.wrap_nonce.to_vec()
+    }
+}
+
+#[wasm_bindgen(js_name = wrapAlbumKeyWithMaster)]
+pub fn wrap_album_key_with_master(
+    album: &AlbumKey,
+    master: &MasterKey,
+    #[wasm_bindgen(js_name = albumId)] album_id: &[u8],
+) -> Result<MasterWrappedKey, JsValue> {
+    envelope::wrap_album_key_with_master(&album.0, &master.0, &self::album_id(album_id)?)
+        .map(MasterWrappedKey)
+        .map_err(|e| Failure::from(e).into())
+}
+
+#[wasm_bindgen(js_name = unwrapAlbumKeyWithMaster)]
+pub fn unwrap_album_key_with_master(
+    wrapped: &MasterWrappedKey,
+    master: &MasterKey,
+    #[wasm_bindgen(js_name = albumId)] album_id: &[u8],
+) -> Result<AlbumKey, JsValue> {
+    envelope::unwrap_album_key_with_master(&wrapped.0, &master.0, &self::album_id(album_id)?)
+        .map(AlbumKey)
+        .map_err(|e| Failure::from(e).into())
+}
+
 // wasm-bindgen cannot export constants, so the crate's lengths are functions.
 
 #[wasm_bindgen(js_name = chunkSize)]
@@ -276,4 +358,26 @@ pub fn wrapped_len() -> u32 {
 #[wasm_bindgen(js_name = wrapNonceLen)]
 pub fn wrap_nonce_len() -> u32 {
     envelope::WrappedKey::WRAP_NONCE_LEN as u32
+}
+
+#[wasm_bindgen(js_name = albumIdLen)]
+pub fn album_id_len() -> u32 {
+    envelope::AlbumId::LEN as u32
+}
+
+#[wasm_bindgen(js_name = masterKeyLen)]
+pub fn master_key_len() -> u32 {
+    envelope::MasterKey::LEN as u32
+}
+
+// §2's album wrap and §6.2's passphrase wrap are independent constructions
+// whose lengths currently agree; each reads its own constant.
+#[wasm_bindgen(js_name = masterWrappedLen)]
+pub fn master_wrapped_len() -> u32 {
+    envelope::MasterWrappedKey::WRAPPED_LEN as u32
+}
+
+#[wasm_bindgen(js_name = masterWrapNonceLen)]
+pub fn master_wrap_nonce_len() -> u32 {
+    envelope::MasterWrappedKey::WRAP_NONCE_LEN as u32
 }
