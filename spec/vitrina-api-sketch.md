@@ -2081,13 +2081,15 @@ _producers_, which is the conflation §7.1 spends a table preventing.
 to this PR and the routes cannot be tested without a number.** Brief §12 and
 encryption spec §6.6.1 fix the _shape_: exactly one Argon2id parameter set in the
 system, applied by the client over the password, sized for the weakest phone the
-product targets. They leave the _values_ to phase-0-plan §8's V.1 measurement,
-which needs C.10 and has not run.
+product targets. They left the values to phase-0-plan §8's V.1 measurement, which
+ran on 14 September 2026 and confirmed them: 2239 ms worst on a Helio G35 against
+a pre-registered 3000 ms ceiling. The figures are normative (encryption spec §6.2)
+rather than provisional.
 
 |                   | Value                        | Status                                                                                                                               |
 | ----------------- | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
 | Argon2id version  | **1.3 (`0x13`)**             | Normative — encryption spec §6.2, and not a parameter this API carries (§7.5)                                                        |
-| `kdf_memory_kib`  | **65536** (64 MiB)           | v1 chosen value, **provisional pending V.1**                                                                                         |
+| `kdf_memory_kib`  | **65536** (64 MiB)           | v1 chosen value, **Confirmed by V.1**, 14 September 2026                                                                             |
 | `kdf_iterations`  | **3**                        | as above                                                                                                                             |
 | `kdf_parallelism` | **1**                        | as above                                                                                                                             |
 | Floors, enforced  | `>= 16384` · `>= 2` · `>= 1` | Schema §3's floors for `recipients`, applied to `owner_keys` by the Phase 1 migration (§0) and mirrored in the `/signup` JSON Schema |

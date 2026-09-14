@@ -154,7 +154,7 @@ Phase 0 is done when all of the following are true. Not "mostly."
 - [x] Chunk _i_ decrypts given only the header and that chunk's bytes (C.7) — **done (C.7)**
 - [x] The WASM module loads in a browser and round-trips a 3 MB buffer — **done on two devices** (§8)
 - [x] The binding validates every length it accepts and errors rather than panicking, with a harness assertion per wrong-length input (§7, C.10) — **done (C.10)**
-- [x] V.1 passes on real low-end Android hardware, or the spec has been amended — **passed 13 September 2026**, 2239 ms worst against a pre-registered 3000 ms (§8)
+- [x] V.1 passes on real low-end Android hardware, or the spec has been amended — **passed 14 September 2026**, 2239 ms worst against a pre-registered 3000 ms (§8)
 - [x] V.2 passes on real iOS Safari, or the chunk size has been amended — **passed; 256 KiB stands** (§8)
 - [x] The encryption spec has been corrected to match the implementation exactly, with every ambiguity found during C.1–C.8 resolved in the document — **done, 13 September 2026.** Uniform pass over §0–§10 against the crate, with §7's unimplemented metadata pipeline as an unannounced control (correctly returned as not located). Zero divergences across 29 sections; five findings, all resolved _in the document_ rather than listed
 - [x] Exported JSON vectors live in `spec/vectors/` and CI runs against them — **pending regeneration**: the spec now specifies 15 envelope categories and 7 protocol vectors and the committed file carries fewer
