@@ -251,7 +251,9 @@ The salt length needs enforcing in the crate, because **nothing else will enforc
 
 **Argon2id parameters for version 1:** **Argon2id v1.3 (`0x13`)**, memory 64 MiB, iterations 3, parallelism 1. The version is normative: v1.0 and v1.3 produce different outputs from identical inputs, and categories 8 and 9 pin it only in practice — an implementer working from this document alone would otherwise have to guess.
 
-Parameters are stored per recipient, not hardcoded, so they can be raised later without invalidating existing invitations. 64 MiB is a floor chosen for a mobile browser running the crate under WASM; libsodium's `MODERATE` preset (256 MiB) is the figure it was chosen against, and would risk failing to allocate on the low-end Android devices in our audience. **Verify on real target devices before shipping**, not in a desktop browser.
+Parameters are stored per recipient, not hardcoded, so they can be raised later without invalidating existing invitations. 64 MiB is a floor chosen for a mobile browser running the crate under WASM; libsodium's `MODERATE` preset (256 MiB) is the figure it was chosen against, and would risk failing to allocate on the low-end Android devices in our audience.
+
+**Measured, 14 September 2026.** Phase-0-plan §8's V.1 ran these figures on a Helio G35 — all Cortex-A53, so `p = 1` puts the work on one 2.3 GHz in-order core — and the worst of twelve runs was 2239 ms against a pre-registered 3000 ms limit. The figures stand as normative and are no longer provisional. **About 25% headroom**, which is what any future raise spends. **Verify on real target devices before shipping**, not in a desktop browser.
 
 ### 6.3 Passphrases MUST be system-generated
 
@@ -553,6 +555,8 @@ Recorded honestly so they are not mistaken for oversights.
 **Access patterns are visible to the relay.** The server sees which recipient fetched which object and when. This powers the "María viewed this" feature, so it is partly intentional — but it means the relay learns viewing behaviour even though it cannot see content.
 
 **The number of assets in an album is visible**, as is upload timing.
+
+**The 64 MiB allocation is untested on a 2 GB device.** V.1 passed on a 4 GB Helio G35 (phase-0-plan §8). The 2 GB variant of the same phone has an identical SoC, so its _timing_ would match — what differs is the browser's per-tab memory headroom, and that failure mode is the tab being evicted rather than running slowly. A recipient on such a device would see the page vanish rather than wait. Recorded as untested rather than assumed covered, and note that a page cannot distinguish an eviction from a manual reload from inside, so any run claiming to close this must say which occurred.
 
 **Account existence is discoverable through signup.** The credential routes are indistinguishable by design (§6.6.1), but registration must reject a duplicate address and v1 has no email sending, so there is no way to answer identically and deliver the difference out of band. What is protected is that an attacker cannot learn which addresses exist _by attacking the login path_; they can still learn it by attempting to register one.
 

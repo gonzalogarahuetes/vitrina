@@ -126,6 +126,16 @@ Two numbers in the spec are guesses that need evidence. Both are cheap to check 
 
 **V.1 — Argon2id at 64 MiB, t=3, p=1, in a mobile browser WASM heap.** On a genuinely low-end Android phone, not a flagship and not a desktop. Measure wall-clock time and whether it completes at all. Acceptable is a few seconds; failing to allocate is a spec change. libsodium's `MODERATE` preset (256 MiB) is the thing we are avoiding, and this is the test that confirms we were right to.
 
+**V.1 PASSED, 14 September 2026.** Xiaomi Redmi 9C (M2006C3MG), Android 11, Chrome 148, MediaTek Helio G35 — octa-core but **all Cortex-A53**, so with `p = 1` the derivation runs on one 2.3 GHz in-order core of a 2012 design. Announced June 2020, discontinued. Two runs of six: cold 1852–2239 ms, warm 1991–2048 ms. **Worst observed 2239 ms against a pre-registered 3000 ms limit** — roughly 25% headroom, and the thresholds were fixed before the device was in hand. **Encryption spec §6.2's 64 MiB / t=3 / p=1 stands; no amendment.**
+
+The warm run is _tighter_ rather than faster — spread falls from 387 ms to 57 ms — so steady state is about 2.0 s and the cold outliers were allocation and JIT.
+
+**What the device log cannot establish, and why it is hand-recorded.** Chrome's UA reduction freezes the model to "K" and reports Android 10 regardless; `navigator.deviceMemory` is Chromium-only and returned unavailable here. Model, SoC, RAM and OS version above come from the device's own settings, not from the page.
+
+**The other three measurements, on the slowest hardware in the set.** Criterion 3: 3 MB round trip in 244–274 ms against 2000. Album open: 20 assets in 3709 ms warm and 5215 ms cold against 15000, with decrypt at 271 ms and 323 ms — **6.2% and 7.3% of album-open cost**, inside the 1–13% band the other devices gave. Thumbnail grid: four passes spanning 820–1700 ms against an informational 3000, and worth treating as the worst case rather than one sample, since eMMC 5.1 plus an A53 is close to the floor for both storage and CPU.
+
+**Known gap, recorded rather than chased.** This is the **4 GB** variant. The 2 GB Redmi 9C has the identical SoC, so its Argon2id _timing_ would match; what differs is Chrome's per-tab headroom against a 64 MiB allocation, and that failure mode is the tab being evicted rather than running slowly. Untested. Note also that the page cannot distinguish an OOM eviction from a manual reload — both look like a fresh load from inside — so any future run of this class must state in writing which occurred.
+
 **V.2 — decrypt and render a full album in mobile Safari.** Twenty photos at ~1600 px. Watch for tab crashes from memory pressure. If 256 KiB chunks are wrong, better to know before anything depends on them.
 
 **V.2 PASSED.** Mobile Safari, twenty photos, no crash, maximum scheduler gap 0 ms — so nothing was suspended and the result is memory behaviour rather than backgrounding. **256 KiB chunks stand; encryption spec §3.1 needs no amendment.**
@@ -144,7 +154,7 @@ Phase 0 is done when all of the following are true. Not "mostly."
 - [x] Chunk _i_ decrypts given only the header and that chunk's bytes (C.7) — **done (C.7)**
 - [x] The WASM module loads in a browser and round-trips a 3 MB buffer — **done on two devices** (§8)
 - [x] The binding validates every length it accepts and errors rather than panicking, with a harness assertion per wrong-length input (§7, C.10) — **done (C.10)**
-- [ ] V.1 passes on real low-end Android hardware, or the spec has been amended
+- [x] V.1 passes on real low-end Android hardware, or the spec has been amended — **passed 13 September 2026**, 2239 ms worst against a pre-registered 3000 ms (§8)
 - [x] V.2 passes on real iOS Safari, or the chunk size has been amended — **passed; 256 KiB stands** (§8)
 - [x] The encryption spec has been corrected to match the implementation exactly, with every ambiguity found during C.1–C.8 resolved in the document — **done, 13 September 2026.** Uniform pass over §0–§10 against the crate, with §7's unimplemented metadata pipeline as an unannounced control (correctly returned as not located). Zero divergences across 29 sections; five findings, all resolved _in the document_ rather than listed
 - [x] Exported JSON vectors live in `spec/vectors/` and CI runs against them — **pending regeneration**: the spec now specifies 15 envelope categories and 7 protocol vectors and the committed file carries fewer
