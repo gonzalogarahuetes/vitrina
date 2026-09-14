@@ -4,6 +4,7 @@
 //! §3.2, §3.3. Reader validation: §8. The format is permanent — see §0.
 
 mod aead;
+mod album_wrap;
 mod chunk;
 mod envelope;
 mod header;
@@ -12,7 +13,6 @@ mod keys;
 #[cfg(test)]
 pub(crate) mod test_fixtures;
 // Reads spec/vectors/ from disk, so it has no wasm32 counterpart.
-mod album_wrap;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod vectors;
 mod wrap;
