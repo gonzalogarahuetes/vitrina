@@ -17,11 +17,14 @@ mod album_wrap;
 mod vectors;
 mod wrap;
 
+pub use album_wrap::{
+    AlbumWrapError, MasterWrappedKey, unwrap_album_key_with_master, wrap_album_key_with_master,
+};
 pub use envelope::{
     CHUNK_SIZE, EnvelopeError, decrypt_asset, decrypt_meta, decrypt_thumb, encrypt_asset,
     encrypt_meta, encrypt_thumb,
 };
 pub use header::{HeaderError, LayoutError};
-pub use ids::{AssetId, RecipientId, Salt, WrongLength};
-pub use keys::AlbumKey;
+pub use ids::{AlbumId, AssetId, RecipientId, Salt, WrongLength};
+pub use keys::{AlbumKey, MasterKey};
 pub use wrap::{WrapError, WrapParams, WrappedKey, unwrap_album_key, wrap_album_key};

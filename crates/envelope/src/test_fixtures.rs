@@ -2,6 +2,7 @@ use crate::AlbumKey;
 use crate::AssetId;
 use crate::header::Header;
 use crate::keys::AssetKey;
+use crate::keys::MasterKey;
 use crate::keys::ThumbKey;
 
 #[rustfmt::skip]
@@ -66,6 +67,10 @@ pub(crate) fn thumb_key() -> ThumbKey {
 
 pub(crate) fn album_key() -> AlbumKey {
     AlbumKey::from_bytes(K_ALBUM)
+}
+
+pub(crate) fn master_key() -> MasterKey {
+    MasterKey::from_bytes(K_MASTER)
 }
 
 /// 65 bytes, ascending — `0x00..=0x40`. At `chunk_size = 64` this splits so
