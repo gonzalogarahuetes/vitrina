@@ -6,7 +6,7 @@ use crate::{
 };
 use argon2::{Algorithm, Argon2, Params, Version};
 use unicode_normalization::{UnicodeNormalization, char::canonical_combining_class};
-use zeroize::{Zeroize, Zeroizing};
+use zeroize::Zeroizing;
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct WrapParams {
     t_cost: u32,
@@ -204,11 +204,15 @@ pub fn unwrap_album_key(
     let aad: [u8; 31] = wrap_aad(&recipient_id);
     let cipher_kek = cipher_for(kek.expose_bytes());
 
-    let mut plaintext = aead_decrypt(&cipher_kek, &wrapped.wrap_nonce, &aad, &wrapped.wrapped)?;
+    let plaintext = Zeroizing::new(aead_decrypt(
+        &cipher_kek,
+        &wrapped.wrap_nonce,
+        &aad,
+        &wrapped.wrapped,
+    )?);
     let bytes: [u8; 32] = plaintext[..]
         .try_into()
         .map_err(|_| WrapError::UnexpectedKeyLength)?;
-    plaintext.zeroize();
 
     Ok(AlbumKey::from_bytes(bytes))
 }

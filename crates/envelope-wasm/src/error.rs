@@ -3,7 +3,9 @@
 //! Messages carry lengths, offsets and parameter names — never key material (§2.2).
 
 use js_sys::{Error, Reflect};
-use vitrina_envelope::{EnvelopeError, HeaderError, LayoutError, WrapError, WrongLength};
+use vitrina_envelope::{
+    AlbumWrapError, EnvelopeError, HeaderError, LayoutError, WrapError, WrongLength,
+};
 use wasm_bindgen::JsValue;
 
 pub(crate) struct Failure {
@@ -186,6 +188,28 @@ impl From<WrapError> for Failure {
             WrapError::EmptyPassphrase => Failure::new(
                 "EmptyPassphrase",
                 "passphrase is empty after normalisation",
+            ),
+        }
+    }
+}
+
+impl From<AlbumWrapError> for Failure {
+    fn from(e: AlbumWrapError) -> Failure {
+        match e {
+            AlbumWrapError::UnexpectedWrappedLength => Failure::new(
+                "UnexpectedWrappedLength",
+                "wrapped key has an unexpected length",
+            ),
+            AlbumWrapError::RandomnessUnavailable => {
+                Failure::new("RandomnessUnavailable", "no CSPRNG available")
+            }
+            AlbumWrapError::UnexpectedKeyLength => Failure::new(
+                "UnexpectedKeyLength",
+                "unwrapped key has an unexpected length",
+            ),
+            AlbumWrapError::AuthenticationFailed => Failure::new(
+                "AuthenticationFailed",
+                "unwrap failed: authentication failed",
             ),
         }
     }

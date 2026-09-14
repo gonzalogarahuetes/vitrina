@@ -27,6 +27,8 @@ pub struct AssetKey(Zeroizing<[u8; 32]>);
 pub struct ThumbKey(Zeroizing<[u8; 32]>);
 pub struct MetaKey(Zeroizing<[u8; 32]>);
 
+pub struct MasterKey(Zeroizing<[u8; 32]>);
+
 pub(crate) trait ChunkKey {
     fn cipher(&self) -> XChaCha20Poly1305;
 }
@@ -110,6 +112,28 @@ impl Kek {
     }
     pub(crate) fn from_bytes(bytes: Zeroizing<[u8; 32]>) -> Kek {
         Kek(bytes)
+    }
+}
+
+// MasterKey has no derive_* methods on purpose. §2: K_album is wrapped by K_master, never derived from it,
+// because a derived key can't be re-wrapped and that kills rotation and recovery.
+impl MasterKey {
+    pub const LEN: usize = 32;
+
+    pub fn from_bytes(bytes: [u8; Self::LEN]) -> Self {
+        MasterKey(Zeroizing::new(bytes))
+    }
+
+    pub fn try_from_slice(bytes: &[u8]) -> Result<MasterKey, WrongLength> {
+        let bytes: [u8; Self::LEN] = bytes.try_into().map_err(|_| WrongLength {
+            expected: Self::LEN,
+            got: bytes.len(),
+        })?;
+        Ok(MasterKey::from_bytes(bytes))
+    }
+
+    pub(crate) fn expose_bytes(&self) -> &[u8; Self::LEN] {
+        &self.0
     }
 }
 

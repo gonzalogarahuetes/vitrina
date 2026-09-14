@@ -1,6 +1,6 @@
 // Phase-0 plan §7, C.10: every [u8; N] in the crate arrives from JavaScript
 // as a Uint8Array of arbitrary length, and every u32 arrives as a JS number
-// that ToInt32 would fold silently. Eight rows, each asserted to error.
+// that ToInt32 would fold silently. Ten rows, each asserted to error.
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { caught, loadEnvelope } from "./load.js";
@@ -11,6 +11,8 @@ const bytes = (n: number, fill = 0xab) => new Uint8Array(n).fill(fill);
 const album = e.AlbumKey.fromBytes(bytes(32));
 const params = new e.WrapParams(8, 1, 1);
 const stored = e.wrapAlbumKey(album, "Café Roble", params, bytes(16));
+const master = e.MasterKey.fromBytes(bytes(32));
+const storedUnderMaster = e.wrapAlbumKeyWithMaster(album, master, bytes(16));
 
 interface ByteRow {
   param: string;
@@ -18,9 +20,10 @@ interface ByteRow {
   calls: ((input: Uint8Array) => unknown)[];
 }
 
-// The seven byte-length rows, each through every entry point that accepts it.
+// The nine byte-length rows, each through every entry point that accepts it.
 const rows: ByteRow[] = [
   { param: "albumKey", expected: 32, calls: [(b) => e.AlbumKey.fromBytes(b)] },
+  { param: "masterKey", expected: 32, calls: [(b) => e.MasterKey.fromBytes(b)] },
   {
     param: "assetId",
     expected: 16,
@@ -42,8 +45,24 @@ const rows: ByteRow[] = [
       (b) => e.unwrapAlbumKey("Café Roble", params, b, stored),
     ],
   },
-  { param: "wrapped", expected: 48, calls: [(b) => e.WrappedKey.fromParts(b, bytes(24), bytes(16))] },
-  { param: "wrapNonce", expected: 24, calls: [(b) => e.WrappedKey.fromParts(bytes(48), b, bytes(16))] },
+  {
+    param: "albumId",
+    expected: 16,
+    calls: [
+      (b) => e.wrapAlbumKeyWithMaster(album, master, b),
+      (b) => e.unwrapAlbumKeyWithMaster(storedUnderMaster, master, b),
+    ],
+  },
+  {
+    param: "wrapped",
+    expected: 48,
+    calls: [(b) => e.WrappedKey.fromParts(b, bytes(24), bytes(16)), (b) => e.MasterWrappedKey.fromParts(b, bytes(24))],
+  },
+  {
+    param: "wrapNonce",
+    expected: 24,
+    calls: [(b) => e.WrappedKey.fromParts(bytes(48), b, bytes(16)), (b) => e.MasterWrappedKey.fromParts(bytes(48), b)],
+  },
   { param: "kdfSalt", expected: 16, calls: [(b) => e.WrappedKey.fromParts(bytes(48), bytes(24), b)] },
 ];
 
@@ -74,7 +93,7 @@ for (const row of rows) {
   });
 }
 
-// The eighth row. Measured ToInt32 results, from the C.10 brief:
+// The tenth row. Measured ToInt32 results, from the C.10 brief:
 //   -1 -> 4294967295   1.5 -> 1   NaN -> 0   2**32 -> 0   2.9 -> 2
 //   Infinity -> 0   2**32 + 5 -> 5   -0.5 -> 0   "7" -> 7
 const coercions: unknown[] = [-1, 1.5, NaN, 2 ** 32, 2.9, Infinity, 2 ** 32 + 5, -0.5, "7"];
