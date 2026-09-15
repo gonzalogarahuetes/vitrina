@@ -12,7 +12,11 @@ This document describes the shape the applied migrations implement — `001_init
 
 If this document and the migration ever disagree, that is a bug in one of them. Fix it deliberately and note which. Do not let them drift.
 
-**"Applied" is a fact about a database, not about a repository**. `track-b-status` recorded B.5 as applied to `vitrina`, which was true of a volume that no longer exists — the compose database was empty when `002` ran, so `001` had never touched it. A migration file is reproducible; its application is not, and a document that records the latter records something nobody can verify later. What makes this safe is a runner that applies migrations idempotently wherever the database is, so applied becomes a property anyone can re-establish rather than a claim in a status document.
+"Applied" is a fact about a database, not about a repository, and packages/server/scripts/migrate.mjs is what makes it checkable. The runner applies every migration in packages/server/migrations/ in order, idempotently, inside one transaction each, and records what it did in schema_migrations — version, filename, SHA-256 and applied_at. A migrate one-shot in docker compose runs it on every up, gated on Postgres's healthcheck, so there is no incantation that brings up a database without migrating it.
+
+The checksum is this section's never-edit-an-applied-migration rule as a failing command. An applied file whose hash no longer matches is a hard error with no "update the recorded hash" path, because there is no circumstance in which that is the right fix.
+
+The runner cannot be told what was applied, by design. A database migrated by hand before the runner existed has no schema_migrations rows to match, and the only way forward is down -v. That is deliberate: a runner that accepts an assertion about history is a runner that records a claim, which is the thing this paragraph exists to stop. track-b-status once recorded B.5 as applied to vitrina — true of a volume that no longer existed, and the compose database was empty when 002 ran.
 
 Reasoning lives in brief §9.1 (why two auth mechanisms), §9.2 (what is deliberately absent), and §9.3 (constraints DDL cannot express). This document does not repeat it.
 
