@@ -88,33 +88,53 @@ pnpm infra:up           # one command; brings up the whole local stack
 | `vitrina-postgres` | `localhost:5432`         | Postgres 15. Database `vitrina`, user `admin`, password `password`.                   |
 | `seaweedfs`        | `localhost:8333`         | SeaweedFS S3 gateway — the S3-compatible object store that holds ciphertext.          |
 | `createbucket`     | — (one-shot, then exits) | Waits for the gateway, then creates the `vitrina-media` bucket. Exiting `0` is done.  |
+| `migrate`          | — (one-shot, then exits) | Waits for Postgres to be healthy, then applies every file in `packages/server/migrations/` the database lacks. Exiting `0` is done. |
+
+`pnpm infra:wait` blocks until both one-shots have exited, and fails with their
+logs if either exited non-zero. `up -d` alone returns as soon as the containers
+have *started*.
+
+Migrations are applied by the `migrate` one-shot, never by hand. It is
+idempotent — a second run applies nothing — and records what it applied, with a
+SHA-256 per file, in `schema_migrations`. An applied migration is never edited
+(schema §0): if one is, the runner refuses to run against any database that
+recorded the original. Fix forward with a new file, or `docker compose down -v`
+for a dev volume. `pnpm db:migrate` runs the same script against whatever
+`DATABASE_URL` names.
 
 Credentials for the object store live in `s3-config.json` and are shared by the
 gateway, the bucket seeder, and the tests, so there is one source of truth. They
 are local development credentials with no production counterpart.
 
 `pnpm infra:down` stops the stack. Volumes are named (`pgdata`, `seaweed-data`)
-and survive it; `docker compose down -v` is the way to start from empty.
+and survive it; `docker compose down -v` is the way to start from empty. A
+volume migrated by hand before the runner existed must be recreated this way —
+the runner has no record of what was applied to it and cannot be told.
 
 ### Tests
 
 ```bash
 cargo test              # envelope crate
 pnpm test               # TypeScript — no Docker needed
-pnpm test:infra         # object store — requires the stack to be up
+pnpm test:infra         # object store and migration runner — requires the stack to be up
 ```
 
 `pnpm test:infra` is deliberately **not** part of `pnpm test`. It talks to a live
-SeaweedFS over the network, so it needs `pnpm infra:up` first and would otherwise
-make the ordinary suite fail on a machine without Docker running. What it checks
-is `infra/object-store.test.mjs`: that a presigned URL round-trips bytes
-unaltered, that byte-range GETs return exactly the right chunk (arithmetic
-offsets, first / middle / partial-final), and that unsigned, tampered, and
-expired URLs are refused. Those are the transport-layer properties the chunked
-envelope depends on.
+SeaweedFS and Postgres over the network, so it needs `pnpm infra:up` and
+`pnpm infra:wait` first and would otherwise make the ordinary suite fail on a
+machine without Docker running. It runs every `infra/*.test.mjs`:
 
-It reads credentials from `s3-config.json`; `S3_ENDPOINT`, `S3_BUCKET`, and the
-usual `AWS_*` variables override that if you point it at something else.
+- `object-store.test.mjs` — that a presigned URL round-trips bytes unaltered,
+  that byte-range GETs return exactly the right chunk (arithmetic offsets, first
+  / middle / partial-final), and that unsigned, tampered, and expired URLs are
+  refused. Those are the transport-layer properties the chunked envelope depends
+  on. It reads credentials from `s3-config.json`; `S3_ENDPOINT`, `S3_BUCKET`,
+  and the usual `AWS_*` variables override that.
+- `migrations.test.mjs` — that a second run of the migration runner applies
+  nothing, that `schema_migrations` matches the files on disk by name and hash,
+  and that an applied file whose recorded hash no longer matches is refused. The
+  last runs in a scratch database it creates and drops. `DATABASE_URL` overrides
+  the compose default.
 
 _(`pnpm test` has no TypeScript suites behind it yet — the packages are still empty.)_
 
@@ -126,8 +146,8 @@ independent jobs that mirror the split above:
 - **`checks`** — hermetic. The forbidden-construction gate, then `pnpm lint`,
   `pnpm test`, `pnpm build`, then `cargo fmt --check`, `cargo test`,
   `cargo clippy -- -D warnings`. No Docker.
-- **`infra`** — brings up the compose stack, waits for the `createbucket` seeder
-  to exit 0, runs `pnpm test:infra`, tears down.
+- **`infra`** — brings up the compose stack, waits for the `createbucket` and
+  `migrate` one-shots to exit 0, runs `pnpm test:infra`, tears down.
 
 They do not depend on each other, so a failure in one still reports the other's
 real result.

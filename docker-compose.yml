@@ -10,6 +10,11 @@ services:
       - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U admin -d vitrina"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
 
   seaweedfs:
     image: chrislusf/seaweedfs:4.41
@@ -43,7 +48,23 @@ services:
         aws --endpoint-url http://seaweedfs:8333 s3 mb s3://vitrina-media 2>/dev/null || true;
         aws --endpoint-url http://seaweedfs:8333 s3api head-bucket --bucket vitrina-media
       '
+    command: node packages/server/scripts/migrate.mjs
     restart: "no"
+
+  # One-shot, like createbucket: provisions the schema as part of `up`. There
+  # is deliberately no way to bring up Postgres without this running.
+  migrate:
+    image: node:22.14.0-slim # must match NODE_VERSION in .github/workflows/ci.yml
+    depends_on:
+      vitrina-postgres:
+        condition: service_healthy
+    working_dir: /repo
+    volumes:
+      - ./node_modules:/repo/node_modules:ro
+      - ./packages/server:/repo/packages/server:ro
+    environment:
+      DATABASE_URL: postgres://admin:password@vitrina-postgres:5432/vitrina
+    command: node packages/server/scripts/migrate.mjs
 
 volumes:
   seaweed-data:

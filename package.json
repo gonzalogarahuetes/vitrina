@@ -10,25 +10,27 @@
     "check:forbidden": "./scripts/check-forbidden-constructions.sh",
     "check:citations": "node scripts/check-spec-citations.mjs",
     "infra:up": "docker compose up -d",
-    "infra:wait": "./scripts/wait-for-createbucket.sh",
     "infra:down": "docker compose down",
-    "test:infra": "node --test infra/object-store.test.mjs",
+    "infra:wait": "./scripts/wait-for-oneshot.sh createbucket && ./scripts/wait-for-oneshot.sh migrate",
+    "db:migrate": "pnpm --filter @vitrina/server db:migrate",
+    "test:infra": "node --test infra/*.test.mjs",
     "test:wasm": "pnpm --filter @vitrina/envelope test:wasm"
   },
   "keywords": [],
   "author": "",
   "license": "UNLICENSED",
-  "packageManager": "pnpm@11.22.0",
+  "packageManager": "pnpm@11.27.0",
   "devEngines": {
     "packageManager": {
       "name": "pnpm",
-      "version": "11.22.0",
+      "version": "11.27.0",
       "onFail": "download"
     }
   },
   "type": "module",
   "devDependencies": {
     "@aws-sdk/client-s3": "^3.1106.0",
-    "@aws-sdk/s3-request-presigner": "^3.1106.0"
+    "@aws-sdk/s3-request-presigner": "^3.1106.0",
+    "pg": "^8.23.0"
   }
 }

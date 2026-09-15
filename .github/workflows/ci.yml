@@ -28,7 +28,8 @@ permissions:
   contents: read
 
 env:
-  # One place to change the Node version. Matches the version in local use.
+  # The Node version for the JS steps. Matches the version in local use, and
+  # the `migrate` image tag in docker-compose.yml — change both together.
   NODE_VERSION: 22.14.0
   # pnpm's version comes from `packageManager` in the root package.json, which
   # corepack reads. Do not name a pnpm version here — one source of truth.
@@ -157,8 +158,14 @@ jobs:
       # Each is another step in this job; none requires restructuring.
 
   # ---------------------------------------------------------------------------
-  # Job 2 — needs Docker. Verifies the store's Range and presigned-URL support,
-  # which the chunked envelope design depends on (encryption spec §3.3).
+  # Job 2 — needs Docker. Two things, both against the live compose stack:
+  #   - the store's Range and presigned-URL support, which the chunked envelope
+  #     design depends on (encryption spec §3.3);
+  #   - the migration runner — that the schema compose brings up is the one in
+  #     packages/server/migrations/, that a re-run is a no-op, and that an
+  #     edited applied migration is refused (schema §0).
+  # The database is migrated by compose's own `migrate` one-shot during `up`,
+  # not by a step here, so there is no CI-only path that forgets it.
   # ---------------------------------------------------------------------------
   infra:
     name: infra (docker)
@@ -183,9 +190,11 @@ jobs:
         run: docker compose up -d
 
       # `up -d` returns when containers have started, which says nothing about
-      # whether the bucket exists. createbucket is a one-shot seeder; poll its
-      # real exit status rather than sleeping a guessed number of seconds.
-      - name: Wait for the bucket seeder
+      # whether the bucket exists or the schema is applied. createbucket and
+      # migrate are one-shots; poll their real exit statuses rather than
+      # sleeping a guessed number of seconds. A non-zero migrate fails here,
+      # with its logs, instead of as a missing table in the first test to need one.
+      - name: Wait for the one-shots (bucket seeder, migrator)
         run: pnpm infra:wait
 
       - name: pnpm test:infra
