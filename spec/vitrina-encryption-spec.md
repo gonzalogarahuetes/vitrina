@@ -367,13 +367,41 @@ The relay cannot verify that a client derived the proof honestly, so a plain fas
 
 **Honest limit:** against a live full compromise this buys nothing, since proofs are visible in flight.
 
-**One Argon2id run, two derivations.** The client runs Argon2id once to a root, then derives the KEK and the proof by keyed hash with distinct domain strings — §2's existing pattern, no new primitive, and it halves the cost on the device the parameters are sized for. §6.6's independence requirement is satisfied: a PRF output does not yield its key. **So there is exactly one parameter set, client-side, sized for the weakest phone** — measured by phase-0-plan §8's V.1, which needs C.10.
+**One Argon2id run, two derivations.** The client runs Argon2id once to a root, then derives the KEK and the proof by keyed hash with distinct domain strings — **§6.6.2 names them and the wrap's AAD**; §2's existing pattern, no new primitive, and it halves the cost on the device the parameters are sized for. §6.6's independence requirement is satisfied: a PRF output does not yield its key. **So there is exactly one parameter set, client-side, sized for the weakest phone** — measured by phase-0-plan §8's V.1, which confirmed them on 14 September 2026.
 
 **Recovery is out of v1**, and the consequence is not softenable: forgetting the password loses every album. The relay cannot re-wrap what it cannot read. This is why the `owner_keys` table exists as a table rather than a column — Phase 2 adds recovery by inserting a row, with no migration and no re-encryption.
 
 ### 6.6.2 Account creation
 
-`K_master` is generated **client-side** at signup, 32 random bytes from a CSPRNG. The client derives the KEK from the password, wraps `K_master`, and posts the wrapping. The relay receives:
+`K_master` is generated **client-side** at signup, 32 random bytes from a CSPRNG. The client derives the KEK from the password, wraps `K_master`, and posts the wrapping.
+
+**The derivation, specified 14 September 2026.** §6.6.1 described its shape — one Argon2id run, two keyed-hash outputs — and named neither domain string, so the values two implementations must compute identically did not exist anywhere. Surfaced by trying to build it.
+
+```
+root   = Argon2id-v1.3(UTF-8 of NFC(password), kdf_salt, m, t, p)  → 32 bytes
+KEK    = BLAKE2b-256(key = root, msg = "vitrina-owner-kek-v1")
+proof  = BLAKE2b-256(key = root, msg = "vitrina-owner-proof-v1")
+
+wrapped_master = XChaCha20-Poly1305(
+                     key   = KEK,
+                     nonce = wrap_nonce (24 random bytes),
+                     msg   = K_master,
+                     aad   = "vitrina-master-wrap-v1")
+```
+
+Domain strings are ASCII, no null terminator and no length prefix — §2's convention. The keyed hash is §2's, anchored externally by §9 category 6. `root` is discarded once the KEK and proof are derived.
+
+**The owner wrap's AAD is the domain string alone, and the reason is worth stating** because the other two wraps bind an identifier. §6.2 binds `recipient_id` and §2 binds `album_id`, and in both the client holds that id before wrapping. **An owner id is server-assigned** — at signup the client has no id to bind, and brief §9.3's rule is that only ids inside an AAD are client-generated. So this wrap binds nothing but its own domain string, which is enough to stop a blob being moved between the three wrap types and is all that is available. Consistency check: api-sketch §7.5's signup body correctly carries no `id`.
+
+**The password is NFC-normalised and nothing else.** Not §6.3's passphrase normalisation — that strips marks and folds case, which is correct for a system-generated passphrase transcribed by a human and wrong for a password its owner typed, where folding `Café` into `cafe` discards entropy the user chose. NFC alone fixes the composition ambiguity two keyboards can produce without weakening anything. **This is the one place in the system where a human-supplied secret is _not_ aggressively normalised, and the asymmetry is deliberate.**
+
+**An empty password MUST be rejected before Argon2id runs.** This is an interop rule rather than a local choice: a client that accepts `""` creates an account that a rejecting client can never open. Note the rule is narrower than §6.3's for passphrases — that one rejects _empty after normalisation_, because passphrase normalisation collapses whitespace to nothing. NFC does not, so `"   "` remains three characters and is a legal password. **Reject the empty string and nothing else.**
+
+**No other password policy exists, and none can.** The relay never sees a password (§6.6), so it cannot enforce length, composition or a breach list — it receives a 32-byte proof that looks identical whatever produced it. **Any password policy is the client's alone, and a client that enforces none lets its own user pick a weak one.** This is the same shape as §6.6.1's weak-client problem and has the same answer: the pepper makes a stolen database uncrackable regardless, which is why a weak password is a risk to that account under live compromise rather than to the database at rest. Recorded because "why doesn't the server require a strong password" has an answer that is structural rather than an omission, and because a minimum length is a product decision belonging to the client and the API rather than to this format.
+
+**Conformance vectors are required before Phase 1**, per §9.1: a password, a salt, parameters, and the expected `root`, KEK and proof — plus the wrapped blob, so the KEK is externally checkable through what it opens (§9.3). This is the vector set §6.6 has flagged as owed since the account model closed.
+
+The relay receives:
 
 - the address as typed, unnormalised (§6.6)
 - the login proof — **never the password**
