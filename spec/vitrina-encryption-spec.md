@@ -1,7 +1,7 @@
 # Vitrina — Encryption Envelope Specification
 
 **Version:** 1 (envelope format version `0x01`)
-**Status:** Draft for review · last updated 13 September 2026 · §2.2, §3.3, §5, §6.2, §6.3, §8, §9, §9.1, §9.2 and §9.3 revised during C.5–C.10 and exit-criterion review
+**Status:** Draft for review · last updated 15 September 2026 · §2.2, §3.3, §5, §6.2, §6.3, §8, §9, §9.1, §9.2 and §9.3 revised during C.5–C.10 and exit-criterion review
 **Companion to:** `vitrina-project-brief.md` §6–§8
 
 ---
@@ -315,7 +315,7 @@ Neither mode dominates. Direct mode remains the default because database theft i
 
 ### 6.6 Owner key wrapping
 
-**Not yet fully specified. The shape is decided (brief §11, 20 August 2026); the exact derivation is not, and MUST be settled with conformance vectors per §9.1 before Phase 1.**
+**The shape was decided on 20 August 2026 (brief §11) and the derivation on 15 September 2026 — §6.6.2 gives the formulas, the domain strings, the lengths and the wrap's AAD. Its conformance vectors are still owed per §9.1 and are required before Phase 1.**
 
 An owner holds `K_master`, 32 random bytes, generated client-side at signup. Every `K_album` they own is wrapped under it and stored server-side. `K_master` itself is wrapped once per credential and stored in `owner_keys` — one row for the password today, one for a recovery key in Phase 2, potentially one per device later.
 
@@ -391,13 +391,28 @@ wrapped_master = XChaCha20-Poly1305(
 
 Domain strings are ASCII, no null terminator and no length prefix — §2's convention. The keyed hash is §2's, anchored externally by §9 category 6. `root` is discarded once the KEK and proof are derived.
 
-**The owner wrap's AAD is the domain string alone, and the reason is worth stating** because the other two wraps bind an identifier. §6.2 binds `recipient_id` and §2 binds `album_id`, and in both the client holds that id before wrapping. **An owner id is server-assigned** — at signup the client has no id to bind, and brief §9.3's rule is that only ids inside an AAD are client-generated. So this wrap binds nothing but its own domain string, which is enough to stop a blob being moved between the three wrap types and is all that is available. Consistency check: api-sketch §7.5's signup body correctly carries no `id`.
+| Value                | Length                                                    |
+| -------------------- | --------------------------------------------------------- |
+| `kdf_salt`           | **16 bytes**                                              |
+| `root`, KEK, `proof` | **32 bytes** each                                         |
+| `wrap_nonce`         | **24 bytes**                                              |
+| `wrapped_master`     | **48 bytes** — `K_master` (32) plus the Poly1305 tag (16) |
+
+**Argon2id's own `secret` and `associatedData` inputs are both EMPTY**, as in §6.2. Stated rather than inherited: §6.2's table and its warning are scoped to passphrase recipients, and a field-level omission is the one failure §0 records the consistency check as unable to catch — `wrap_nonce` went undocumented that way once already.
+
+**The owner wrap's AAD is the domain string alone, and the reason is worth stating** because the other two wraps bind an identifier. §6.2 binds `recipient_id` and §2 binds `album_id`, and in both the client holds that id before wrapping. **An owner id is server-assigned** — at signup the client has no id to bind, since the relay assigns it in the same transaction that writes the wrapping. Brief §9.3's rule runs _every id inside an AAD is client-generated_, so by contraposition a server-assigned id is not in one; the two facts agree rather than one deriving the other. So this wrap binds nothing but its own domain string, which is enough to stop a blob being moved between the three wrap types and is all that is available. Consistency check: api-sketch §7.5's signup body correctly carries no `id`.
 
 **The password is NFC-normalised and nothing else.** Not §6.3's passphrase normalisation — that strips marks and folds case, which is correct for a system-generated passphrase transcribed by a human and wrong for a password its owner typed, where folding `Café` into `cafe` discards entropy the user chose. NFC alone fixes the composition ambiguity two keyboards can produce without weakening anything. **This is the one place in the system where a human-supplied secret is _not_ aggressively normalised, and the asymmetry is deliberate.**
 
 **An empty password MUST be rejected before Argon2id runs.** This is an interop rule rather than a local choice: a client that accepts `""` creates an account that a rejecting client can never open. Note the rule is narrower than §6.3's for passphrases — that one rejects _empty after normalisation_, because passphrase normalisation collapses whitespace to nothing. NFC does not, so `"   "` remains three characters and is a legal password. **Reject the empty string and nothing else.**
 
-**No other password policy exists, and none can.** The relay never sees a password (§6.6), so it cannot enforce length, composition or a breach list — it receives a 32-byte proof that looks identical whatever produced it. **Any password policy is the client's alone, and a client that enforces none lets its own user pick a weak one.** This is the same shape as §6.6.1's weak-client problem and has the same answer: the pepper makes a stolen database uncrackable regardless, which is why a weak password is a risk to that account under live compromise rather than to the database at rest. Recorded because "why doesn't the server require a strong password" has an answer that is structural rather than an omission, and because a minimum length is a product decision belonging to the client and the API rather than to this format.
+**No other password policy exists, and none can — which makes the client's policy load-bearing rather than cosmetic.** The relay never sees a password (§6.6), so it cannot enforce length, composition or a breach list: it receives a 32-byte proof that looks identical whatever produced it. Any policy is the client's alone.
+
+**And the stakes are higher than the login path suggests.** The pepper (§6.6.1) protects `auth_hash` and nothing else — **`wrapped_master` is not peppered.** An attacker holding the database has `wrapped_master`, `wrap_nonce`, `kdf_salt` and the parameters, and for each candidate password can run Argon2id → root → KEK → attempt the unwrap, with the Poly1305 tag confirming a hit. **A weak owner password is offline-attackable at rest**, exactly as §6.3 argues a human-chosen passphrase would be — and the owner password is the one human-chosen secret in this system with a wrapping stored under it. **Argon2id at §6.2's parameters is the whole of the defence.**
+
+_An earlier revision of this paragraph claimed the pepper made a stolen database uncrackable regardless, and that a weak password was therefore a live-compromise risk rather than an at-rest one. Both halves were wrong, and they contradicted §6.6's own second constraint three subsections earlier. Corrected 14 September 2026._
+
+A minimum length is still a product decision belonging to the client and the API rather than to this format — but it is one with a consequence, not a nicety.
 
 **Conformance vectors are required before Phase 1**, per §9.1: a password, a salt, parameters, and the expected `root`, KEK and proof — plus the wrapped blob, so the KEK is externally checkable through what it opens (§9.3). This is the vector set §6.6 has flagged as owed since the account model closed.
 
