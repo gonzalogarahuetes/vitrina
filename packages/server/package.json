@@ -15,9 +15,10 @@
   "type": "module",
   "dependencies": {
     "@fastify/cors": "^11.3.0",
+    "@vitrina/shared": "workspace:*",
     "fastify": "^5.11.3",
-    "pino": "^10.3.1",
-    "@vitrina/shared": "workspace:*"
+    "pg": "^8.23.0",
+    "pino": "^10.3.1"
   },
   "devDependencies": {
     "@babel/core": "^8.0.1",
