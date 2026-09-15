@@ -30,6 +30,7 @@
   "type": "module",
   "devDependencies": {
     "@aws-sdk/client-s3": "^3.1106.0",
-    "@aws-sdk/s3-request-presigner": "^3.1106.0"
+    "@aws-sdk/s3-request-presigner": "^3.1106.0",
+    "pg": "^8.23.0"
   }
 }
