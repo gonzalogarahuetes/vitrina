@@ -111,6 +111,8 @@ migration than after it:
   `/login/params` and `/owner/key` both select by it. Both are recorded here as
   things this document needs of schema §3, not as schema decisions made here.
 
+**This document is a design record; the code is the contract.** Its value is the reasoning — why `/login/params` exists, why §7.6's limiter survives the pepper correction, why `409` is carved out of §4.3 — none of which a generated schema carries. The client-importable contract is `@vitrina/shared`'s types (§1.4); the Fastify schemas are §4.1's audit surface, not a publication. §6's ledger presumes this: rows move from §6.2 to §6.1 as tests land, which only means something if the code is what is true. **The cost is silent rot in the field tables,** mitigated because the length tests pin those exact numbers. Revisit when Swift and Kotlin exist — Phase 4.
+
 ---
 
 ## 1. The error envelope
@@ -2149,6 +2151,15 @@ compared.
    rule as encryption spec §6.3 step 3, for the same reason: a context-sensitive
    mapping gives two results for one input.
 
+**An address that is empty after normalisation MUST be rejected, on every credential route.**
+`" "` is three characters, passes a 1–254 length check as typed, and normalises to `""` —
+which `UNIQUE` then permits exactly once, leaving an account nobody can name.
+`400 VALIDATION_FAILED` with no `details`, on all three routes: emptiness is a property of the
+input rather than of whether an account exists, so rejecting it reveals nothing and §4.3 is
+untouched. Same class as encryption spec §6.6.2's empty-password rule, and missed there for
+the same reason — a length check on the as-typed form says nothing about what survives
+normalisation.
+
 Nothing else. No IDNA on the domain, no dot-stripping in the local part, no
 plus-suffix removal — each is a provider convention, not an address property,
 and each would merge addresses their provider keeps separate.
@@ -2305,6 +2316,21 @@ than four contracts, and so the point at which each secret exists is visible:
 | 2    | _(local)_ Argon2id once → root → KEK, proof | KEK in memory, proof                               | nothing                                  |
 | 3    | `POST /login` `{email, proof}`              | token, `expires_at`                                | the proof, which it peppers and discards |
 | 4    | `GET /owner/key`                            | `wrapped_master`, nonce → **`K_master` in memory** | that a session read its key row          |
+| 5    | _(session ends)_                            | nothing                                            | —                                        |
+
+**When a session ends, the client frees `MasterKey`, `OwnerKek` and every `AlbumKey` handle.**
+Three things end a session — logout, `expires_at` lapsing, and the tab closing —
+and only the first is a click, which is why the rule is written about the session
+rather than about the button. **Revocation and freeing are independent failures**
+revoking without freeing leaves `K_master` live in WASM memory, and freeing without
+revoking leaves a usable token. `OwnerCredential.proof` is a `Uint8Array` the caller
+zeroes after `POST /login`.
+
+**What this cannot deliver, stated so nothing claims it does:** the password reaches
+`deriveOwnerCredential` as a JavaScript string, and a JavaScript string cannot be
+wiped — it persists until the garbage collector reclaims it, on no schedule the
+client controls. "The password never leaves the device" is true; "the password
+is erased after use" is not, and no amount of freeing makes it so.
 
 The password exists in step 2 only and reaches no request. `K_master` exists
 after step 4 only, in memory, and reaches no request either — what reaches
