@@ -215,7 +215,7 @@ mod tests {
         std::array::from_fn(|i| i as u8)
     }
 
-    /// Self-generated — see §9.2 on what that can and cannot
+    /// 9 category 17 - Self-generated — see §9.2 on what that can and cannot
     /// catch. It pins the composition so a later refactor cannot silently
     /// change the bytes.
     const KNOWN_ANSWER_WRAPPED: &str = "45ae0e8bbf67890dba039c3b730a7a3cc58ba6ede2a1c58446b5ba34532d5e7dbbcfa52bc6e9083d208ade8203c19ec8";

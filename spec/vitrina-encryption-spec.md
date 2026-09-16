@@ -253,7 +253,7 @@ The salt length needs enforcing in the crate, because **nothing else will enforc
 
 Parameters are stored per recipient, not hardcoded, so they can be raised later without invalidating existing invitations. 64 MiB is a floor chosen for a mobile browser running the crate under WASM; libsodium's `MODERATE` preset (256 MiB) is the figure it was chosen against, and would risk failing to allocate on the low-end Android devices in our audience.
 
-**Measured, 14 September 2026.** Phase-0-plan §8's V.1 ran these figures on a Helio G35 — all Cortex-A53, so `p = 1` puts the work on one 2.3 GHz in-order core — and the worst of twelve runs was 2239 ms against a pre-registered 3000 ms limit. The figures stand as normative and are no longer provisional. **About 25% headroom**, which is what any future raise spends. **Verify on real target devices before shipping**, not in a desktop browser.
+**Measured, 15 September 2026.** Phase-0-plan §8's V.1 ran these figures on a Helio G35 — all Cortex-A53, so `p = 1` puts the work on one 2.3 GHz in-order core — and the worst of twelve runs was 2239 ms against a pre-registered 3000 ms limit. The figures stand as normative and are no longer provisional. **About 25% headroom**, which is what any future raise spends. **Verify on real target devices before shipping**, not in a desktop browser.
 
 ### 6.3 Passphrases MUST be system-generated
 
@@ -367,7 +367,7 @@ The relay cannot verify that a client derived the proof honestly, so a plain fas
 
 **Honest limit:** against a live full compromise this buys nothing, since proofs are visible in flight.
 
-**One Argon2id run, two derivations.** The client runs Argon2id once to a root, then derives the KEK and the proof by keyed hash with distinct domain strings — **§6.6.2 names them and the wrap's AAD**; §2's existing pattern, no new primitive, and it halves the cost on the device the parameters are sized for. §6.6's independence requirement is satisfied: a PRF output does not yield its key. **So there is exactly one parameter set, client-side, sized for the weakest phone** — measured by phase-0-plan §8's V.1, which confirmed them on 14 September 2026.
+**One Argon2id run, two derivations.** The client runs Argon2id once to a root, then derives the KEK and the proof by keyed hash with distinct domain strings — **§6.6.2 names them and the wrap's AAD**; §2's existing pattern, no new primitive, and it halves the cost on the device the parameters are sized for. §6.6's independence requirement is satisfied: a PRF output does not yield its key. **So there is exactly one parameter set, client-side, sized for the weakest phone** — measured by phase-0-plan §8's V.1, which confirmed them on 15 September 2026.
 
 **Recovery is out of v1**, and the consequence is not softenable: forgetting the password loses every album. The relay cannot re-wrap what it cannot read. This is why the `owner_keys` table exists as a table rather than a column — Phase 2 adds recovery by inserting a row, with no migration and no re-encryption.
 
@@ -375,7 +375,7 @@ The relay cannot verify that a client derived the proof honestly, so a plain fas
 
 `K_master` is generated **client-side** at signup, 32 random bytes from a CSPRNG. The client derives the KEK from the password, wraps `K_master`, and posts the wrapping.
 
-**The derivation, specified 14 September 2026.** §6.6.1 described its shape — one Argon2id run, two keyed-hash outputs — and named neither domain string, so the values two implementations must compute identically did not exist anywhere. Surfaced by trying to build it.
+**The derivation, specified 15 September 2026.** §6.6.1 described its shape — one Argon2id run, two keyed-hash outputs — and named neither domain string, so the values two implementations must compute identically did not exist anywhere. Surfaced by trying to build it.
 
 ```
 root   = Argon2id-v1.3(UTF-8 of NFC(password), kdf_salt, m, t, p)  → 32 bytes
@@ -410,7 +410,7 @@ Domain strings are ASCII, no null terminator and no length prefix — §2's conv
 
 **And the stakes are higher than the login path suggests.** The pepper (§6.6.1) protects `auth_hash` and nothing else — **`wrapped_master` is not peppered.** An attacker holding the database has `wrapped_master`, `wrap_nonce`, `kdf_salt` and the parameters, and for each candidate password can run Argon2id → root → KEK → attempt the unwrap, with the Poly1305 tag confirming a hit. **A weak owner password is offline-attackable at rest**, exactly as §6.3 argues a human-chosen passphrase would be — and the owner password is the one human-chosen secret in this system with a wrapping stored under it. **Argon2id at §6.2's parameters is the whole of the defence.**
 
-_An earlier revision of this paragraph claimed the pepper made a stolen database uncrackable regardless, and that a weak password was therefore a live-compromise risk rather than an at-rest one. Both halves were wrong, and they contradicted §6.6's own second constraint three subsections earlier. Corrected 14 September 2026._
+_An earlier revision of this paragraph claimed the pepper made a stolen database uncrackable regardless, and that a weak password was therefore a live-compromise risk rather than an at-rest one. Both halves were wrong, and they contradicted §6.6's own second constraint three subsections earlier. Corrected 15 September 2026._
 
 A minimum length is still a product decision belonging to the client and the API rather than to this format — but it is one with a consequence, not a nicety.
 
@@ -502,6 +502,7 @@ Required coverage:
 14. **Negative:** `cipher` byte set to an unimplemented value → rejected. §9.1's table names this, and category 13 does not cover it — `version` and `cipher` are separate rejection conditions in §8
 15. **Negative:** object truncated **without** adjusting the header → rejected. Distinct from category 12, which adjusts `plaintext_length` and therefore exercises the AAD. Here every present chunk authenticates correctly and only §8's length check catches it — the check found broken on 32-bit targets during exit-criterion review, which is why it needs a vector rather than an argument
 16. `K_album` under `K_master` — wrap and unwrap round trip with a fixed `album_id`, `wrap_nonce` and `K_master` (§2). Externally verifiable: the blob unwraps to `K_album`, which decrypts category 1's object, so no key is ever read. Category 7 anchors the primitive; this vector is what anchors the composition.
+17. `K_master` under the password-derived KEK — the full owner derivation and wrap (§6.6.2): password, salt and parameters → `root`, KEK and `proof`, plus the wrapped blob. Two distinct parameter sets, on category 9's reasoning. The KEK is checkable through what it opens rather than by reading it (§9.3).
 
 Categories 6, 7 and 8 are one per §1 primitive, deliberately contiguous — every primitive gets its own external anchor, and a missing one is visible as a gap in the sequence.
 

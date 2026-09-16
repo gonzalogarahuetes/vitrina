@@ -6,7 +6,7 @@ import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { test } from "node:test";
 import { REPO_ROOT, caught, hex, loadEnvelope, unhex } from "./load.js";
-import type { AlbumKey } from "./load.js";
+import type { AlbumKey, MasterKey } from "./load.js";
 
 interface Params {
   m_cost_kib: number;
@@ -52,6 +52,19 @@ interface AlbumWrapVector {
   wrap_nonce: string;
   wrapped: string;
 }
+interface OwnerWrapVector {
+  category: number;
+  name: string;
+  password: string;
+  salt: string;
+  params: Params;
+  k_master: string;
+  root: string;
+  kek: string;
+  proof: string;
+  wrap_nonce: string;
+  wrapped: string;
+}
 interface SaltLengthVector extends Omit<WrapVector, "wrapped" | "category"> {
   vector: number;
   wrapped?: string;
@@ -85,6 +98,7 @@ interface VectorFile {
   anchors: Record<string, { category: number }>;
   wrap: WrapVector[];
   album_wrap: AlbumWrapVector[];
+  owner_wrap: OwnerWrapVector[];
   protocol: {
     token: { vector: number; token_raw: string; token_base64url: string; sha256: string; expect: string };
     token_noncanonical: { vector: number; token_base64url: string; expect: string };
@@ -115,6 +129,7 @@ test("vector file targets envelope version 1", () => {
   assert.deepEqual(file.envelope.map((v) => v.category), [1, 2, 3, 4]);
   assert.deepEqual(file.envelope_negative.map((v) => v.category), [10, 11, 12, 13, 14, 15]);
   assert.deepEqual(file.album_wrap.map((v) => v.category), [16]);
+  assert.deepEqual(file.owner_wrap.map((v) => v.category), [17, 17]);
 });
 
 // Categories 1–4 — decrypt direction is byte-exact. The encrypt direction
@@ -243,6 +258,38 @@ for (const v of file.album_wrap) {
     assert.equal(wrapped.wrapNonce.length, e.masterWrapNonceLen());
     assert.notEqual(hex(wrapped.wrapNonce), v.wrap_nonce, "wrap_nonce is fresh (§2)");
     assertIsTheAlbumKey(e.unwrapAlbumKeyWithMaster(wrapped, master, unhex(v.album_id)));
+  });
+}
+
+// Category 17 — §6.6.2, both parameter sets. The proof is the one derived
+// value the binding returns as bytes, so it is asserted byte-exactly; root and
+// kek are internal (§9.3). The recovered K_master is proven by the chain: it
+// opens category 16's blob, whose K_album opens category 1's object.
+const c16 = file.album_wrap[0]!;
+function assertIsTheMasterKey(master: MasterKey) {
+  const stored = e.MasterWrappedKey.fromParts(unhex(c16.wrapped), unhex(c16.wrap_nonce));
+  assertIsTheAlbumKey(e.unwrapAlbumKeyWithMaster(stored, master, unhex(c16.album_id)));
+}
+
+for (const v of file.owner_wrap) {
+  test(`category 17: ${v.name} — derives the expected proof and unwraps to K_master`, () => {
+    assert.equal(v.k_master, c16.k_master, "category 17 wraps category 16's K_master");
+    const credential = e.deriveOwnerCredential(v.password, unhex(v.salt), params(v.params));
+    assert.equal(hex(credential.proof), v.proof, "the proof is a known answer through the binding");
+    assert.notEqual(v.proof, v.kek, "§6.6: KEK and proof are independent");
+
+    const stored = e.WrappedMaster.fromParts(unhex(v.wrapped), unhex(v.wrap_nonce));
+    assertIsTheMasterKey(e.unwrapMasterKey(credential.intoKek(), stored));
+  });
+
+  test(`category 17: ${v.name} — wrap then unwrap round-trips`, () => {
+    const master = e.MasterKey.fromBytes(unhex(v.k_master));
+    const kek = e.deriveOwnerCredential(v.password, unhex(v.salt), params(v.params)).intoKek();
+    const wrapped = e.wrapMasterKey(kek, master);
+    assert.equal(wrapped.wrapped.length, e.ownerWrappedLen());
+    assert.equal(wrapped.wrapNonce.length, e.ownerWrapNonceLen());
+    assert.notEqual(hex(wrapped.wrapNonce), v.wrap_nonce, "wrap_nonce is fresh (§6.6.2)");
+    assertIsTheMasterKey(e.unwrapMasterKey(kek, wrapped));
   });
 }
 
@@ -379,6 +426,8 @@ const consumedSalts: { entry: string; salt: string }[] = [
   { entry: "protocol 4: passphrase_normalisation", salt: file.protocol.passphrase_normalisation.salt },
   { entry: "protocol 6: 16-byte salt (accept)", salt: file.protocol.wrap_salt_length[0]!.salt },
   { entry: "protocol 7: passphrase_spacing_mark", salt: file.protocol.passphrase_spacing_mark.salt },
+  { entry: "category 17: v1 parameters (§6.6.2)", salt: file.owner_wrap[0]!.salt },
+  { entry: "category 17: low parameters", salt: file.owner_wrap[1]!.salt },
 ];
 
 test("§9.1: the pinned salt entries are the ones the file carries", () => {
@@ -390,6 +439,7 @@ test("§9.1: the pinned salt entries are the ones the file carries", () => {
   );
   assert.equal(file.protocol.passphrase_spacing_mark.vector, 7);
   assert.equal(file.protocol.passphrase_empty.length, 3, "vector 3: out of scope, but its shape is pinned");
+  assert.deepEqual(file.owner_wrap.map((w) => w.name), ["v1 parameters (§6.6.2)", "low parameters"]);
 });
 
 test("§9.1: every consumed salt in the file is pairwise distinct", () => {
