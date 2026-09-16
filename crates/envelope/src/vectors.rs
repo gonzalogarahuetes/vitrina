@@ -17,8 +17,7 @@ use crate::wrap::{derive_kek, normalize_passphrase, wrap_aad, wrap_with_salt_and
 use crate::{
     AlbumId, AlbumKey, AssetId, CHUNK_SIZE, EnvelopeError, MasterKey, MasterWrappedKey,
     RecipientId, Salt, WrapError, WrapParams, WrappedKey, WrappedMaster, decrypt_asset,
-    derive_owner_credential, unwrap_album_key, unwrap_album_key_with_master,
-    unwrap_master_key,
+    derive_owner_credential, unwrap_album_key, unwrap_album_key_with_master, unwrap_master_key,
 };
 use argon2::{Algorithm, Argon2, AssociatedData, ParamsBuilder, Version};
 use base64::Engine;
@@ -1162,7 +1161,10 @@ fn verify_album_wrap(v: &AlbumWrapVector, reference: &EnvelopeVector) {
 /// opens category 1's object. No key is compared along that chain.
 fn verify_owner_wrap(v: &OwnerWrapVector, c16: &AlbumWrapVector, reference: &EnvelopeVector) {
     assert_eq!(v.category, 17);
-    assert_eq!(v.k_master, c16.k_master, "category 17 wraps category 16's K_master");
+    assert_eq!(
+        v.k_master, c16.k_master,
+        "category 17 wraps category 16's K_master"
+    );
     let salt: [u8; 16] = unhex_array(&v.salt);
     let wrap_nonce: [u8; 24] = unhex_array(&v.wrap_nonce);
 
@@ -1463,7 +1465,11 @@ fn protocol_entries(p: &Protocol) -> Vec<Entry> {
 /// parameter sets" pins two entries (categories 9 and 17), any other one.
 /// Rewording the spec line changes the pin, which §0 says a spec edit may do.
 fn envelope_multiplicity(item: &SpecItem) -> usize {
-    if item.text.to_lowercase().contains("two distinct parameter sets") {
+    if item
+        .text
+        .to_lowercase()
+        .contains("two distinct parameter sets")
+    {
         2
     } else {
         1
