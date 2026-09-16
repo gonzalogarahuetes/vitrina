@@ -1,5 +1,6 @@
 use crate::AlbumKey;
 use crate::AssetId;
+use crate::WrapParams;
 use crate::header::Header;
 use crate::keys::AssetKey;
 use crate::keys::MasterKey;
@@ -143,3 +144,26 @@ pub(crate) const ALBUM_WRAP_NONCE: [u8; 24] = [
     0x14, 0xf0, 0xec, 0x7f, 0xbe, 0xad, 0x53, 0x95, 0x10, 0x6d, 0xc2, 0x34, 0x64, 0x16, 0xcd, 0xe4,
     0x4e, 0x2d, 0x32, 0x24, 0x08, 0xc3, 0x87, 0xd7,
 ];
+
+/// §6.6.2 owner password. Chosen for what the tests need: an uppercase letter,
+/// a composable `á` (NFD vs NFC), one interior space, and nothing §6.3 would
+/// leave alone — every variant below must derive a *different* root.
+pub(crate) const OWNER_PASSWORD: &str = "Tr3s Pájaros!";
+
+/// Distinct from SALT, OTHER_SALT and every salt in the vectors file (§9.1):
+/// a fixture shared between two KDF paths cannot catch a reader that ignores it.
+#[rustfmt::skip]
+pub(crate) const OWNER_SALT: [u8; 16] = [
+    0xb2, 0xd7, 0xd7, 0xe3, 0x8b, 0xe9, 0x1b, 0x9b, 0xea, 0x90, 0x5d, 0xcd, 0x18, 0x82, 0x33, 0x99,
+];
+
+/// Deliberately not WRAP_NONCE or ALBUM_WRAP_NONCE — same reason as theirs.
+#[rustfmt::skip]
+pub(crate) const OWNER_WRAP_NONCE: [u8; 24] = [
+    0xf6, 0xb8, 0x31, 0x06, 0xe5, 0xd2, 0x09, 0x5c, 0x03, 0x86, 0x7e, 0xad,
+    0xb3, 0xfe, 0x49, 0xc8, 0xda, 0x9e, 0x65, 0x61, 0x04, 0x11, 0x87, 0x21,
+];
+
+pub(crate) fn low_params() -> WrapParams {
+    WrapParams::new(8, 1, 1).unwrap()
+}

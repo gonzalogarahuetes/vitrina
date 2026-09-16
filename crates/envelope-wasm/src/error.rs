@@ -4,7 +4,8 @@
 
 use js_sys::{Error, Reflect};
 use vitrina_envelope::{
-    AlbumWrapError, EnvelopeError, HeaderError, LayoutError, WrapError, WrongLength,
+    AlbumWrapError, EnvelopeError, HeaderError, InvalidParams, LayoutError, OwnerWrapError,
+    WrapError, WrongLength,
 };
 use wasm_bindgen::JsValue;
 
@@ -155,22 +156,25 @@ fn layout(l: LayoutError) -> Failure {
     }
 }
 
+/// One Argon2id parameter set serves both KDF paths (api-sketch §8.1), so the
+/// rejection is one shape. Parameters are public values, so echoing them is fine.
+fn invalid_params(p: InvalidParams) -> Failure {
+    Failure::new(
+        "InvalidParams",
+        format!(
+            "Argon2id rejected the parameters: mCostKib={}, tCost={}, pCost={}",
+            p.m_cost_kib, p.t_cost, p.p_cost
+        ),
+    )
+    .with("mCostKib", p.m_cost_kib)
+    .with("tCost", p.t_cost)
+    .with("pCost", p.p_cost)
+}
+
 impl From<WrapError> for Failure {
     fn from(e: WrapError) -> Failure {
         match e {
-            WrapError::InvalidParams {
-                t_cost,
-                p_cost,
-                m_cost,
-            } => Failure::new(
-                "InvalidParams",
-                format!(
-                    "Argon2id rejected the parameters: mCostKib={m_cost}, tCost={t_cost}, pCost={p_cost}"
-                ),
-            )
-            .with("mCostKib", m_cost)
-            .with("tCost", t_cost)
-            .with("pCost", p_cost),
+            WrapError::InvalidParams(p) => invalid_params(p),
             WrapError::HashingFailed => Failure::new("HashingFailed", "Argon2id hashing failed"),
             WrapError::UnexpectedWrappedLength => Failure::new(
                 "UnexpectedWrappedLength",
@@ -179,16 +183,17 @@ impl From<WrapError> for Failure {
             WrapError::RandomnessUnavailable => {
                 Failure::new("RandomnessUnavailable", "no CSPRNG available")
             }
-            WrapError::UnexpectedKeyLength => {
-                Failure::new("UnexpectedKeyLength", "unwrapped key has an unexpected length")
-            }
-            WrapError::AuthenticationFailed => {
-                Failure::new("AuthenticationFailed", "unwrap failed: authentication failed")
-            }
-            WrapError::EmptyPassphrase => Failure::new(
-                "EmptyPassphrase",
-                "passphrase is empty after normalisation",
+            WrapError::UnexpectedKeyLength => Failure::new(
+                "UnexpectedKeyLength",
+                "unwrapped key has an unexpected length",
             ),
+            WrapError::AuthenticationFailed => Failure::new(
+                "AuthenticationFailed",
+                "unwrap failed: authentication failed",
+            ),
+            WrapError::EmptyPassphrase => {
+                Failure::new("EmptyPassphrase", "passphrase is empty after normalisation")
+            }
         }
     }
 }
@@ -208,6 +213,35 @@ impl From<AlbumWrapError> for Failure {
                 "unwrapped key has an unexpected length",
             ),
             AlbumWrapError::AuthenticationFailed => Failure::new(
+                "AuthenticationFailed",
+                "unwrap failed: authentication failed",
+            ),
+        }
+    }
+}
+
+impl From<OwnerWrapError> for Failure {
+    fn from(e: OwnerWrapError) -> Failure {
+        match e {
+            OwnerWrapError::InvalidParams(p) => invalid_params(p),
+            OwnerWrapError::HashingFailed => {
+                Failure::new("HashingFailed", "Argon2id hashing failed")
+            }
+            // §6.6.2: the empty string and nothing else. Not "after
+            // normalisation" — NFC never empties a non-empty password.
+            OwnerWrapError::EmptyPassword => Failure::new("EmptyPassword", "password is empty"),
+            OwnerWrapError::UnexpectedWrappedLength => Failure::new(
+                "UnexpectedWrappedLength",
+                "wrapped key has an unexpected length",
+            ),
+            OwnerWrapError::RandomnessUnavailable => {
+                Failure::new("RandomnessUnavailable", "no CSPRNG available")
+            }
+            OwnerWrapError::UnexpectedKeyLength => Failure::new(
+                "UnexpectedKeyLength",
+                "unwrapped key has an unexpected length",
+            ),
+            OwnerWrapError::AuthenticationFailed => Failure::new(
                 "AuthenticationFailed",
                 "unwrap failed: authentication failed",
             ),

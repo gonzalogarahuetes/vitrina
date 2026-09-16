@@ -8,14 +8,16 @@ use crate::chunk::decrypt_chunk;
 use crate::envelope::encrypt_with_header;
 use crate::header::{Header, HeaderError};
 use crate::keys::{cipher_for, keyed_blake2b_256};
+use crate::owner_wrap::{OWNER_KEK_LABEL, OWNER_PROOF_LABEL, wrap_master_key_with_nonce};
 use crate::test_fixtures::{
-    ALBUM_ID, ALBUM_WRAP_NONCE, ASSET_ID, BASE_NONCE, K_ALBUM, K_MASTER, album_key, hex,
+    ALBUM_ID, ALBUM_WRAP_NONCE, ASSET_ID, BASE_NONCE, K_ALBUM, K_MASTER, OWNER_PASSWORD,
+    OWNER_SALT, OWNER_WRAP_NONCE, album_key, hex,
 };
 use crate::wrap::{derive_kek, normalize_passphrase, wrap_aad, wrap_with_salt_and_nonce};
 use crate::{
     AlbumId, AlbumKey, AssetId, CHUNK_SIZE, EnvelopeError, MasterKey, MasterWrappedKey,
-    RecipientId, Salt, WrapError, WrapParams, WrappedKey, decrypt_asset, unwrap_album_key,
-    unwrap_album_key_with_master,
+    RecipientId, Salt, WrapError, WrapParams, WrappedKey, WrappedMaster, decrypt_asset,
+    derive_owner_credential, unwrap_album_key, unwrap_album_key_with_master, unwrap_master_key,
 };
 use argon2::{Algorithm, Argon2, AssociatedData, ParamsBuilder, Version};
 use base64::Engine;
@@ -90,6 +92,7 @@ struct VectorFile {
     anchors: Anchors,
     wrap: Vec<WrapVector>,
     album_wrap: Vec<AlbumWrapVector>,
+    owner_wrap: Vec<OwnerWrapVector>,
     protocol: Protocol,
 }
 
@@ -155,6 +158,26 @@ struct AlbumWrapVector {
     k_album: String,
     k_master: String,
     album_id: String,
+    wrap_nonce: String,
+    wrapped: String,
+}
+
+/// §9 category 17: the owner derivation and wrap (§6.6.2). `root`, `kek` and
+/// `proof` are the known answers an implementation asserts from inside;
+/// `wrapped` is what a consumer checks without reading any key (§9.3), and
+/// `proof` is the one derived value a binding may return as bytes. Two
+/// parameter sets, on category 9's reasoning. `k_master` is category 16's.
+#[derive(Serialize, Deserialize)]
+struct OwnerWrapVector {
+    category: u8,
+    name: String,
+    password: String,
+    salt: String,
+    params: Params,
+    k_master: String,
+    root: String,
+    kek: String,
+    proof: String,
     wrap_nonce: String,
     wrapped: String,
 }
@@ -487,6 +510,72 @@ fn album_wrap_vectors() -> Vec<AlbumWrapVector> {
         wrap_nonce: hex(&ALBUM_WRAP_NONCE),
         wrapped: hex(&wrapped),
     }]
+}
+
+// Owner wrap fixtures (§6.6.2). The low set shares owner_wrap.rs's fixtures so
+// it coincides with KNOWN_ANSWER_WRAPPED there; the v1 set takes its own salt
+// (§9.1: one salt per consumed derivation). The password is NFC in source.
+// ---------------------------------------------------------------------------
+
+const OWNER_SALT_V1_PARAMS: [u8; 16] = [
+    0xa7, 0x6f, 0xef, 0x50, 0x28, 0x19, 0xf0, 0x56, 0x55, 0x02, 0x00, 0x76, 0x6f, 0x35, 0x79, 0x07,
+];
+
+/// Argon2id alone, so the file can carry `root` — `derive_owner_credential`
+/// drops it (§6.6.2) and never returns it.
+fn owner_root(salt: [u8; 16], params: Params) -> [u8; 32] {
+    let argon2 = Argon2::new(
+        Algorithm::Argon2id,
+        Version::V0x13,
+        params.wrap_params().argon2_params().unwrap(),
+    );
+    let mut out = [0u8; 32];
+    argon2
+        .hash_password_into(OWNER_PASSWORD.as_bytes(), &salt, &mut out)
+        .unwrap();
+    out
+}
+
+fn owner_wrap_vector(name: &str, salt: [u8; 16], params: Params) -> OwnerWrapVector {
+    let root: [u8; 32] = owner_root(salt, params);
+    let (kek, proof) =
+        derive_owner_credential(OWNER_PASSWORD, params.wrap_params(), Salt::from_bytes(salt))
+            .unwrap();
+    // The generator asserts its own composition once, here, so the file's
+    // `kek` and `proof` are the derivation's and not a recomputation of it.
+    assert_eq!(
+        kek.expose_bytes(),
+        &keyed_blake2b_256(&root, OWNER_KEK_LABEL),
+        "{name}: KEK is BLAKE2b(root, kek label)"
+    );
+    assert_eq!(
+        proof.as_bytes(),
+        &keyed_blake2b_256(&root, OWNER_PROOF_LABEL),
+        "{name}: proof is BLAKE2b(root, proof label)"
+    );
+    let wrapped: [u8; 48] =
+        wrap_master_key_with_nonce(&kek, &MasterKey::from_bytes(K_MASTER), &OWNER_WRAP_NONCE)
+            .unwrap();
+    OwnerWrapVector {
+        category: 17,
+        name: name.to_string(),
+        password: OWNER_PASSWORD.to_string(),
+        salt: hex(&salt),
+        params,
+        k_master: hex(&K_MASTER),
+        root: hex(&root),
+        kek: hex(kek.expose_bytes()),
+        proof: hex(proof.as_bytes()),
+        wrap_nonce: hex(&OWNER_WRAP_NONCE),
+        wrapped: hex(&wrapped),
+    }
+}
+
+fn owner_wrap_vectors() -> Vec<OwnerWrapVector> {
+    vec![
+        owner_wrap_vector("v1 parameters (§6.6.2)", OWNER_SALT_V1_PARAMS, Params::V1),
+        owner_wrap_vector("low parameters", OWNER_SALT, Params::LOW),
+    ]
 }
 
 fn salt_length_vector(
@@ -852,6 +941,7 @@ fn build() -> VectorFile {
         anchors,
         wrap: wrap_vectors(),
         album_wrap: album_wrap_vectors(),
+        owner_wrap: owner_wrap_vectors(),
         protocol: protocol(),
     }
 }
@@ -1065,6 +1155,56 @@ fn verify_album_wrap(v: &AlbumWrapVector, reference: &EnvelopeVector) {
     );
 }
 
+/// §6.6.2 end to end. `root`, `kek` and `proof` are checked as values — this
+/// is the inside, where keys may be read. Then the §9.3 chain: the blob
+/// unwraps to a `K_master` that opens category 16's blob, whose `K_album`
+/// opens category 1's object. No key is compared along that chain.
+fn verify_owner_wrap(v: &OwnerWrapVector, c16: &AlbumWrapVector, reference: &EnvelopeVector) {
+    assert_eq!(v.category, 17);
+    assert_eq!(
+        v.k_master, c16.k_master,
+        "category 17 wraps category 16's K_master"
+    );
+    let salt: [u8; 16] = unhex_array(&v.salt);
+    let wrap_nonce: [u8; 24] = unhex_array(&v.wrap_nonce);
+
+    let root: [u8; 32] = owner_root(salt, v.params);
+    assert_eq!(hex(&root), v.root, "category 17: root");
+    let (kek, proof) =
+        derive_owner_credential(&v.password, v.params.wrap_params(), Salt::from_bytes(salt))
+            .unwrap();
+    assert_eq!(hex(kek.expose_bytes()), v.kek, "category 17: kek");
+    assert_eq!(hex(proof.as_bytes()), v.proof, "category 17: proof");
+    assert_ne!(v.kek, v.proof, "§6.6: KEK and proof are independent");
+
+    let master: MasterKey = MasterKey::from_bytes(unhex_array(&v.k_master));
+    let got: [u8; 48] = wrap_master_key_with_nonce(&kek, &master, &wrap_nonce).unwrap();
+    assert_eq!(hex(&got), v.wrapped, "category 17: wrap");
+
+    let stored: WrappedMaster =
+        WrappedMaster::try_from_parts(&unhex(&v.wrapped), &wrap_nonce).unwrap();
+    let recovered: MasterKey = unwrap_master_key(&kek, &stored).expect("category 17: unwrap");
+    let c16_stored: MasterWrappedKey =
+        MasterWrappedKey::try_from_parts(&unhex(&c16.wrapped), &unhex(&c16.wrap_nonce)).unwrap();
+    let album: AlbumKey = unwrap_album_key_with_master(
+        &c16_stored,
+        &recovered,
+        &AlbumId::from_bytes(unhex_array(&c16.album_id)),
+    )
+    .expect("category 17: the recovered K_master opens category 16");
+    assert_eq!(reference.category, 1);
+    assert_eq!(
+        hex(&decrypt_asset(
+            &album,
+            &AssetId::from_bytes(unhex_array(&reference.asset_id)),
+            &unhex(&reference.object),
+        )
+        .unwrap()),
+        reference.plaintext,
+        "category 17: the chain reaches category 1"
+    );
+}
+
 fn verify_protocol(p: &Protocol) {
     let t = &p.token;
     assert_eq!((t.vector, t.expect), (1, Expect::Accept));
@@ -1224,6 +1364,12 @@ fn committed_vectors_verify() {
         "§9.1: vector 8's album_id is category 16's"
     );
 
+    let params: Vec<Params> = file.owner_wrap.iter().map(|v| v.params).collect();
+    assert_eq!(params, [Params::V1, Params::LOW]);
+    for v in &file.owner_wrap {
+        verify_owner_wrap(v, &file.album_wrap[0], &file.envelope[0]);
+    }
+
     verify_protocol(&file.protocol);
 }
 
@@ -1286,6 +1432,7 @@ fn envelope_entries(f: &VectorFile) -> Vec<Entry> {
     );
     v.extend(f.wrap.iter().map(|e| (e.category, None)));
     v.extend(f.album_wrap.iter().map(|e| (e.category, None)));
+    v.extend(f.owner_wrap.iter().map(|e| (e.category, None)));
     v
 }
 
@@ -1314,18 +1461,25 @@ fn protocol_entries(p: &Protocol) -> Vec<Entry> {
     v
 }
 
-/// Category 9 carries two entries: §9 item 9, "at two distinct parameter sets".
-fn envelope_multiplicity(category: u8) -> usize {
-    match category {
-        9 => 2,
-        _ => 1,
+/// Read from the item's text, as polarity is: an item that says "two distinct
+/// parameter sets" pins two entries (categories 9 and 17), any other one.
+/// Rewording the spec line changes the pin, which §0 says a spec edit may do.
+fn envelope_multiplicity(item: &SpecItem) -> usize {
+    if item
+        .text
+        .to_lowercase()
+        .contains("two distinct parameter sets")
+    {
+        2
+    } else {
+        1
     }
 }
 
 /// Vector 3: §9.1's three passphrases. Vector 6: the 16-byte accept and the
 /// 32-byte reject. Vector 7 and every other vector: one entry.
-fn protocol_multiplicity(vector: u8) -> usize {
-    match vector {
+fn protocol_multiplicity(item: &SpecItem) -> usize {
+    match item.number {
         3 => 3,
         6 => 2,
         _ => 1,
@@ -1344,7 +1498,7 @@ fn check_list(
     side: &str,
     items: &[SpecItem],
     entries: &[Entry],
-    multiplicity: fn(u8) -> usize,
+    multiplicity: fn(&SpecItem) -> usize,
     polarity: Polarity,
     failures: &mut Vec<String>,
 ) {
@@ -1397,7 +1551,12 @@ fn check_list(
 
     for n in spec.union(&file) {
         let count: usize = entries.iter().filter(|e| e.0 == *n).count();
-        let pinned: usize = multiplicity(*n);
+        // A number the spec lacks has no text to read; one entry is the pin
+        // it fails against, alongside the "in the file, not in the spec" line.
+        let pinned: usize = items
+            .iter()
+            .find(|i| i.number == *n)
+            .map_or(1, multiplicity);
         if count != pinned {
             failures.push(format!(
                 "{side}: number {n} has {count} entries, pinned {pinned}"

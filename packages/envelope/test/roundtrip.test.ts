@@ -8,6 +8,9 @@ const e = await loadEnvelope();
 const ALBUM_KEY = Uint8Array.from({ length: 32 }, (_, i) => 0xc0 + i);
 const ASSET_ID = Uint8Array.from({ length: 16 }, (_, i) => 0xb0 + i);
 const key = e.AlbumKey.fromBytes(ALBUM_KEY);
+// Owner-path fixtures. Argon2's floor, not v1's 64 MiB — this is a smoke test.
+const OWNER_SALT = Uint8Array.from({ length: 16 }, (_, i) => 0xd0 + i);
+const lowParams = new e.WrapParams(8, 1, 1);
 
 // Phase-0 plan §9's third exit criterion. 3 MiB is exactly 12 chunks at the
 // v1 chunk size, so the final chunk is full rather than partial.
@@ -70,8 +73,92 @@ test("MasterKey is opaque: no method or property returns its bytes", () => {
   const master = e.MasterKey.fromBytes(MASTER_KEY);
   const visible = (o: object) => Object.getOwnPropertyNames(o).filter((n) => !n.startsWith("__"));
   assert.deepEqual(visible(e.MasterKey.prototype), ["constructor", "free"]);
-  assert.deepEqual(visible(e.MasterKey), ["length", "name", "prototype", "fromBytes"]);
+  assert.deepEqual(visible(e.MasterKey).sort(), ["fromBytes", "generate", "length", "name", "prototype"]);
   assert.doesNotMatch(JSON.stringify(master), new RegExp(Buffer.from(MASTER_KEY).toString("hex")));
+});
+
+// §6.6.2 / §2.2: the KEK survives a network round trip as a handle and nothing
+// else. Unlike MasterKey there is no fromBytes — deriveOwnerCredential is the
+// only way to obtain one.
+test("OwnerKek is opaque and has no constructor", () => {
+  const visible = (o: object) => Object.getOwnPropertyNames(o).filter((n) => !n.startsWith("__"));
+  assert.deepEqual(visible(e.OwnerKek.prototype), ["constructor", "free"]);
+  assert.deepEqual(visible(e.OwnerKek).sort(), ["length", "name", "prototype"]);
+});
+
+// The one new type with a getter: it exposes the proof and nothing key-shaped.
+test("OwnerCredential exposes the proof, and intoKek consumes it", () => {
+  const visible = (o: object) => Object.getOwnPropertyNames(o).filter((n) => !n.startsWith("__"));
+  assert.deepEqual(visible(e.OwnerCredential.prototype).sort(), ["constructor", "free", "intoKek", "proof"]);
+
+  const credential = e.deriveOwnerCredential("Tr3s Pájaros!", OWNER_SALT, lowParams);
+  const proof = credential.proof;
+  assert.equal(proof.length, e.loginProofLen());
+  assert.deepEqual(credential.proof, proof, "the getter is stable");
+
+  const kek = credential.intoKek();
+  assert.ok(kek instanceof e.OwnerKek);
+  // wasm-bindgen nulled the handle: this is its own error, not an EnvelopeError.
+  assert.throws(() => credential.intoKek());
+  assert.throws(() => credential.proof);
+});
+
+// api-sketch §8.4, steps 2 and 4, with a fresh derivation in between as a
+// second device would do. §9.3's pattern proves the recovered K_master without
+// reading it: an album key wrapped under the original must unwrap under it.
+test("K_master round-trips under the owner KEK across two derivations (§6.6.2)", () => {
+  const master = e.MasterKey.generate();
+  const plaintext = new Uint8Array(randomBytes(100));
+  const albumId = new Uint8Array(randomBytes(16));
+  const albumUnderMaster = e.wrapAlbumKeyWithMaster(key, master, albumId);
+
+  // Same order as the client: the proof is read (and sent) before the KEK is
+  // taken, because intoKek consumes the credential and the proof with it.
+  const signup = e.deriveOwnerCredential("Tr3s Pájaros!", OWNER_SALT, lowParams);
+  const signupProof = signup.proof;
+  const stored = e.wrapMasterKey(signup.intoKek(), master);
+  assert.equal(stored.wrapped.length, 48);
+  assert.equal(stored.wrapNonce.length, 24);
+
+  const login = e.deriveOwnerCredential("Tr3s Pájaros!", OWNER_SALT, lowParams);
+  assert.deepEqual(login.proof, signupProof, "the proof is deterministic or login never works");
+  const reloaded = e.WrappedMaster.fromParts(stored.wrapped, stored.wrapNonce);
+  const recovered = e.unwrapMasterKey(login.intoKek(), reloaded);
+
+  const albumAgain = e.unwrapAlbumKeyWithMaster(albumUnderMaster, recovered, albumId);
+  const object = e.encryptAsset(key, ASSET_ID, plaintext);
+  assert.deepEqual(e.decryptAsset(albumAgain, ASSET_ID, object), plaintext);
+});
+
+test("wrapMasterKey draws a fresh wrap_nonce per call", () => {
+  const master = e.MasterKey.generate();
+  const kek = e.deriveOwnerCredential("Tr3s Pájaros!", OWNER_SALT, lowParams).intoKek();
+  const a = e.wrapMasterKey(kek, master);
+  const b = e.wrapMasterKey(kek, master);
+  assert.notDeepEqual(a.wrapNonce, b.wrapNonce);
+});
+
+// §6.6.2: NFC only. Composition is folded; case, marks and spacing are not.
+test("the owner password is NFC-normalised and nothing else", () => {
+  const proofOf = (password: string) => e.deriveOwnerCredential(password, OWNER_SALT, lowParams).proof;
+  const nfc = proofOf("Tr3s Pájaros!");
+  // ́ is written as an escape so an editor that normalises on save cannot
+  // silently turn this into a second copy of the NFC spelling.
+  assert.deepEqual(proofOf("Tr3s Pájaros!"), nfc);
+  assert.notDeepEqual(proofOf("tr3s pajaros!"), nfc, "case and marks are kept");
+  assert.notDeepEqual(proofOf("Tr3s Pájaros! "), nfc, "whitespace is not trimmed");
+  assert.notDeepEqual(proofOf("Tr3s  Pájaros!"), nfc, "whitespace is not collapsed");
+});
+
+test("generate draws a distinct K_master every time", () => {
+  const kek = e.deriveOwnerCredential("Tr3s Pájaros!", OWNER_SALT, lowParams).intoKek();
+  const a = e.wrapMasterKey(kek, e.MasterKey.generate());
+  const b = e.unwrapMasterKey(kek, e.WrappedMaster.fromParts(a.wrapped, a.wrapNonce));
+  // No bytes to compare, so: a blob wrapped for one K_master must not open
+  // an album wrapped under another.
+  const albumId = new Uint8Array(randomBytes(16));
+  const underOther = e.wrapAlbumKeyWithMaster(key, e.MasterKey.generate(), albumId);
+  assert.equal(caught(() => e.unwrapAlbumKeyWithMaster(underOther, b, albumId)).code, "AuthenticationFailed");
 });
 
 // §2: the album wrap binds album_id through the AAD, so the wrong id is an
@@ -99,7 +186,10 @@ test("K_album round-trips under K_master and is bound to album_id (§2)", () => 
   assert.equal(caught(() => e.unwrapAlbumKeyWithMaster(reloaded, otherMaster, albumId)).code, "AuthenticationFailed");
 });
 
-test("the exported lengths are §6.2's, §3.1's and §2's", () => {
+test("the exported lengths are §6.2's, §3.1's, §2's and §6.6.2's", () => {
+  assert.equal(e.ownerWrappedLen(), 48);
+  assert.equal(e.ownerWrapNonceLen(), 24);
+  assert.equal(e.loginProofLen(), 32);
   assert.equal(e.chunkSize(), 262144);
   assert.equal(e.albumKeyLen(), 32);
   assert.equal(e.assetIdLen(), 16);

@@ -1,6 +1,7 @@
 // Phase-0 plan §7, C.10: every [u8; N] in the crate arrives from JavaScript
 // as a Uint8Array of arbitrary length, and every u32 arrives as a JS number
-// that ToInt32 would fold silently. Ten rows, each asserted to error.
+// that ToInt32 would fold silently. Ten rows, each asserted to error; the
+// §6.6.2 entry points join the salt, wrapped and wrapNonce rows.
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { caught, loadEnvelope } from "./load.js";
@@ -36,7 +37,11 @@ const rows: ByteRow[] = [
       (b) => e.decryptMeta(album, b, bytes(83)),
     ],
   },
-  { param: "salt", expected: 16, calls: [(b) => e.Salt.fromBytes(b)] },
+  {
+    param: "salt",
+    expected: 16,
+    calls: [(b) => e.Salt.fromBytes(b), (b) => e.deriveOwnerCredential("Tr3s Pájaros!", b, params)],
+  },
   {
     param: "recipientId",
     expected: 16,
@@ -56,12 +61,20 @@ const rows: ByteRow[] = [
   {
     param: "wrapped",
     expected: 48,
-    calls: [(b) => e.WrappedKey.fromParts(b, bytes(24), bytes(16)), (b) => e.MasterWrappedKey.fromParts(b, bytes(24))],
+    calls: [
+      (b) => e.WrappedKey.fromParts(b, bytes(24), bytes(16)),
+      (b) => e.MasterWrappedKey.fromParts(b, bytes(24)),
+      (b) => e.WrappedMaster.fromParts(b, bytes(24)),
+    ],
   },
   {
     param: "wrapNonce",
     expected: 24,
-    calls: [(b) => e.WrappedKey.fromParts(bytes(48), b, bytes(16)), (b) => e.MasterWrappedKey.fromParts(bytes(48), b)],
+    calls: [
+      (b) => e.WrappedKey.fromParts(bytes(48), b, bytes(16)),
+      (b) => e.MasterWrappedKey.fromParts(bytes(48), b),
+      (b) => e.WrappedMaster.fromParts(bytes(48), b),
+    ],
   },
   { param: "kdfSalt", expected: 16, calls: [(b) => e.WrappedKey.fromParts(bytes(48), bytes(24), b)] },
 ];

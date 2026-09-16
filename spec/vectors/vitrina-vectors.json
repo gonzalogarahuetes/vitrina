@@ -183,6 +183,42 @@
       "wrapped": "940643c00f8692b602146b14b1dc7c70245230628ef840b1342c97e0b272c718df385349d9ce16c4953eaf6ad50a2c11"
     }
   ],
+  "owner_wrap": [
+    {
+      "category": 17,
+      "name": "v1 parameters (§6.6.2)",
+      "password": "Tr3s Pájaros!",
+      "salt": "a76fef502819f056550200766f357907",
+      "params": {
+        "m_cost_kib": 65536,
+        "t_cost": 3,
+        "p_cost": 1
+      },
+      "k_master": "c1f4f2b3110e6e485c477492ec981a77b6678768d8359ee816235ac1b45cf3c2",
+      "root": "a05d74813b4a9f7a87915f54a2d549d0e14ef6a4c0c66a4e7ff1b8fe71605754",
+      "kek": "aebcd48f8df02d109aeabdfe42eb74210801099ad97c3ea407958c60a2c95c58",
+      "proof": "3b7a8d5c7e46b2a9364161a527140a50925ef25f571b9bfc58ba9293b455baef",
+      "wrap_nonce": "f6b83106e5d2095c03867eadb3fe49c8da9e656104118721",
+      "wrapped": "d369acf932e225c61379bfdf3ee13349d40efc3520d0fa25c324e3ac681f4f0ed850e4e1a1697da7cbe1f458820b9680"
+    },
+    {
+      "category": 17,
+      "name": "low parameters",
+      "password": "Tr3s Pájaros!",
+      "salt": "b2d7d7e38be91b9bea905dcd18823399",
+      "params": {
+        "m_cost_kib": 8,
+        "t_cost": 1,
+        "p_cost": 1
+      },
+      "k_master": "c1f4f2b3110e6e485c477492ec981a77b6678768d8359ee816235ac1b45cf3c2",
+      "root": "e11475615a81713b8f6178bf19c299579fbd3a1ffe33921b8f4c4f5463530f50",
+      "kek": "768b594cb861cc223c78e8dc8d205af42bd1b0f17115b49c9b301a46d96ff4ba",
+      "proof": "ef6c21b274a631cacc6b88a064445f2d9bf8aeb39e0ade3b277463ac4e919ae7",
+      "wrap_nonce": "f6b83106e5d2095c03867eadb3fe49c8da9e656104118721",
+      "wrapped": "45ae0e8bbf67890dba039c3b730a7a3cc58ba6ede2a1c58446b5ba34532d5e7dbbcfa52bc6e9083d208ade8203c19ec8"
+    }
+  ],
   "protocol": {
     "token": {
       "vector": 1,

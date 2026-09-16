@@ -12,3 +12,5 @@ vitrina-envelope = { path = "../envelope", features = ["wasm"] }
 # Exact pin: wasm-bindgen-cli must match this version byte for byte.
 wasm-bindgen = "=0.2.128"
 js-sys = "0.3.105"
+# The owner password arrives as an owned String; this wipes that copy (§6.6).
+zeroize = "1.9.0"

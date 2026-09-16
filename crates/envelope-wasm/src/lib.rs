@@ -7,6 +7,7 @@ mod error;
 use error::{Failure, u32_param, wrong_length};
 use vitrina_envelope as envelope;
 use wasm_bindgen::prelude::*;
+use zeroize::Zeroizing;
 
 /// `K_album` as an opaque handle. It crosses the boundary inward only (§2.2):
 /// there is deliberately no method returning its bytes.
@@ -261,6 +262,14 @@ impl MasterKey {
             .map(MasterKey)
             .map_err(|e| wrong_length("masterKey", e).into())
     }
+
+    /// Signup (§6.6.2): `K_master` is drawn inside the module and never
+    /// exists as JavaScript bytes.
+    pub fn generate() -> Result<MasterKey, JsValue> {
+        envelope::MasterKey::generate()
+            .map(MasterKey)
+            .map_err(|e| Failure::from(e).into())
+    }
 }
 
 /// What the relay stores for an album wrapped under `K_master` (§2). No salt:
@@ -323,6 +332,108 @@ pub fn unwrap_album_key_with_master(
         .map_err(|e| Failure::from(e).into())
 }
 
+/// The owner KEK (§6.6.2) as an opaque handle. It outlives one network round
+/// trip — derived before `POST /login`, used after `GET /owner/key` — which is
+/// why it is a handle and not a value inside one call. No constructor and no
+/// accessor: `deriveOwnerCredential` is its only source (§2.2).
+#[wasm_bindgen]
+pub struct OwnerKek(envelope::OwnerKek);
+
+/// What one password derivation yields (§6.6.2). `proof` is bytes because it
+/// is sent to the relay; the KEK is taken out once with `intoKek`, which
+/// consumes this object — a second call throws.
+#[wasm_bindgen]
+pub struct OwnerCredential {
+    kek: envelope::OwnerKek,
+    proof: envelope::LoginProof,
+}
+
+#[wasm_bindgen]
+impl OwnerCredential {
+    /// The login proof, 32 bytes. The caller should zero the array after it
+    /// has been sent — a proof is a replayable credential.
+    #[wasm_bindgen(getter)]
+    pub fn proof(&self) -> Vec<u8> {
+        self.proof.as_bytes().to_vec()
+    }
+
+    /// Consumes the credential. wasm-bindgen nulls the JavaScript handle, so
+    /// the KEK can be extracted exactly once.
+    #[wasm_bindgen(js_name = intoKek)]
+    pub fn into_kek(self) -> OwnerKek {
+        OwnerKek(self.kek)
+    }
+}
+
+/// §6.6.2: one Argon2id run over the NFC password, two keyed-hash outputs.
+///
+/// `password` is taken by value so the copy wasm-bindgen makes into linear
+/// memory can be wiped. The JavaScript string it came from cannot be; that is
+/// a property of the platform, not of this binding.
+#[wasm_bindgen(js_name = deriveOwnerCredential)]
+pub fn derive_owner_credential(
+    password: String,
+    salt: &[u8],
+    params: &WrapParams,
+) -> Result<OwnerCredential, JsValue> {
+    let password = Zeroizing::new(password);
+    let salt = envelope::Salt::try_from_slice(salt).map_err(|e| wrong_length("salt", e))?;
+    envelope::derive_owner_credential(password.as_str(), params.0, salt)
+        .map(|(kek, proof)| OwnerCredential { kek, proof })
+        .map_err(|e| Failure::from(e).into())
+}
+
+/// What the relay stores in `owner_keys` for the password credential, minus
+/// the salt and parameters (§6.6.2). Both parts are ciphertext or public.
+#[wasm_bindgen]
+pub struct WrappedMaster(envelope::WrappedMaster);
+
+#[wasm_bindgen]
+impl WrappedMaster {
+    #[wasm_bindgen(js_name = fromParts)]
+    pub fn from_parts(
+        wrapped: &[u8],
+        #[wasm_bindgen(js_name = wrapNonce)] wrap_nonce: &[u8],
+    ) -> Result<WrappedMaster, JsValue> {
+        // try_from_parts checks `wrapped` first, then `wrap_nonce`, and reports
+        // the first mismatch; the expected length tells the caller which.
+        envelope::WrappedMaster::try_from_parts(wrapped, wrap_nonce)
+            .map(WrappedMaster)
+            .map_err(|e| {
+                let param = if e.expected == envelope::WrappedMaster::WRAPPED_LEN {
+                    "wrapped"
+                } else {
+                    "wrapNonce"
+                };
+                wrong_length(param, e).into()
+            })
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn wrapped(&self) -> Vec<u8> {
+        self.0.wrapped.to_vec()
+    }
+
+    #[wasm_bindgen(getter, js_name = wrapNonce)]
+    pub fn wrap_nonce(&self) -> Vec<u8> {
+        self.0.wrap_nonce.to_vec()
+    }
+}
+
+#[wasm_bindgen(js_name = wrapMasterKey)]
+pub fn wrap_master_key(kek: &OwnerKek, master: &MasterKey) -> Result<WrappedMaster, JsValue> {
+    envelope::wrap_master_key(&kek.0, &master.0)
+        .map(WrappedMaster)
+        .map_err(|e| Failure::from(e).into())
+}
+
+#[wasm_bindgen(js_name = unwrapMasterKey)]
+pub fn unwrap_master_key(kek: &OwnerKek, wrapped: &WrappedMaster) -> Result<MasterKey, JsValue> {
+    envelope::unwrap_master_key(&kek.0, &wrapped.0)
+        .map(MasterKey)
+        .map_err(|e| Failure::from(e).into())
+}
+
 // wasm-bindgen cannot export constants, so the crate's lengths are functions.
 
 #[wasm_bindgen(js_name = chunkSize)]
@@ -380,4 +491,20 @@ pub fn master_wrapped_len() -> u32 {
 #[wasm_bindgen(js_name = masterWrapNonceLen)]
 pub fn master_wrap_nonce_len() -> u32 {
     envelope::MasterWrappedKey::WRAP_NONCE_LEN as u32
+}
+
+// §6.6.2's lengths table — the third construction, reading its own constants.
+#[wasm_bindgen(js_name = ownerWrappedLen)]
+pub fn owner_wrapped_len() -> u32 {
+    envelope::WrappedMaster::WRAPPED_LEN as u32
+}
+
+#[wasm_bindgen(js_name = ownerWrapNonceLen)]
+pub fn owner_wrap_nonce_len() -> u32 {
+    envelope::WrappedMaster::WRAP_NONCE_LEN as u32
+}
+
+#[wasm_bindgen(js_name = loginProofLen)]
+pub fn login_proof_len() -> u32 {
+    envelope::LoginProof::LEN as u32
 }

@@ -818,6 +818,7 @@ dependencies = [
  "js-sys",
  "vitrina-envelope",
  "wasm-bindgen",
+ "zeroize",
 ]
 
 [[package]]

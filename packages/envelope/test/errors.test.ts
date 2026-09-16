@@ -71,14 +71,39 @@ test("EmptyPassphrase and AuthenticationFailed are distinct codes", () => {
   assert.equal(caught(() => e.unwrapAlbumKey("Café Roble", new e.WrapParams(16, 1, 1), recipient, stored)).code, "AuthenticationFailed");
 });
 
-test("no thrown value carries key material or plaintext (§2.2)", () => {
-  const secrets = [hex(ALBUM_KEY), hex(PLAINTEXT)];
+// §6.6.2: the empty string and nothing else — the rule is narrower than §6.3's,
+// so the whitespace strings EmptyPassphrase rejects are legal passwords here.
+test("EmptyPassword is the empty string only; a wrong password is AuthenticationFailed", () => {
+  const salt = Uint8Array.from({ length: 16 }, (_, i) => 0xd0 + i);
+  const master = e.MasterKey.generate();
+  const stored = e.wrapMasterKey(e.deriveOwnerCredential("Tr3s Pájaros!", salt, params).intoKek(), master);
+
+  assert.equal(caught(() => e.deriveOwnerCredential("", salt, params)).code, "EmptyPassword");
+  for (const legal of ["   ", " \t\n ", " ", "́"]) {
+    assert.ok(e.deriveOwnerCredential(legal, salt, params).proof.length === 32, JSON.stringify(legal));
+  }
+
+  const wrong = e.deriveOwnerCredential("Cu4tro Árboles", salt, params).intoKek();
+  assert.equal(caught(() => e.unwrapMasterKey(wrong, stored)).code, "AuthenticationFailed");
+  const otherSalt = salt.slice();
+  otherSalt[0]! ^= 1;
+  const wrongSalt = e.deriveOwnerCredential("Tr3s Pájaros!", otherSalt, params).intoKek();
+  assert.equal(caught(() => e.unwrapMasterKey(wrongSalt, stored)).code, "AuthenticationFailed");
+  const wrongParams = e.deriveOwnerCredential("Tr3s Pájaros!", salt, new e.WrapParams(16, 1, 1)).intoKek();
+  assert.equal(caught(() => e.unwrapMasterKey(wrongParams, stored)).code, "AuthenticationFailed");
+});
+
+test("no thrown value carries key material, plaintext or the password (§2.2, §6.6)", () => {
+  const PASSWORD = "Tr3s Pájaros!";
+  const salt = Uint8Array.from({ length: 16 }, (_, i) => 0xd0 + i);
+  const secrets = [hex(ALBUM_KEY), hex(PLAINTEXT), PASSWORD.toLowerCase(), hex(Buffer.from(PASSWORD))];
   const failures = [
     () => e.decryptAsset(key, ASSET_ID, mutated((o) => (o[100]! ^= 1))),
     () => e.decryptAsset(key, ASSET_ID, object.subarray(0, 40)),
     () => e.AlbumKey.fromBytes(ALBUM_KEY.subarray(0, 31)),
     () => e.wrapAlbumKey(key, "  ", params, ASSET_ID),
     () => new e.WrapParams(-1, 1, 1),
+    () => e.deriveOwnerCredential(PASSWORD, salt.subarray(0, 15), params),
   ];
   for (const f of failures) {
     const err = caught(f);
