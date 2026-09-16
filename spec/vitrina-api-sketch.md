@@ -1336,12 +1336,11 @@ where entropy is guaranteed: 32 bytes from a CSPRNG, returned once in the respon
 body, stored only as SHA-256 (schema §6). The server never holds the plaintext
 after the response is written.
 
-**`/login` is the only route that mints one, and `POST /signup` deliberately does
-not** (§7.5). Signing up does not sign you in. Returning a token from signup is
-the obvious convenience and it would put session minting in two places — two
-`expires_at` values to keep in step, two places to audit against the window in
-§7.5, and a second route to change when that window does. The cost is one extra
-round trip on the rarest action an owner performs.
+**Two routes mint a session token: `/login` and `POST /signup`.** Changed 15 September 2026, after the key-flow spike.
+
+This section said signup deliberately did not, on the grounds that two minting sites mean two `expires_at` values to keep in step and two places to audit. That cost is real and stands. What it was weighed against was "one extra round trip on the rarest action an owner performs", and the spike showed that is not what the alternative costs. **A signing-up device must either cache its login proof across a round trip or run Argon2id a second time.** Caching is what any client will do — and a cached proof is a replayable credential held in JS memory specifically so that a route can mint a session moments later. That is the same outcome with an extra secret alive in the browser, so the audit argument cuts both ways.
+
+**The mitigation for two minting sites is one code path, not two implementations.** Both routes call the same function to mint, set `expires_at` and insert the `owner_tokens` row; neither writes that logic itself. §6.2 owes a test asserting both produce the same window.
 
 Note this is about the _session_ token only. `/signup` does carry key material
 into the system — the wrapping of `K_master` — but that is client-generated
@@ -1453,12 +1452,8 @@ their absence is the whole design — non-negotiable #16.
   not a `SELECT` before it — check-then-insert is a race that admits two accounts
   for one address, and the second can never log in because `/login/params`
   returns the first's salt.
-- **`201`:** `{ "id": "<uuid>", "created_at": "<RFC 3339 UTC>" }` and nothing
-  else. **No token** — signup does not sign you in. Logging in afterwards costs
-  one round trip and keeps `/login` the only route that mints a session (§7.4),
-  so there is one place where `expires_at` is set and one place to audit. **And
-  not the wrapping back** — the client that posted it holds `K_master` in memory
-  already; the route that returns it is §8.3, after login, on any device.
+  - `201`: `{ "id": "<uuid>", "created_at": "<RFC 3339 UTC>", "token": "<43 chars, base64url>", "expires_at": "<RFC 3339 UTC>" }`. **The token is minted here**, by the same code path as `/login`'s (§7.4) — a client that has just derived a proof should not have to hold it across a round trip to trade it for a session. The wrapping does not come back: the client that posted it holds `K_master` in memory already, and the route that returns it is §8.3, after login, on any device.
+  - **`no-store` applies with more force now**, since the response carries a credential rather than only identifiers — §7.5's blanket credential-route rule already covered it.
 - **Errors:** `400 VALIDATION_FAILED` · `409 CONFLICT` (address already
   registered) · `413 PAYLOAD_TOO_LARGE` · `415 UNSUPPORTED_MEDIA_TYPE` ·
   `429 RATE_LIMITED`. **`400` covers a parameter below §8.1's floors**, with no
@@ -1991,7 +1986,7 @@ immediate — the UI may say so without hedging.
 
 | Route                                       | Scheme | Body                                                                                                                           | Success                                                                   | Errors                                            |
 | ------------------------------------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------- | ------------------------------------------------- |
-| `POST /v1/signup`                           | none   | address as typed · proof · `kdf_salt` + params · `wrapped_master` · `wrap_nonce` (§7.5) — never the password, never `K_master` | `201` `{id, created_at}`, `no-store`                                      | 400 · 409 `CONFLICT` · 413 · 415 · 429            |
+| `POST /v1/signup`                           | none   | address as typed · proof · `kdf_salt` + params · `wrapped_master` · `wrap_nonce` (§7.5) — never the password, never `K_master` | `201` `{id, created_at, token, expires_at}`, `no-store`                   | 400 · 409 `CONFLICT` · 413 · 415 · 429            |
 | `POST /v1/login/params`                     | none   | address as typed (§7.5)                                                                                                        | `200` — `{kdf_salt, params}` only, **always**, decoys on miss, `no-store` | 400 · 413 · 415 · 429                             |
 | `POST /v1/login`                            | none   | address as typed · proof (§7.5)                                                                                                | `200` `{token, expires_at}`, `no-store`                                   | 400 · 401 `INVALID_CREDENTIALS` · 413 · 415 · 429 |
 | `POST /v1/logout`                           | owner  | none                                                                                                                           | `204`                                                                     | 401                                               |
@@ -2313,9 +2308,11 @@ than four contracts, and so the point at which each secret exists is visible:
 
 The password exists in step 2 only and reaches no request. `K_master` exists
 after step 4 only, in memory, and reaches no request either — what reaches
-requests from then on is `K_album` wrappings under it (PR 3). On signup the
-sequence is: generate `K_master` and salt, step 2, `POST /signup`, then steps 1–4
-on next use; step 4 is unnecessary on the signing-up device and harmless.
+requests from then on is `K_album` wrappings under it (PR 3). On signup the sequence is:
+generate `K_master` and salt, step 2, `POST /signup` — which returns a session token,
+so steps 1 and 3 are not repeated on that device — and step 4 is unnecessary there,
+since the client already holds `K_master`. **The signing-up device therefore runs Argon2id exactly once.**
+A second device runs steps 1–4 in full.
 
 ### 8.5 What PR 2b deliberately does not decide
 
