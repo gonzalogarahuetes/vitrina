@@ -31,4 +31,4 @@ pub use keys::{AlbumKey, LoginProof, MasterKey, OwnerKek};
 pub use owner_wrap::{
     OwnerWrapError, WrappedMaster, derive_owner_credential, unwrap_master_key, wrap_master_key,
 };
-pub use wrap::{WrapError, WrapParams, WrappedKey, unwrap_album_key, wrap_album_key};
+pub use wrap::{InvalidParams, WrapError, WrapParams, WrappedKey, unwrap_album_key, wrap_album_key};
