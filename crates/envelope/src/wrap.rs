@@ -22,12 +22,12 @@ impl WrapParams {
         t_cost: 3,
         p_cost: 1,
     };
-    fn argon2_params(&self) -> Result<Params, WrapError> {
+    pub(crate) fn argon2_params(&self) -> Result<Params, InvalidParams> {
         Params::new(self.m_cost_kib, self.t_cost, self.p_cost, Some(KEK_LEN)).map_err(|_| {
-            WrapError::InvalidParams {
+            InvalidParams {
                 t_cost: self.t_cost,
                 p_cost: self.p_cost,
-                m_cost: self.m_cost_kib,
+                m_cost_kib: self.m_cost_kib,
             }
         })
     }
@@ -44,17 +44,26 @@ impl WrapParams {
 
 #[derive(Debug, PartialEq)]
 pub enum WrapError {
-    InvalidParams {
-        t_cost: u32,
-        p_cost: u32,
-        m_cost: u32,
-    },
+    InvalidParams(InvalidParams),
     HashingFailed,
     UnexpectedWrappedLength,
     RandomnessUnavailable,
     UnexpectedKeyLength,
     AuthenticationFailed,
     EmptyPassphrase,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct InvalidParams {
+    pub m_cost_kib: u32,
+    pub t_cost: u32,
+    pub p_cost: u32,
+}
+
+impl From<InvalidParams> for WrapError {
+    fn from(e: InvalidParams) -> Self {
+        WrapError::InvalidParams(e)
+    }
 }
 
 impl From<AeadError> for WrapError {
@@ -219,10 +228,10 @@ pub fn unwrap_album_key(
 
 #[cfg(test)]
 mod tests {
-    use crate::test_fixtures::{RECIPIENT_ID, SALT, WRAP_NONCE, album_key};
+    use crate::test_fixtures::{RECIPIENT_ID, SALT, WRAP_NONCE, album_key, low_params};
     use crate::wrap::{
-        RecipientId, Salt, derive_kek, normalize_passphrase, unwrap_album_key, wrap_aad,
-        wrap_album_key, wrap_with_salt_and_nonce,
+        InvalidParams, RecipientId, Salt, derive_kek, normalize_passphrase, unwrap_album_key,
+        wrap_aad, wrap_album_key, wrap_with_salt_and_nonce,
     };
     use crate::{WrappedKey, WrongLength};
     use crate::{
@@ -241,10 +250,6 @@ mod tests {
         0x8f, 0x2c, 0x41, 0xd7, 0x05, 0xba, 0x63, 0x19, 0xe4, 0x7a, 0x2f, 0x90, 0xc8, 0x11, 0x5d,
         0x37,
     ];
-
-    fn low_params() -> WrapParams {
-        WrapParams::new(8, 1, 1).unwrap()
-    }
 
     /// One byte different from `RECIPIENT_ID` — 3f2a91c7-8b4e-4d16-9f05-c2a7d81e6b35.
     /// Still a valid UUIDv4: the version nibble and variant bits are untouched.
@@ -331,11 +336,11 @@ mod tests {
     fn rejects_m_cost_below_eight_times_p_cost() {
         assert_eq!(
             WrapParams::new(8, 3, 4).unwrap_err(),
-            WrapError::InvalidParams {
+            WrapError::InvalidParams(InvalidParams {
                 t_cost: 3,
                 p_cost: 4,
-                m_cost: 8
-            }
+                m_cost_kib: 8
+            })
         );
     }
 

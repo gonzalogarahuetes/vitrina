@@ -10,6 +10,7 @@ mod envelope;
 mod header;
 mod ids;
 mod keys;
+mod owner_wrap;
 #[cfg(test)]
 pub(crate) mod test_fixtures;
 // Reads spec/vectors/ from disk, so it has no wasm32 counterpart.
@@ -26,5 +27,8 @@ pub use envelope::{
 };
 pub use header::{HeaderError, LayoutError};
 pub use ids::{AlbumId, AssetId, RecipientId, Salt, WrongLength};
-pub use keys::{AlbumKey, MasterKey};
+pub use keys::{AlbumKey, LoginProof, MasterKey, OwnerKek};
+pub use owner_wrap::{
+    OwnerWrapError, WrappedMaster, derive_owner_credential, unwrap_master_key, wrap_master_key,
+};
 pub use wrap::{WrapError, WrapParams, WrappedKey, unwrap_album_key, wrap_album_key};

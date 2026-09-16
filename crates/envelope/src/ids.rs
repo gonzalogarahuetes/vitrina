@@ -101,10 +101,11 @@ impl AlbumId {
 #[cfg(test)]
 mod tests {
     use crate::{
-        AlbumKey, AssetId, RecipientId, Salt, WrappedKey, WrongLength,
+        AlbumKey, AssetId, LoginProof, RecipientId, Salt, WrappedKey, WrappedMaster, WrongLength,
         album_wrap::{ALBUM_WRAP_AAD_LABEL, MasterWrappedKey},
         ids::AlbumId,
         keys::MasterKey,
+        owner_wrap::{MASTER_WRAP_AAD, OWNER_KEK_LABEL, OWNER_PROOF_LABEL},
         test_fixtures::{ASSET_ID, RECIPIENT_ID, SALT},
     };
     #[cfg(target_arch = "wasm32")]
@@ -242,7 +243,7 @@ mod tests {
     fn all_lengths_match_expected_values() {
         assert_eq!(AlbumKey::LEN, 32); // §2
         assert_eq!(AssetId::LEN, 16); // §3.1
-        assert_eq!(Salt::LEN, 16); // §6.2's lengths table
+        assert_eq!(Salt::LEN, 16); // §6.2, §6.6.2
         assert_eq!(RecipientId::LEN, 16); // §6.2
         assert_eq!(WrappedKey::WRAPPED_LEN, 48); // §6.2 — K_album + tag
         assert_eq!(WrappedKey::WRAP_NONCE_LEN, 24); // §6.2
@@ -251,5 +252,11 @@ mod tests {
         assert_eq!(ALBUM_WRAP_AAD_LABEL.len(), 21); // §2
         assert_eq!(MasterWrappedKey::WRAPPED_LEN, 48); // §2 — K_album (32) + tag (16)
         assert_eq!(MasterWrappedKey::WRAP_NONCE_LEN, 24); // §2 — XChaCha20-Poly1305 nonce
+        assert_eq!(WrappedMaster::WRAPPED_LEN, 48); // §6.6.2 — K_master (32) + tag (16)
+        assert_eq!(WrappedMaster::WRAP_NONCE_LEN, 24); // §6.6.2
+        assert_eq!(LoginProof::LEN, 32); // §6.6.2 — BLAKE2b-256 output
+        assert_eq!(MASTER_WRAP_AAD.len(), 22); // §6.6.2 — the AAD is the label alone
+        assert_eq!(OWNER_KEK_LABEL.len(), 20); // §2
+        assert_eq!(OWNER_PROOF_LABEL.len(), 22); // §2
     }
 }

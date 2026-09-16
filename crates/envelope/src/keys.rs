@@ -4,6 +4,7 @@ use chacha20poly1305::KeyInit as _;
 use chacha20poly1305::XChaCha20Poly1305;
 use zeroize::Zeroizing;
 
+use crate::owner_wrap::OwnerWrapError;
 use crate::{AssetId, WrongLength};
 
 const ASSET_LABEL: &[u8; 16] = b"vitrina-asset-v1";
@@ -34,6 +35,10 @@ pub(crate) trait ChunkKey {
 }
 
 pub(crate) struct Kek(Zeroizing<[u8; 32]>);
+
+pub struct OwnerKek(Zeroizing<[u8; 32]>);
+
+pub struct LoginProof(Zeroizing<[u8; 32]>);
 
 impl ChunkKey for AssetKey {
     fn cipher(&self) -> XChaCha20Poly1305 {
@@ -115,6 +120,15 @@ impl Kek {
     }
 }
 
+impl OwnerKek {
+    pub(crate) fn expose_bytes(&self) -> &[u8; 32] {
+        &self.0
+    }
+    pub(crate) fn from_bytes(bytes: Zeroizing<[u8; 32]>) -> OwnerKek {
+        OwnerKek(bytes)
+    }
+}
+
 // MasterKey has no derive_* methods on purpose. §2: K_album is wrapped by K_master, never derived from it,
 // because a derived key can't be re-wrapped and that kills rotation and recovery.
 impl MasterKey {
@@ -134,6 +148,25 @@ impl MasterKey {
 
     pub(crate) fn expose_bytes(&self) -> &[u8; Self::LEN] {
         &self.0
+    }
+
+    pub fn generate() -> Result<MasterKey, OwnerWrapError> {
+        let mut key_bytes = Zeroizing::new([0u8; Self::LEN]);
+
+        getrandom::fill(&mut key_bytes[..]).map_err(|_| OwnerWrapError::RandomnessUnavailable)?;
+        Ok(MasterKey(key_bytes))
+    }
+}
+
+impl LoginProof {
+    pub const LEN: usize = 32;
+
+    pub fn as_bytes(&self) -> &[u8; Self::LEN] {
+        &self.0
+    }
+
+    pub(crate) fn from_bytes(bytes: Zeroizing<[u8; Self::LEN]>) -> LoginProof {
+        LoginProof(bytes)
     }
 }
 
