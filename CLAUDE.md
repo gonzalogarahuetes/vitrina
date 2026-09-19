@@ -72,7 +72,7 @@ pnpm test && pnpm lint
 pnpm check:citations                        # if spec/ was touched
 ```
 
-`crates/envelope` is expected red until C.1's `to_bytes` exists. That is mine to write — report it and leave it.
+`crates/envelope` is green: C.1's `to_bytes` landed (`header.rs`). Run the `cargo` lines only when `crates/` changed — a TypeScript-only change is covered by `pnpm test && pnpm lint`.
 
 ## Scope
 
