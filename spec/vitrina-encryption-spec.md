@@ -273,14 +273,20 @@ Because the server stores `wrapped`, anyone with database access can mount an of
 
 1. Unicode NFKD
 2. Remove every character whose **Canonical_Combining_Class is non-zero**. **Not** General_Category = Mark
-3. Apply the **unconditional** lowercase mapping. **Context-sensitive mappings MUST NOT be used**
+3. Apply the platform's lowercase mapping, **then replace every `U+03C2` (GREEK SMALL LETTER FINAL SIGMA) with `U+03C3` (GREEK SMALL LETTER SIGMA).**
 4. Collapse runs of characters with the Unicode **`White_Space`** property to a single `U+0020`, and trim the same. **Not** ASCII space and tab alone — `U+0085`, `U+2028` and `U+2029` are included, and a document that says only "whitespace" leaves the reference implementation's choice deciding a permanent interop question
 
 Steps 2 and 3 are pinned to Unicode properties rather than to a language's standard library, because the libraries disagree and the convenient function is the wrong one in both cases.
 
 **Step 2 must use Canonical_Combining_Class, not General_Category = Mark**, and the difference is destructive rather than cosmetic. GC=M is a strict superset: Indic dependent vowel signs such as `U+093E` and `U+0903` are `Mc` or `Mn` with CCC = 0, so a GC=M rule strips them. For Latin, Greek, Cyrillic, Hebrew and Arabic the two rules agree — every mark in those scripts has CCC ≠ 0 — so the divergence is invisible until the first script where it isn't. And there it is not decoration being removed but **vowels**: stripping matras collapses distinct words into the collisions §6.3's wordlist rule exists to prevent. Note that `unicode-normalization`'s `is_combining_mark` is GC=M; the CCC table is exposed separately and is the one to use.
 
-**Step 3 must be unconditional**, which is what excludes Greek final sigma: a context-sensitive mapping sends `Σ` to `ς` or `σ` depending on position, so two implementations derive different KEKs from one passphrase. Swift's `lowercased()` and Kotlin's `lowercase()` are context-sensitive by default; Rust's `char::to_lowercase` is unconditional. Simple-versus-full is _not_ the distinction — Rust performs the full unconditional mapping, which differs from the simple one only for `U+0130`, and that character cannot survive to step 3 because step 1 decomposes it and step 2 removes the resulting combining dot. **That safety depends on the step order**, so the steps are not reorderable.
+**Step 3 must converge on final sigma, and the substitution is how.** Unicode has two lowercase mappings for `Σ`: an unconditional one sending it to `σ` always, and a conditional one sending it to `ς` word-finally. **Platforms differ, and differ per function —** JavaScript's `toLowerCase` applies the conditional mapping (`"ΣΑΣ".toLowerCase()` is `σας`, verified 15 September 2026), and a language may well apply one mapping for a `char` and the other for a string. A rule reading "use the unconditional mapping" would therefore require every implementer to know which one their standard library gave them, on a question whose answer can change under them.
+
+**The substitution makes that unnecessary.** Both mappings end at `σ` once `U+03C2` is replaced, so the only thing anyone implements is a single character replacement, and the rule holds without this document asserting anything about any standard library.
+
+It collapses `ς` and `σ`, which is a real loss and consistent with the rest of this section — case and marks are already collapsed, and a wordlist may no more contain two words differing only by final sigma than two differing only by a diacritic.
+
+_An earlier revision named Swift and Kotlin as conditional and Rust as correct, without noticing that JavaScript is conditional too — which would have made the browser client the divergence the paragraph was written to prevent. Corrected 21 September 2026, found by writing the address normaliser._
 
 **Both choices are permanent interop decisions even though neither is a format change.** A blob wrapped under one rule will never unwrap under the other.
 
