@@ -32,8 +32,8 @@ env:
   # the `migrate` image tag in docker-compose.yml — change both together.
   NODE_VERSION: 22.14.0
   # pnpm's version comes from `packageManager` in the root package.json, which
-  # corepack reads. Do not name a pnpm version here — one source of truth.
-  COREPACK_ENABLE_DOWNLOAD_PROMPT: 0
+  # pnpm/setup reads when given no `version`. Do not name a pnpm version here —
+  # one source of truth.
 
 jobs:
   # ---------------------------------------------------------------------------
@@ -65,10 +65,22 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
 
-      # corepack must be enabled *after* setup-node so the pnpm shim lands in
-      # the bin directory of the Node we just pinned.
-      - name: Enable corepack
-        run: corepack enable
+      # NOT corepack. pnpm 12 is a native per-platform executable; the package
+      # no longer ships the `bin/pnpm.cjs` shim corepack hardcodes, so
+      # `corepack enable` installs shims that fail with MODULE_NOT_FOUND on the
+      # first pnpm call. pnpm's own CI guidance dropped corepack for the same
+      # reason. This action downloads the executable and checks its asset
+      # checksum.
+      #
+      # No `version`: it reads `packageManager` from the root package.json.
+      # No `runtime`: we have no `devEngines.runtime`, so nothing is installed
+      # and setup-node above stays the one thing that pins Node.
+      # `install: false`: the install has its own step below, after the
+      # citation check, which is deliberate — see that step.
+      - name: Install pnpm
+        uses: pnpm/setup@c9883cc79df532ad1a7b81bf9ab944ceb090d65c # v2.0.0
+        with:
+          install: false
 
       # Node stdlib only, no dependencies, so this runs before the install and
       # fails before anything expensive. The documents in spec/ cite each other
@@ -180,8 +192,11 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
 
-      - name: Enable corepack
-        run: corepack enable
+      # See the `checks` job for why this is not corepack.
+      - name: Install pnpm
+        uses: pnpm/setup@c9883cc79df532ad1a7b81bf9ab944ceb090d65c # v2.0.0
+        with:
+          install: false
 
       - name: Install JS dependencies
         run: pnpm install --frozen-lockfile
