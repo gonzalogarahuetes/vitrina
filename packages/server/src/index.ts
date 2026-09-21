@@ -6,6 +6,7 @@
 import { buildComposition } from "./composition-root.js";
 import { loadConfig } from "./config.js";
 import { buildServer } from "./adapters/driving/http/server.js";
+import { createShutdown } from "./shutdown.js";
 
 async function main(): Promise<void> {
   // First, so a missing CLIENT_ORIGIN or server secret fails before a socket
@@ -13,7 +14,7 @@ async function main(): Promise<void> {
   // generated substitute (api-sketch §8.2, brief §6 #17).
   const config = loadConfig();
 
-  const { useCases } = buildComposition(config);
+  const { useCases, adapters } = buildComposition(config);
 
   const app = await buildServer({
     config: { clientOrigin: config.clientOrigin },
@@ -21,6 +22,14 @@ async function main(): Promise<void> {
   });
 
   await app.listen({ host: config.host, port: config.port });
+
+  const shutdown = createShutdown({
+    app,
+    pool: adapters.pool,
+    log: (m) => app.log.info(m),
+  });
+  process.on("SIGTERM", (s) => void shutdown(s));
+  process.on("SIGINT", (s) => void shutdown(s));
 }
 
 main().catch((error: unknown) => {
