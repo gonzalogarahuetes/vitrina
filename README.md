@@ -183,7 +183,7 @@ independent jobs that mirror the split above:
 
 - **`checks`** — hermetic. The forbidden-construction gate, then `pnpm lint`,
   `pnpm test`, `pnpm build`, then `cargo fmt --check`, `cargo test`,
-  `cargo clippy -- -D warnings`. No Docker.
+  `cargo clippy --all-targets -- -D warnings`. No Docker.
 - **`infra`** — brings up the compose stack, waits for the `createbucket` and
   `migrate` one-shots to exit 0, runs `pnpm test:infra`, tears down.
 
@@ -203,12 +203,6 @@ identifier appears legitimately in `spec/` and `CLAUDE.md`, because that is wher
 the ban is written down, and a tree-wide grep would match the ban itself and fail
 forever. The script explains the reasoning on failure — read it before changing
 it.
-
-> **Known red:** `cargo clippy -- -D warnings` currently fails. Nothing in
-> `crates/envelope` is `pub` yet, so `dead_code` fires on `EXPECTED_MAGIC`,
-> `Header`, `HeaderError` and `Header::parse`; clippy also flags an `op_ref` on
-> `lib.rs:33`. This is being fixed as part of the C ladder, not by suppressing
-> the lint.
 
 ## Status
 

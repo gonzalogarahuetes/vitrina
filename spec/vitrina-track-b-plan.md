@@ -45,7 +45,7 @@ vitrina/
 ├── crates/envelope/          # Cargo.toml name = "vitrina-envelope"
 ├── packages/web/             # SvelteKit
 ├── packages/server/          # Fastify
-├── packages/shared/          # shared TS types
+├── packages/shared/          # shared TS types and and boundary constants
 ├── spec/
 └── infra/
 ```
