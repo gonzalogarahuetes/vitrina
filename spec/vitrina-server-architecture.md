@@ -2,13 +2,13 @@
 
 **Status:** Settled v1 · 12 August 2026 · moved to `spec/vitrina-server-architecture.md` on 12 August 2026, from `packages/server/ARCHITECTURE.md` · reconciled against the code 12 August 2026 (§9)
 **Companion to:** `vitrina-project-brief.md` (non-negotiable #5), `vitrina-schema.md`, `vitrina-api-sketch.md` (B.6)
-**Scope:** the internal shape of the Fastify server package. It says nothing about *which* routes exist or what they do — that is B.6. It says where the code for any route is allowed to live.
+**Scope:** the internal shape of the Fastify server package. It says nothing about _which_ routes exist or what they do — that is B.6. It says where the code for any route is allowed to live.
 
 ---
 
 ## 0. Why this document exists
 
-Non-negotiable #5 is a rule you have to *remember* if the server is a flat pile of route files, and a fact you have to *work to violate* if it has a boundary built in. This document is that boundary written down, so that a delegated session adding a route in three months puts access-control and key-wrapping logic where the framework merely calls it, rather than inside a page-rendering route. Everything here follows from #5; the rest is consequence.
+Non-negotiable #5 is a rule you have to _remember_ if the server is a flat pile of route files, and a fact you have to _work to violate_ if it has a boundary built in. This document is that boundary written down, so that a delegated session adding a route in three months puts access-control and key-wrapping logic where the framework merely calls it, rather than inside a page-rendering route. Everything here follows from #5; the rest is consequence.
 
 If this document and the code ever disagree, that is a bug in one of them. The lint rule in §6 is what stops them drifting silently.
 
@@ -75,11 +75,11 @@ packages/server/
 
 ## 3. Layer responsibilities
 
-**`domain/`** — entities, value objects, and the invariants that hold regardless of transport or storage: the `media.status` state machine, the qr-vs-passphrase distinction and what each may carry, revocation as a domain concept. No I/O, no framework, no DTOs. This is where the access-control *decisions* live (whether a caller may see an album), separate from the HTTP mechanics of *authenticating* the caller.
+**`domain/`** — entities, value objects, and the invariants that hold regardless of transport or storage: the `media.status` state machine, the qr-vs-passphrase distinction and what each may carry, revocation as a domain concept. No I/O, no framework, no DTOs. This is where the access-control _decisions_ live (whether a caller may see an album), separate from the HTTP mechanics of _authenticating_ the caller.
 
-**`application/`** — use cases orchestrating the domain across ports, plus the driven-port interfaces themselves. A use case knows *what* must happen (fetch the media row, check scope, stream the range, write the log); it does not know Postgres or SeaweedFS exist. Ports are named for the need — `ObjectStore.getRange`, not `SeaweedFSClient` — which is what made the MinIO→SeaweedFS swap a one-file change.
+**`application/`** — use cases orchestrating the domain across ports, plus the driven-port interfaces themselves. A use case knows _what_ must happen (fetch the media row, check scope, stream the range, write the log); it does not know Postgres or SeaweedFS exist. Ports are named for the need — `ObjectStore.getRange`, not `SeaweedFSClient` — which is what made the MinIO→SeaweedFS swap a one-file change.
 
-**`adapters/driving/`** — things that drive the app. Today: the Fastify HTTP adapter. This is the *only* place `fastify` may be imported. Routes translate a request into a use-case call and a result into a response; they hold no business logic.
+**`adapters/driving/`** — things that drive the app. Today: the Fastify HTTP adapter. This is the _only_ place `fastify` may be imported. Routes translate a request into a use-case call and a result into a response; they hold no business logic.
 
 **`adapters/driven/`** — things the app drives: repository implementations, the object-store client, the token hasher. Each implements a port from `application/ports`.
 
@@ -95,7 +95,9 @@ Recorded with reasoning because the reasoning is the part that stops each being 
 
 4. **A use case is a factory function `(deps) => (input) => Promise<result>`, not a class.** Low-ceremony DI, trivially faked in tests, no framework. Chosen once here so it is not re-decided per file. Classes would also work; consistency is the point.
 
-5. **DTOs and JSON Schemas are adapter concerns, in `driving/http`, never in `domain/`.** `packages/shared` carries only wire-format types genuinely shared with the SvelteKit client (the invite payload, response shapes) — domain entities never go there. Leaking a domain entity into `shared/` is how the web app quietly becomes the API's owner instead of one of its clients (#5).
+5. **DTOs and JSON Schemas are adapter concerns, in `driving/http`, never in `domain/`.** `packages/shared` carries what both halves must agree on: wire-format types, and **values the client and the server must not hold separate copies of.** `OWNER_KDF_V1` is the first of the second kind — a runtime constant rather than a DTO, camelCase where the wire form is `kdf_*`, with the routes building the wire shape from it. **The boundary rule is unchanged and is what matters:** nothing in `src/domain/**` or `src/application/**` may import from `shared`, in either direction, enforced by `eslint.config.js` and verified by deliberate violation.
+
+_This sentence read "only wire-format types" until 15 September 2026. It described the package accurately while the package happened to hold only types, which was an accident of what had been placed there rather than a rule — §1.4 put three things in `shared` and all three were types. The constant's placement was already specified in api-sketch §8.1; the package was behind the specification, not the other way round._
 
 ## 5. The composition root
 
@@ -111,7 +113,7 @@ The dependency rule is not advisory. **It exists as a failing build** in `packag
 
 - `src/domain/**` may not import `**/adapters/**` or `**/application/**`, nor name a vendor, nor name `@vitrina/shared`.
 - `src/application/**` may not import `**/adapters/**`, nor name a vendor, nor name `@vitrina/shared`.
-- `@vitrina/shared` is restricted because it carries wire-format types, and §4 decision 5 makes DTOs an adapter concern. Applied to `application/` as well as `domain/` on the config's own principle — easier to loosen a rule that fired wrongly than to notice a boundary that quietly stopped existing. If a use case ever has a genuine reason to name a wire type, deleting a line is how that decision gets made out loud.
+- `@vitrina/shared` is restricted because it is the boundary package, whatever it holds, and §4 decision 5 makes DTOs an adapter concern. Applied to `application/` as well as `domain/` on the config's own principle — easier to loosen a rule that fired wrongly than to notice a boundary that quietly stopped existing. If a use case ever has a genuine reason to name a wire type, deleting a line is how that decision gets made out loud.
 - The vendor list is `fastify`, `@fastify/*`, `pg`, `pg-*`, `aws-sdk`, `@aws-sdk/*`. Both aws-sdk spellings are listed because v2 and v3 differ; `pg-*` catches the driver's sub-packages.
 
 Two things about that file are not preference and should not be tidied:
@@ -151,4 +153,4 @@ Two dangling references were removed. §2 and §8 cited non-negotiables **#26** 
 
 Recorded here rather than only in `vitrina-api-sketch.md` §1.4, because §9's own lesson was that errata living in the wrong document is worse than no errata — a reader who finds an OPEN question assumes it is still open.
 
-**Decision 5 is now enforced in both directions, which it was not the day the union moved.** The boundary rule (§6) restricts `@vitrina/shared` from `src/domain/**` and `src/application/**`. A domain entity leaking into `shared/` is caught by review; a *wire type reaching `domain/`* was caught by nothing, and it is the direction that actually happens once `ErrorBody` is one import away from every file in the tree. Inert today — the only importer is the adapter where decision 5 puts it — and deliberately so: the rule is provision, not a response to a violation.
+**Decision 5 is now enforced in both directions, which it was not the day the union moved.** The boundary rule (§6) restricts `@vitrina/shared` from `src/domain/**` and `src/application/**`. A domain entity leaking into `shared/` is caught by review; a _wire type reaching `domain/`_ was caught by nothing, and it is the direction that actually happens once `ErrorBody` is one import away from every file in the tree. Inert today — the only importer is the adapter where decision 5 puts it — and deliberately so: the rule is provision, not a response to a violation.

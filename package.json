@@ -13,17 +13,17 @@
     "infra:down": "docker compose down",
     "infra:wait": "./scripts/wait-for-oneshot.sh createbucket && ./scripts/wait-for-oneshot.sh migrate",
     "db:migrate": "pnpm --filter @vitrina/server db:migrate",
-    "test:infra": "node --test infra/*.test.mjs",
+    "test:infra": "pnpm --filter @vitrina/server build && node --test infra/*.test.mjs",
     "test:wasm": "pnpm --filter @vitrina/envelope test:wasm"
   },
   "keywords": [],
   "author": "",
   "license": "UNLICENSED",
-  "packageManager": "pnpm@11.27.0",
+  "packageManager": "pnpm@12.5.0",
   "devEngines": {
     "packageManager": {
       "name": "pnpm",
-      "version": "11.27.0",
+      "version": "12.5.0",
       "onFail": "download"
     }
   },

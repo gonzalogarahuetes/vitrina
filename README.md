@@ -55,7 +55,7 @@ Full detail in `spec/`.
 | `spec/`            | Canonical specifications and test vectors                                                                   |
 | `packages/web/`    | SvelteKit client — owner and recipient                                                                      |
 | `packages/server/` | The HTTP API. Deliberately boring; holds no keys.                                                           |
-| `packages/shared/` | Types shared across web and server                                                                          |
+| `packages/shared/` | Wire types and the constants both clients must agree on. Built; the others reference it.                    |
 | `infra/`           | Migrations, local Postgres and object storage, CI                                                           |
 
 ## Documentation
@@ -111,18 +111,52 @@ and survive it; `docker compose down -v` is the way to start from empty. A
 volume migrated by hand before the runner existed must be recreated this way —
 the runner has no record of what was applied to it and cannot be told.
 
+### Environment
+
+The API reads three variables and validates all three at boot, before it
+listens. There is no fallback for any of them.
+
+| Variable                | What                                                                             |
+| ----------------------- | -------------------------------------------------------------------------------- |
+| `CLIENT_ORIGIN`         | The single allowlisted browser origin for CORS. Never `*`.                       |
+| `DATABASE_URL`          | Postgres. The compose stack's is `postgres://admin:password@localhost:5432/vitrina`. |
+| `VITRINA_SERVER_SECRET` | The one server secret, base64url, at least 32 bytes.                             |
+
+`.env.example` carries local-only values for all three — the same class as the
+object-store credentials in `s3-config.json`, and with no production
+counterpart. Copy it to `.env` and the server can be started with
+`node --env-file=.env packages/server/dist/index.js`.
+
+**The server secret is not a rotatable credential, and a real deployment must
+treat it as durable state.** It is domain-separated into two uses: the pepper
+over `owners.auth_hash`, and the deterministic decoy salts that make an unknown
+address indistinguishable from a registered one. Rotating it moves every decoy
+while real salts, being stored, stay put — so anyone who recorded earlier
+responses learns which addresses exist by comparing across the rotation. Losing
+it locks every account out.
+
+So: generate 32 bytes from a CSPRNG, back them up **as reliably as the database
+and not in the same artifact**. One snapshot holding both collapses the pepper
+to an unpeppered hash, which is the attack the pepper exists to prevent.
+
+Absent or short, the server refuses to start. That is deliberate and must not be
+softened into generating one: a generated substitute works perfectly on an empty
+deployment and silently destroys login indistinguishability on every restart.
+
 ### Tests
 
 ```bash
 cargo test              # envelope crate
 pnpm test               # TypeScript — no Docker needed
-pnpm test:infra         # object store and migration runner — requires the stack to be up
+pnpm test:infra         # object store, migrations, repository — requires the stack to be up
 ```
 
 `pnpm test:infra` is deliberately **not** part of `pnpm test`. It talks to a live
 SeaweedFS and Postgres over the network, so it needs `pnpm infra:up` and
 `pnpm infra:wait` first and would otherwise make the ordinary suite fail on a
-machine without Docker running. It runs every `infra/*.test.mjs`:
+machine without Docker running. It builds `packages/server` first, because it
+imports `dist/`: without that it tests the previous compile and reports a green
+that verified nothing. It runs every `infra/*.test.mjs`:
 
 - `object-store.test.mjs` — that a presigned URL round-trips bytes unaltered,
   that byte-range GETs return exactly the right chunk (arithmetic offsets, first
@@ -135,8 +169,12 @@ machine without Docker running. It runs every `infra/*.test.mjs`:
   and that an applied file whose recorded hash no longer matches is refused. The
   last runs in a scratch database it creates and drops. `DATABASE_URL` overrides
   the compose default.
-
-_(`pnpm test` has no TypeScript suites behind it yet — the packages are still empty.)_
+- `owner-repository.test.mjs` — that the owner repository round-trips every
+  column including `bytea`, that signup's two writes are one transaction (a
+  failed key row leaves no owner behind), that a duplicate address surfaces as
+  `DUPLICATE_ADDRESS` without the address appearing anywhere in the error, and
+  that the reads keep selecting the password credential once a recovery row
+  exists. Each test uses a unique address and cleans up after itself.
 
 ### CI
 
@@ -145,7 +183,7 @@ independent jobs that mirror the split above:
 
 - **`checks`** — hermetic. The forbidden-construction gate, then `pnpm lint`,
   `pnpm test`, `pnpm build`, then `cargo fmt --check`, `cargo test`,
-  `cargo clippy -- -D warnings`. No Docker.
+  `cargo clippy --all-targets -- -D warnings`. No Docker.
 - **`infra`** — brings up the compose stack, waits for the `createbucket` and
   `migrate` one-shots to exit 0, runs `pnpm test:infra`, tears down.
 
@@ -165,12 +203,6 @@ identifier appears legitimately in `spec/` and `CLAUDE.md`, because that is wher
 the ban is written down, and a tree-wide grep would match the ban itself and fail
 forever. The script explains the reasoning on failure — read it before changing
 it.
-
-> **Known red:** `cargo clippy -- -D warnings` currently fails. Nothing in
-> `crates/envelope` is `pub` yet, so `dead_code` fires on `EXPECTED_MAGIC`,
-> `Header`, `HeaderError` and `Header::parse`; clippy also flags an `op_ref` on
-> `lib.rs:33`. This is being fixed as part of the C ladder, not by suppressing
-> the lint.
 
 ## Status
 

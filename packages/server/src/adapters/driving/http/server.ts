@@ -8,6 +8,7 @@ import { stdSerializers } from "pino";
 import type { UseCases } from "../../../application/use-cases/index.js";
 import { errorEnvelope, notFoundEnvelope } from "./error-envelope.js";
 import health from "./routes/health.js";
+import { credentialRoutes } from "./routes/credentials.js";
 
 /*
  * What the log is allowed to carry, and how an error is shaped when it gets
@@ -189,7 +190,12 @@ export async function buildServer(
   // The /v1 mount point, registered once. B.6's routes drop in here.
   await app.register(
     async (v1) => {
-      //   v1.register(ownerAuth,  { useCases: deps.useCases })
+      /*
+       * PR 2b's four. Registered as their own plugin, so the `no-store` hook
+       * and the limiter inside it are encapsulated to those routes rather than
+       * applying to everything under /v1.
+       */
+      await v1.register(credentialRoutes({ useCases: deps.useCases }));
       //   v1.register(albums,     { useCases: deps.useCases })
       //   v1.register(media,      { useCases: deps.useCases })
       //   v1.register(recipients, { useCases: deps.useCases })
