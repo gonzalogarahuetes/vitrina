@@ -19,11 +19,11 @@
   "keywords": [],
   "author": "",
   "license": "UNLICENSED",
-  "packageManager": "pnpm@11.27.0",
+  "packageManager": "pnpm@12.5.0",
   "devEngines": {
     "packageManager": {
       "name": "pnpm",
-      "version": "11.27.0",
+      "version": "12.5.0",
       "onFail": "download"
     }
   },
