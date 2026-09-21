@@ -25,6 +25,10 @@ import type {
   FastifySchemaValidationError,
 } from "fastify";
 import type { ErrorCode, ErrorBody, ErrorDetails } from "@vitrina/shared";
+import {
+  ApplicationError,
+  type ApplicationErrorCode,
+} from "../../../application/errors.js";
 
 /*
  * code → HTTP status.
@@ -315,11 +319,41 @@ function body(code: ErrorCode, details?: ApiError["details"]): ErrorBody {
     : { code, message: MESSAGES[code] };
 }
 
+/*
+ * application → wire. `satisfies Record<ApplicationErrorCode, …>` makes this
+ * table TOTAL: a code added to the union without a mapping here does not
+ * compile, the same guarantee STATUS and MESSAGES give one layer out.
+ *
+ * A use case cannot throw an `ApiError` — `application/` may not import this
+ * subtree (architecture §6) — so it throws a code and the translation happens
+ * at the one choke point that already owns the wire shape.
+ */
+const APPLICATION_ERRORS = {
+  EMPTY_ADDRESS: "VALIDATION_FAILED",
+  INVALID_CREDENTIALS: "INVALID_CREDENTIALS",
+  DUPLICATE_ADDRESS: "CONFLICT",
+} as const satisfies Record<ApplicationErrorCode, ThrowableCode>;
+
 export function errorEnvelope(
   error: FastifyError,
   request: FastifyRequest,
   reply: FastifyReply,
 ) {
+  if (error instanceof ApplicationError) {
+    /*
+     * Logged on the same rule as an ApiError: a cause means the server had to
+     * interpret something. `ApplicationError`'s own message is its code, a
+     * constant, so this line carries no request content — and DUPLICATE_ADDRESS
+     * must chain a message the repository wrote, never the pg error, whose
+     * `detail` holds the submitted address (see the note on `cause` above).
+     */
+    if (error.cause !== undefined) {
+      request.log.warn({ err: error }, "request failed with an underlying cause");
+    }
+    const code = APPLICATION_ERRORS[error.code];
+    return reply.code(STATUS[code]).send(body(code));
+  }
+
   if (error instanceof ApiError) {
     /*
      * Logged when it carries a cause, silent when it does not — api-sketch

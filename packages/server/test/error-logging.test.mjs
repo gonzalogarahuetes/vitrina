@@ -100,8 +100,12 @@ describe("a validation failure logs a projection, not the error (wired)", () => 
       },
       v1Plugins: [
         async (scope) => {
+          // Not "/login": that path is a real route since PR 2b, and two
+          // registrations in one context is a boot error. The path is
+          // incidental here — this suite is about what a validation failure
+          // logs, not about which route failed.
           scope.post(
-            "/login",
+            "/validation-fixture",
             {
               schema: {
                 body: {
@@ -132,7 +136,7 @@ describe("a validation failure logs a projection, not the error (wired)", () => 
     lines.length = 0;
     const res = await app.inject({
       method: "POST",
-      url: "/v1/login",
+      url: "/v1/validation-fixture",
       payload,
     });
     const logged = lines.filter((l) => l.msg === "schema validation failed");

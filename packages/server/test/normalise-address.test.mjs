@@ -146,14 +146,51 @@ describe("normaliseAddress — §8.2 vectors", () => {
     }
   });
 
-  it(
-    "lowercase: capital sigma — Final_Sigma context or unconditional?",
-    { todo: "§8.2 says unconditional; V8's toLowerCase applies Final_Sigma (ΣΑΣ → σας). Doc or code moves; pin the answer here." },
-    () => {
-      // Unconditional mapping: every Σ → σ, no final-form ς.
-      assert.equal(normaliseAddress("\u03a3\u0391\u03a3@x.es"), "\u03c3\u03b1\u03c3@x.es");
-    },
-  );
+  describe("final sigma converges on σ (§8.2 step 3, encryption spec §6.3)", () => {
+    // Settled 21 September 2026. Unicode has two lowercase mappings for
+    // capital sigma: an unconditional one giving σ always, a conditional one
+    // giving ς word-finally. Platforms differ, and differ per function — so
+    // the rule is not "use the unconditional mapping", which would ask every
+    // implementer to know which one their standard library gave them. It is:
+    // lowercase by whatever the platform gives, then replace every ς with σ.
+    // Both paths then end at σ and this file asserts nothing about any
+    // language but its own.
+
+    it("JavaScript's toLowerCase is the conditional mapping", () => {
+      // The one platform claim encryption spec §6.3 still makes, pinned here
+      // so the document is not resting on someone's recollection. If a future
+      // V8 changed this, the rule below would still hold — which is the point.
+      assert.equal("\u03a3\u0391\u03a3".toLowerCase(), "\u03c3\u03b1\u03c2");
+    });
+
+    const sigmas = [
+      // toLowerCase alone yields "\u03c3\u03b1\u03c2"; the substitution is what
+      // makes this agree with the Rust reference implementation.
+      { name: "word-final sigma becomes \u03c3, not \u03c2", input: "\u03a3\u0391\u03a3@x.es", expected: "\u03c3\u03b1\u03c3@x.es" },
+      { name: "non-final sigma is unaffected", input: "\u03a3@x.es", expected: "\u03c3@x.es" },
+      { name: "a longer word ending in sigma", input: "\u039f\u0394\u03a5\u03a3\u03a3\u0395\u03a5\u03a3@x.es", expected: "\u03bf\u03b4\u03c5\u03c3\u03c3\u03b5\u03c5\u03c3@x.es" },
+      // The substitution applies to a \u03c2 the user typed, too. That collapses
+      // \u03c2 and \u03c3 — a real loss, accepted for the same reason case and
+      // marks are already collapsed.
+      { name: "a typed \u03c2 is folded to \u03c3", input: "\u03c2@x.es", expected: "\u03c3@x.es" },
+      { name: "\u03c3 is already the fixed point", input: "\u03c3@x.es", expected: "\u03c3@x.es" },
+    ];
+
+    for (const { name, input, expected } of sigmas) {
+      it(name, () => {
+        const actual = normaliseAddress(input);
+        assert.equal(actual, expected, `expected [${cps(expected)}], got [${cps(actual)}]`);
+      });
+    }
+
+    it("no \u03c2 survives normalisation, wherever it appears", () => {
+      // The property, rather than one spelling of it: this is what a reader
+      // needs to know, and it fails for any input the vectors above miss.
+      for (const input of ["\u03a3", "\u03c2", "a\u03c2b", "\u03a3\u03a3\u03a3", "\u03c2\u03c2"]) {
+        assert.ok(!normaliseAddress(`${input}@x.es`).includes("\u03c2"), `\u03c2 survived in ${cps(input)}`);
+      }
+    });
+  });
 
   it("collapses alternative spellings", () => {
     collapses(["Ana@X.es", " ana@x.es", "ANA@x.es\t", "Ana@X.ES\u00a0"]);

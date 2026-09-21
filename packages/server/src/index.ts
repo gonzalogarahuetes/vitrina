@@ -3,16 +3,17 @@
  * read config → build adapters → build use cases → buildServer → listen.
  */
 
-import { buildUseCases } from "./composition-root.js";
+import { buildComposition } from "./composition-root.js";
 import { loadConfig } from "./config.js";
 import { buildServer } from "./adapters/driving/http/server.js";
 
 async function main(): Promise<void> {
-  // First, so a missing or malformed CLIENT_ORIGIN fails before a socket is
-  // opened rather than as an opaque CORS error in someone's browser.
+  // First, so a missing CLIENT_ORIGIN or server secret fails before a socket
+  // is opened — the secret absent or short is a hard failure, never a
+  // generated substitute (api-sketch §8.2, brief §6 #17).
   const config = loadConfig();
 
-  const useCases = buildUseCases();
+  const { useCases } = buildComposition(config);
 
   const app = await buildServer({
     config: { clientOrigin: config.clientOrigin },

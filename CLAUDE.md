@@ -70,7 +70,11 @@ cargo test
 cargo clippy --all-targets -- -D warnings   # --all-targets matters: the narrow form does not lint test code
 pnpm test && pnpm lint
 pnpm check:citations                        # if spec/ was touched
+pnpm test:infra                             # if anything under adapters/driven/ moved; needs `pnpm infra:up`
 ```
+
+`test:infra` builds first, deliberately: it imports `packages/server/dist/`, so without
+the build it tests the previous compile and reports a green that verified nothing.
 
 `crates/envelope` is green: C.1's `to_bytes` landed (`header.rs`). Run the `cargo` lines only when `crates/` changed — a TypeScript-only change is covered by `pnpm test && pnpm lint`.
 
