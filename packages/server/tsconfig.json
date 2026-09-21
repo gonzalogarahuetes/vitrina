@@ -39,5 +39,11 @@
     "noUncheckedSideEffectImports": true,
     "moduleDetection": "force",
     "skipLibCheck": true,
-  }
+  },
+
+  // Build ordering, not resolution: pnpm's workspace symlink plus the
+  // `exports` map is what resolves `@vitrina/shared`. This is what makes
+  // `tsc -b` rebuild shared first, so `dist/` here can never be compiled
+  // against a stale `dist/` there.
+  "references": [{ "path": "../shared" }]
 }

@@ -237,7 +237,11 @@ importers:
         specifier: ^7.0.2
         version: 7.0.2
 
-  packages/shared: {}
+  packages/shared:
+    devDependencies:
+      typescript:
+        specifier: ^7.0.2
+        version: 7.0.2
 
   packages/web: {}
 

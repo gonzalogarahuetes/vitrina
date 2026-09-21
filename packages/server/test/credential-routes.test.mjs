@@ -10,8 +10,10 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { before, describe, it } from "node:test";
 
+import { OWNER_KDF_V1 } from "@vitrina/shared";
+
 import { buildServer } from "../dist/adapters/driving/http/server.js";
-import { buildUseCases, OWNER_KDF_V1 } from "../dist/composition-root.js";
+import { buildUseCases } from "../dist/composition-root.js";
 import { createCredentialHasher } from "../dist/adapters/driven/hashing/credential-hasher.js";
 import { createTokenHasher } from "../dist/adapters/driven/hashing/token-hasher.js";
 import { ApplicationError } from "../dist/application/errors.js";

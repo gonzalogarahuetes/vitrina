@@ -4,4 +4,8 @@ node_modules/
 
 dist/
 
+# `tsc -b`'s incremental state. Committing it makes a build's freshness depend
+# on whose machine last wrote it.
+*.tsbuildinfo
+
 .claude/

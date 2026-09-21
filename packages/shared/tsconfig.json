@@ -1,0 +1,35 @@
+{
+  // `composite` is what lets packages/server reference this project, so
+  // `tsc -b` builds it first. Without the reference, server compiles against
+  // whatever dist/ happened to be lying around.
+  "compilerOptions": {
+    "rootDir": "./src",
+    "outDir": "./dist",
+
+    "module": "nodenext",
+    "target": "esnext",
+    "lib": ["esnext"],
+    // No `types: ["node"]`, unlike the server: this package is compiled into
+    // the browser build too, and nothing in it touches a node API. Adding the
+    // entry would make `Buffer` and `process` resolve in code that cannot
+    // have them.
+    "types": [],
+
+    "composite": true,
+    "declaration": true,
+    // Go-to-definition lands in src/, which is the reason `exports.types` can
+    // point at dist/ without making the package harder to read.
+    "declarationMap": true,
+    "sourceMap": true,
+
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "verbatimModuleSyntax": true,
+    "isolatedModules": true,
+    "noUncheckedSideEffectImports": true,
+    "moduleDetection": "force",
+    "skipLibCheck": true
+  },
+  "include": ["src/**/*.ts"]
+}

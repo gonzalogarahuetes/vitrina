@@ -9,13 +9,17 @@
 
 import { randomBytes } from "node:crypto";
 import { Pool } from "pg";
+import { OWNER_KDF_V1 } from "@vitrina/shared";
 
 import { createCredentialHasher } from "./adapters/driven/hashing/credential-hasher.js";
 import { createTokenHasher } from "./adapters/driven/hashing/token-hasher.js";
 import { createOwnerRepository } from "./adapters/driven/postgres/owner-repository.js";
 import { createSystemClock } from "./adapters/driven/system-clock.js";
 import type { Clock } from "./application/ports/clock.js";
-import type { OwnerKdfParameters, OwnerRepository } from "./application/ports/owner-repository.js";
+import type {
+  OwnerKdfParameters,
+  OwnerRepository,
+} from "./application/ports/owner-repository.js";
 import type { CredentialHasher } from "./application/ports/credential-hasher.js";
 import type { TokenHasher } from "./application/ports/token-hasher.js";
 import type { UseCases } from "./application/use-cases/index.js";
@@ -28,20 +32,13 @@ import { signup } from "./application/use-cases/signup.js";
 import { makeVerifyProof } from "./application/use-cases/verify-proof.js";
 
 /**
- * Argon2id v1, client-side — encryption spec §6.2, confirmed by phase-0-plan
- * §8's V.1 on 14 September 2026. Returned by /login/params on a MISS, so a
- * decoy carries what every real row carries; §8.1's floors are separate and
- * live in the signup JSON Schema.
- *
- * §8.1 wants this in `packages/shared`, since the client build needs the same
- * three integers. That package exports only a `types` condition today and
- * cannot hold a runtime value — flagged, not worked around here.
+ * The v1 Argon2id parameters, declared in `@vitrina/shared` because the client
+ * derives with the same three integers (§8.1). The annotation is not decoration:
+ * shared's `KdfParameters` and the port's `OwnerKdfParameters` are separate
+ * declarations, and this assignment is the only thing that goes red if they
+ * drift. It belongs here because this is the one file allowed to see both.
  */
-export const OWNER_KDF_V1: OwnerKdfParameters = {
-  memoryKib: 65536,
-  iterations: 3,
-  parallelism: 1,
-};
+const kdfV1: OwnerKdfParameters = OWNER_KDF_V1;
 
 export type Adapters = {
   readonly pool: Pool;
@@ -75,13 +72,20 @@ export type UseCaseOptions = {
  * function below so a test can drive the REAL graph with a fake repository
  * instead of reimplementing it and asserting against its own copy.
  */
-export function buildUseCases(adapters: UseCaseAdapters, options: UseCaseOptions): UseCases {
+export function buildUseCases(
+  adapters: UseCaseAdapters,
+  options: UseCaseOptions,
+): UseCases {
   const { owners, credentialHasher, tokenHasher, clock } = adapters;
   const mintSession = makeMintSession(owners, tokenHasher, clock);
 
   return {
     signup: signup({ owners, hasher: credentialHasher, mintSession }),
-    loginParams: loginParams({ owners, hasher: credentialHasher, kdfV1: options.kdfV1 }),
+    loginParams: loginParams({
+      owners,
+      hasher: credentialHasher,
+      kdfV1: options.kdfV1,
+    }),
     login: login({
       owners,
       verifyProof: makeVerifyProof(credentialHasher),
@@ -117,7 +121,7 @@ export function buildComposition(config: CompositionConfig): {
   return {
     adapters: { pool, ...adapters },
     useCases: buildUseCases(adapters, {
-      kdfV1: OWNER_KDF_V1,
+      kdfV1,
       dummyAuthHash: randomBytes(32),
     }),
   };

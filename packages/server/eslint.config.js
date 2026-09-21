@@ -57,7 +57,7 @@ const OUTWARD_MESSAGE =
   "This import points outward.";
 
 /*
- * `@vitrina/shared` holds wire-format types — architecture §4 decision 5: "DTOs
+ * `@vitrina/shared` — architecture §4 decision 5: "DTOs
  * and JSON Schemas are adapter concerns, in driving/http, never in domain/".
  *
  * Without this, the §1.4 move of `ErrorCode` out of `error-envelope.ts` enforced

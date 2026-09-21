@@ -55,7 +55,7 @@ Full detail in `spec/`.
 | `spec/`            | Canonical specifications and test vectors                                                                   |
 | `packages/web/`    | SvelteKit client — owner and recipient                                                                      |
 | `packages/server/` | The HTTP API. Deliberately boring; holds no keys.                                                           |
-| `packages/shared/` | Types shared across web and server                                                                          |
+| `packages/shared/` | Wire types and the constants both clients must agree on. Built; the others reference it.                    |
 | `infra/`           | Migrations, local Postgres and object storage, CI                                                           |
 
 ## Documentation
