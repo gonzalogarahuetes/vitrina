@@ -53,6 +53,9 @@ const STATUS = {
   ACCESS_REVOKED: 403,
   NOT_FOUND: 404,
   CONFLICT: 409,
+  // §9.7's upload handler throws it; no FRAMEWORK_4XX row, because Fastify
+  // raises no 411 and that row would be inert while looking live (§9.9).
+  LENGTH_REQUIRED: 411,
   PAYLOAD_TOO_LARGE: 413,
   UNSUPPORTED_MEDIA_TYPE: 415,
   RATE_LIMITED: 429,
@@ -71,6 +74,7 @@ const MESSAGES = {
   ACCESS_REVOKED: "Recipient access has been revoked.",
   NOT_FOUND: "Not found.",
   CONFLICT: "Conflict, duplicated value.",
+  LENGTH_REQUIRED: "Content-Length is required.",
   PAYLOAD_TOO_LARGE: "Body limit of the request exceeded.",
   UNSUPPORTED_MEDIA_TYPE: "Content type not supported.",
   RATE_LIMITED: "Rate limited.",

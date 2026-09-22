@@ -5,6 +5,8 @@ export type ErrorCode =
   | "ACCESS_REVOKED"
   | "NOT_FOUND"
   | "CONFLICT"
+  /** api-sketch §9.9 — the upload routes require `Content-Length` (§9.7). */
+  | "LENGTH_REQUIRED"
   | "PAYLOAD_TOO_LARGE"
   | "UNSUPPORTED_MEDIA_TYPE"
   | "RATE_LIMITED"

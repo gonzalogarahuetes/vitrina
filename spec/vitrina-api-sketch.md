@@ -2703,25 +2703,17 @@ moves the row along it:
 | `processing → failed`  | A stream ends early, or `PutObject` fails, or the confirming `HEAD` disagrees with the count | server                                     |
 | `failed → processing`  | The client re-uploads                                                                        | server, on the upload route                |
 
-**The evidence.** Because upload is proxied, the server streamed the bytes and
-therefore _counted_ them — every byte of the envelope passed through it. On
-completion it issues one `HEAD` against the object it just wrote and compares
-`Content-Length` to its own count:
+**The evidence.** Because upload is proxied, the server streamed the bytes and therefore _counted_ them. On completion it issues **two** `HEAD` requests — one against the object it just wrote, one against the other — and:
 
-- **Match** → that object is confirmed. When both are, the row becomes `ready`
-  and **`byte_size` is populated from the server's observed counts — the sum of
-  the two objects** — for brief §9.2's storage accounting. No client number is
-  read at any point; the client never sent one.
-- **Missing, or a different size** → `failed`, and the status object carries
-  that. The client's remedy is to re-upload, and it can, because `failed →
-processing` is a legal transition.
-- **Not yet visible** — `HEAD` says the object does not exist immediately after
-  a successful `PutObject` — → the row stays `processing` and the client retries
-  §9.8 in a few seconds. AWS S3 has been read-after-write consistent for new
-  objects since 2020; whether SeaweedFS and Hetzner's store are is a B.4-class
-  assertion to add, not an assumption to make. The branch is specified either
-  way: one that is specified and unreachable costs nothing, one that is
-  unspecified and reachable shows a spinner forever.
+- **The object just written disagrees with the count → `failed`.** The client's remedy is to re-upload, and it can, because `failed → processing` is a legal transition.
+- **The object just written matches, and the other is absent** → the row stays `processing`. A `HEAD` cannot distinguish _missing_ from not yet visible, so this covers both the ordinary case (one object uploaded, the other not yet) and a store that has not published a write. The client retries §9.8.
+- **Both present and the fresh one matches → `ready`,** and **`byte_size` is the sum of the two `HEAD` lengths.**
+
+**Two `HEAD`s rather than one, and the reason is that the row has nowhere to keep the first confirmation.** `media` has no per-object column — `byte_size` is null until `ready` (§9.8) — so on the completing upload the server holds a fresh count for one object and nothing about the other. The alternatives were accumulating the first length in `byte_size` while still `processing`, which uses a column against its documented meaning, or adding per-object state to the schema for something a round trip re-derives. **Re-reading both makes "`ready` needs both objects" structural:** a handler that checks only what it just wrote cannot reach `ready`, rather than reaching it wrongly and being caught by a test. It also lets one handler serve both variants without caring which it is.
+
+**What `ready` therefore means, stated exactly:** both objects exist, each was confirmed against the server's own count at the time it was written, and both were present when the row transitioned. The older object's length at that moment comes from its `HEAD` rather than from a remembered count — the relay is the only writer and re-upload before `ready` re-verifies, so the two cannot drift.
+
+_§9.7 said "one `HEAD`" until 21 September 2026, which specified evidence for one object under a rule requiring two. Found by writing the handler._
 
 **`ready` therefore _means_ something a viewer can rely on: both objects exist,
 and each is the size the server itself counted while streaming it.** Nothing is

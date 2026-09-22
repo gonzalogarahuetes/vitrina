@@ -38,6 +38,20 @@ const FORBIDDEN = [
   "root",
 ];
 
+/**
+ * Forbidden in a REQUEST BODY only — §9.7: "no route accepts a `status` field,
+ * on any body, ever". Scoped to `body` because §9.4 and §9.8 declare `status`
+ * in their responses, where it is the route's purpose.
+ */
+const FORBIDDEN_IN_BODY = ["status"];
+
+/**
+ * Every path parameter any route may declare. An allowlist, not a `_id`
+ * pattern, on the same reasoning as §1.2's log projection: additions get
+ * argued one at a time.
+ */
+const PATH_PARAMETERS = ["album_id", "media_id", "recipient_id"];
+
 /** Every property name anywhere in a schema, at any depth. */
 function propertyNames(node, found = new Set()) {
   if (node === null || typeof node !== "object") return found;
@@ -66,15 +80,43 @@ describe("the route table", () => {
         }
       });
 
-      it("declares no query string or path parameter at all (§7.2)", () => {
+      it("declares no query string and no header schema (§7.2)", () => {
         // A token in a query string lands in access logs, in Referer headers
         // and in browser history — the same class as invite spec §2.1's `?`
-        // where a `#` belongs. Scoped to querystring and params deliberately:
+        // where a `#` belongs. Scoped to querystring and headers deliberately:
         // `token` in /login's RESPONSE is the session being returned, which is
         // the route's whole purpose, and an earlier version of this walk
         // flagged it.
-        for (const section of ["querystring", "params", "headers"]) {
+        for (const section of ["querystring", "headers"]) {
           assert.equal(schema[section], undefined, `${name} declares a ${section}`);
+        }
+      });
+
+      it("declares only allowlisted path parameters (§7.2, §9.3)", () => {
+        // Narrowed 22 September 2026. This read `params === undefined`, true
+        // only while every route was flat; §9's eight carry `{album_id}` and
+        // `{media_id}`. §7.2's subject is a token in a log, not a path segment.
+        if (schema.params === undefined) return;
+
+        for (const declared of Object.keys(schema.params.properties ?? {})) {
+          assert.ok(
+            PATH_PARAMETERS.includes(declared),
+            `${name} declares the path parameter ${declared}, which is not allowlisted`,
+          );
+        }
+      });
+
+      it("accepts no server-set field in a request body (§9.7)", () => {
+        // Vacuous until §9's schemas are imported above — nothing in PR 2b has
+        // a `status` to declare. Provision, marked as such.
+        if (schema.body === undefined) return;
+
+        const inBody = [...propertyNames(schema.body)].map((n) => n.toLowerCase());
+        for (const forbidden of FORBIDDEN_IN_BODY) {
+          assert.ok(
+            !inBody.includes(forbidden),
+            `${name} accepts ${forbidden} in its request body`,
+          );
         }
       });
     });
