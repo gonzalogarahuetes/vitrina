@@ -336,6 +336,10 @@ const APPLICATION_ERRORS = {
   EMPTY_ADDRESS: "VALIDATION_FAILED",
   INVALID_CREDENTIALS: "INVALID_CREDENTIALS",
   DUPLICATE_ADDRESS: "CONFLICT",
+  // Three codes, one wire answer. They stay apart because the log line that
+  // says WHICH id collided is the only thing a `409` with no `details` gives.
+  DUPLICATE_ALBUM_ID: "CONFLICT",
+  DUPLICATE_MEDIA_ID: "CONFLICT",
 } as const satisfies Record<ApplicationErrorCode, ThrowableCode>;
 
 export function errorEnvelope(

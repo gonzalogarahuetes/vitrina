@@ -8,7 +8,8 @@
 import type { FastifyInstance } from "fastify";
 import type { UseCases } from "../../../../application/use-cases/index.js";
 import { makeRequireOwner } from "../auth/owner.js";
-import { decodeBase64url, encodeBase64url, MalformedEncodingError } from "../base64url.js";
+import { encodeBase64url } from "../base64url.js";
+import { decodeOr400 } from "../decode-field.js";
 import { ApiError } from "../error-envelope.js";
 import { makeIpRateLimit } from "../rate-limit.js";
 import {
@@ -38,21 +39,8 @@ type SignupBody = {
  * ordinal dates and offset-less local times; a format described loosely is one
  * two implementations can disagree about.
  */
-const rfc3339 = (at: Date): string => at.toISOString().replace(/\.\d{3}Z$/, "Z");
-
-/**
- * A malformed encoded field is `400`, with no `details` — §7.3: every code in
- * this PR is actionable from the code alone, and on a credential route a field
- * name is where a distinguishing hint leaks.
- */
-function decodeOr400(value: string, bytes: number): Uint8Array {
-  try {
-    return decodeBase64url(value, bytes);
-  } catch (error) {
-    if (error instanceof MalformedEncodingError) throw new ApiError("VALIDATION_FAILED");
-    throw error;
-  }
-}
+const rfc3339 = (at: Date): string =>
+  at.toISOString().replace(/\.\d{3}Z$/, "Z");
 
 export function credentialRoutes(deps: CredentialRoutesDeps) {
   return async function register(app: FastifyInstance): Promise<void> {
@@ -105,7 +93,9 @@ export function credentialRoutes(deps: CredentialRoutesDeps) {
       { schema: loginParamsSchema, preHandler: ipRateLimit },
       async (request, reply) => {
         // Always 200, for an unknown address as much as a known one (§4.3).
-        const row = await deps.useCases.loginParams({ email: request.body.email });
+        const row = await deps.useCases.loginParams({
+          email: request.body.email,
+        });
         return reply.send({
           kdf_salt: encodeBase64url(row.kdfSalt),
           kdf_memory_kib: row.params.memoryKib,
@@ -122,7 +112,10 @@ export function credentialRoutes(deps: CredentialRoutesDeps) {
         // Malformed → 400 BEFORE any lookup: a string that is not a well-formed
         // proof cannot be one, and rejecting it says nothing about the address.
         const proof = decodeOr400(request.body.proof, 32);
-        const session = await deps.useCases.login({ email: request.body.email, proof });
+        const session = await deps.useCases.login({
+          email: request.body.email,
+          proof,
+        });
         return reply.send({
           token: encodeBase64url(session.token),
           expires_at: rfc3339(session.expiresAt),
@@ -134,11 +127,10 @@ export function credentialRoutes(deps: CredentialRoutesDeps) {
       "/owner/key",
       { schema: ownerKeySchema, preHandler: requireOwner },
       async (request, reply) => {
-        // Set by requireOwner; the route reads no id from the request (§8.3).
-        const ownerId = request.ownerId;
-        if (ownerId === undefined) throw new ApiError("UNAUTHENTICATED");
+        const caller = request.caller;
+        if (caller?.kind !== "owner") throw new ApiError("UNAUTHENTICATED");
 
-        const key = await deps.useCases.ownerKey({ ownerId });
+        const key = await deps.useCases.ownerKey({ ownerId: caller.ownerId });
         return reply.send({
           kdf_salt: encodeBase64url(key.kdfSalt),
           kdf_memory_kib: key.params.memoryKib,

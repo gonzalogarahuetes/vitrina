@@ -16,7 +16,11 @@ export type ApplicationErrorCode =
   /** Wrong proof or unknown address, indistinguishably — §4.3, §7.5. */
   | "INVALID_CREDENTIALS"
   /** The normalised address is registered. From the `UNIQUE`, never a prior `SELECT`. */
-  | "DUPLICATE_ADDRESS";
+  | "DUPLICATE_ADDRESS"
+  /** §9.2's `409`, meaning "already created" — a new id orphans the wrapping. */
+  | "DUPLICATE_ALBUM_ID"
+  /** §9.6's, meaning the same — a new id orphans the metadata envelope. */
+  | "DUPLICATE_MEDIA_ID";
 
 /**
  * `message` is the code itself: a constant, never interpolated with request

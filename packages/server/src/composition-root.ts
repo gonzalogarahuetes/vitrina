@@ -30,6 +30,9 @@ import { makeMintSession } from "./application/use-cases/mint-session.js";
 import { ownerKey } from "./application/use-cases/owner-key.js";
 import { signup } from "./application/use-cases/signup.js";
 import { makeVerifyProof } from "./application/use-cases/verify-proof.js";
+import { authenticateRecipient } from "./application/use-cases/authenticate-recipient.js";
+import type { RecipientRepository } from "./application/ports/recipient-repository.js";
+import { createRecipientRepository } from "./adapters/driven/postgres/recipient-repository.js";
 
 /**
  * The v1 Argon2id parameters, declared in `@vitrina/shared` because the client
@@ -50,6 +53,7 @@ export type Adapters = {
 /** What the use cases need, with no vendor in sight. */
 export type UseCaseAdapters = {
   readonly owners: OwnerRepository;
+  readonly recipients: RecipientRepository;
   readonly credentialHasher: CredentialHasher;
   readonly tokenHasher: TokenHasher;
   readonly clock: Clock;
@@ -76,7 +80,7 @@ export function buildUseCases(
   adapters: UseCaseAdapters,
   options: UseCaseOptions,
 ): UseCases {
-  const { owners, credentialHasher, tokenHasher, clock } = adapters;
+  const { owners, recipients, credentialHasher, tokenHasher, clock } = adapters;
   const mintSession = makeMintSession(owners, tokenHasher, clock);
 
   return {
@@ -94,6 +98,7 @@ export function buildUseCases(
     }),
     ownerKey: ownerKey({ owners }),
     authenticateOwner: authenticateOwner({ owners, tokenHasher, clock }),
+    authenticateRecipient: authenticateRecipient({ recipients, tokenHasher }),
   };
 }
 
@@ -113,6 +118,7 @@ export function buildComposition(config: CompositionConfig): {
   const pool = new Pool({ connectionString: config.databaseUrl });
   const adapters = {
     owners: createOwnerRepository(pool),
+    recipients: createRecipientRepository(pool),
     credentialHasher: createCredentialHasher(config.serverSecret),
     tokenHasher: createTokenHasher(),
     clock: createSystemClock(),

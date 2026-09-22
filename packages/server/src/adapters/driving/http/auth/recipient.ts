@@ -1,8 +1,7 @@
 /*
- * The owner bearer scheme — api-sketch §7.2, §7.3 steps 1 and 2.
- * This half is transport: read the header, decode strictly, and turn "no
- * owner" into a status. The lookup and the expiry and revocation checks are
- * the authenticateOwner use case's, so no repository reaches buildServer.
+ * The recipient bearer scheme — api-sketch §7.2, §7.3 step 1 ONLY.
+ * There is no step 2 here: recipient tokens carry no expiry, only revocation
+ * (§7.1). Revocation is step 4 and the route's, after it has resolved scope.
  */
 
 import type { FastifyReply, FastifyRequest } from "fastify";
@@ -13,18 +12,19 @@ import {
   MalformedEncodingError,
 } from "../base64url.js";
 import { ApiError } from "../error-envelope.js";
+import type { RecipientGrant } from "../../../../application/ports/recipient-repository.js";
 
 const TOKEN_BYTES = 32;
 const TOKEN_CHARS = encodedLength(TOKEN_BYTES); // 43
 
 /**
- * Every failure is `401 UNAUTHENTICATED` with no `details`: absent, malformed,
- * unknown, expired and revoked are one answer. A revoked OWNER token is 401
- * and not 403 because an owner logs in again and a revoked recipient cannot
- * (§7.3) — the codes differ so the client renders the right sentence.
+ * Absent, malformed and unknown are one answer — `401`, no `details`. A
+ * REVOKED grant is not a failure here: it is set on the request with its
+ * `revokedAt` intact, so the route can answer `403` for the caller's own album
+ * and `404` for any other (§7.3, steps 3 then 4).
  */
-export function makeRequireOwner(useCases: UseCases) {
-  return async function requireOwner(
+export function makeRequireRecipient(useCases: UseCases) {
+  return async function requireRecipient(
     request: FastifyRequest,
     reply: FastifyReply,
   ): Promise<void> {
@@ -40,11 +40,11 @@ export function makeRequireOwner(useCases: UseCases) {
     const presented = header.slice("Bearer ".length);
     if (presented.length !== TOKEN_CHARS) throw new ApiError("UNAUTHENTICATED");
 
-    let ownerId: string | null;
+    let recipientGrant: RecipientGrant | null;
     try {
       // A value that is not a well-formed token cannot be one, so it is
       // rejected at the boundary rather than hashed and looked up (§7.2).
-      ownerId = await useCases.authenticateOwner({
+      recipientGrant = await useCases.authenticateRecipient({
         token: decodeBase64url(presented, TOKEN_BYTES),
       });
     } catch (error) {
@@ -54,10 +54,10 @@ export function makeRequireOwner(useCases: UseCases) {
       throw error;
     }
 
-    if (ownerId === null) throw new ApiError("UNAUTHENTICATED");
+    if (recipientGrant === null) throw new ApiError("UNAUTHENTICATED");
     request.caller = {
-      kind: "owner",
-      ownerId,
+      kind: "recipient",
+      grant: recipientGrant,
     };
   };
 }
