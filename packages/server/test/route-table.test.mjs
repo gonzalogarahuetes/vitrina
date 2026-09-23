@@ -15,10 +15,11 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
+import * as albums from "../dist/adapters/driving/http/schemas/albums.js";
 import * as credentials from "../dist/adapters/driving/http/schemas/credentials.js";
 import * as health from "../dist/adapters/driving/http/schemas/health.js";
 
-const SCHEMAS = Object.entries({ ...credentials, ...health });
+const SCHEMAS = Object.entries({ ...albums, ...credentials, ...health });
 
 /**
  * Names that may never appear as a property, inbound or outbound. `wrapped_`

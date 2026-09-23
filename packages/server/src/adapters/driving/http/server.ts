@@ -9,6 +9,7 @@ import type { UseCases } from "../../../application/use-cases/index.js";
 import { errorEnvelope, notFoundEnvelope } from "./error-envelope.js";
 import health from "./routes/health.js";
 import { credentialRoutes } from "./routes/credentials.js";
+import { albumRoutes } from "./routes/albums.js";
 
 /*
  * What the log is allowed to carry, and how an error is shaped when it gets
@@ -196,11 +197,9 @@ export async function buildServer(
        * applying to everything under /v1.
        */
       await v1.register(credentialRoutes({ useCases: deps.useCases }));
-      //   v1.register(albums,     { useCases: deps.useCases })
-      //   v1.register(media,      { useCases: deps.useCases })
-      //   v1.register(recipients, { useCases: deps.useCases })
-      //   v1.register(delivery,   { useCases: deps.useCases })
-      //   v1.register(accessLog,  { useCases: deps.useCases })
+      // §9.2's two. Its own plugin, so the `no-store` hook is encapsulated to
+      // the routes that carry a wrapping rather than to everything under /v1.
+      await v1.register(albumRoutes({ useCases: deps.useCases }));
       for (const plugin of deps.v1Plugins ?? []) {
         await v1.register(plugin);
       }

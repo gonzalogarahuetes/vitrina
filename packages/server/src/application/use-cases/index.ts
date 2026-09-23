@@ -18,6 +18,9 @@ import type {
 } from "../ports/owner-repository.js";
 import type { AuthenticateRecipientInput } from "./authenticate-recipient.js";
 import type { RecipientGrant } from "../ports/recipient-repository.js";
+import type { ListAlbumsInput } from "./list-albums.js";
+import type { CreatedAlbum, OwnerAlbum } from "../ports/album-repository.js";
+import type { CreateAlbumInput } from "./create-album.js";
 
 export type UseCases = {
   // PR 2b — the owner credential lifecycle (api-sketch §7.5, §8.3).
@@ -25,6 +28,11 @@ export type UseCases = {
   readonly loginParams: (input: LoginParamsInput) => Promise<OwnerKdfRow>;
   readonly login: (input: LoginInput) => Promise<MintedSession>;
   readonly ownerKey: (input: OwnerKeyInput) => Promise<OwnerPasswordKey>;
+  // PR 3 - the album lifecycle for §9.2
+  readonly listAlbums: (
+    input: ListAlbumsInput,
+  ) => Promise<readonly OwnerAlbum[]>;
+  readonly createAlbum: (input: CreateAlbumInput) => Promise<CreatedAlbum>;
   /** §7.3 steps 1-2. Null for unknown, revoked or expired — the adapter maps. */
   readonly authenticateOwner: (
     input: AuthenticateOwnerInput,

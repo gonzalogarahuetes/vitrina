@@ -33,6 +33,10 @@ import { makeVerifyProof } from "./application/use-cases/verify-proof.js";
 import { authenticateRecipient } from "./application/use-cases/authenticate-recipient.js";
 import type { RecipientRepository } from "./application/ports/recipient-repository.js";
 import { createRecipientRepository } from "./adapters/driven/postgres/recipient-repository.js";
+import { createAlbum } from "./application/use-cases/create-album.js";
+import type { AlbumRepository } from "./application/ports/album-repository.js";
+import { listAlbums } from "./application/use-cases/list-albums.js";
+import { createAlbumRepository } from "./adapters/driven/postgres/album-repository.js";
 
 /**
  * The v1 Argon2id parameters, declared in `@vitrina/shared` because the client
@@ -46,6 +50,8 @@ const kdfV1: OwnerKdfParameters = OWNER_KDF_V1;
 export type Adapters = {
   readonly pool: Pool;
   readonly owners: OwnerRepository;
+  readonly albums: AlbumRepository;
+  readonly recipients: RecipientRepository;
   readonly tokenHasher: TokenHasher;
   readonly clock: Clock;
 };
@@ -53,6 +59,7 @@ export type Adapters = {
 /** What the use cases need, with no vendor in sight. */
 export type UseCaseAdapters = {
   readonly owners: OwnerRepository;
+  readonly albums: AlbumRepository;
   readonly recipients: RecipientRepository;
   readonly credentialHasher: CredentialHasher;
   readonly tokenHasher: TokenHasher;
@@ -80,7 +87,8 @@ export function buildUseCases(
   adapters: UseCaseAdapters,
   options: UseCaseOptions,
 ): UseCases {
-  const { owners, recipients, credentialHasher, tokenHasher, clock } = adapters;
+  const { owners, recipients, credentialHasher, tokenHasher, clock, albums } =
+    adapters;
   const mintSession = makeMintSession(owners, tokenHasher, clock);
 
   return {
@@ -99,6 +107,8 @@ export function buildUseCases(
     ownerKey: ownerKey({ owners }),
     authenticateOwner: authenticateOwner({ owners, tokenHasher, clock }),
     authenticateRecipient: authenticateRecipient({ recipients, tokenHasher }),
+    createAlbum: createAlbum({ albums }),
+    listAlbums: listAlbums({ albums }),
   };
 }
 
@@ -118,6 +128,7 @@ export function buildComposition(config: CompositionConfig): {
   const pool = new Pool({ connectionString: config.databaseUrl });
   const adapters = {
     owners: createOwnerRepository(pool),
+    albums: createAlbumRepository(pool),
     recipients: createRecipientRepository(pool),
     credentialHasher: createCredentialHasher(config.serverSecret),
     tokenHasher: createTokenHasher(),

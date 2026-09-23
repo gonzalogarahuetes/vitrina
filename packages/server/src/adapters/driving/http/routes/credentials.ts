@@ -12,6 +12,7 @@ import { encodeBase64url } from "../base64url.js";
 import { decodeOr400 } from "../decode-field.js";
 import { ApiError } from "../error-envelope.js";
 import { makeIpRateLimit } from "../rate-limit.js";
+import { rfc3339 } from "../rfc3339.js";
 import {
   loginParamsSchema,
   loginSchema,
@@ -33,14 +34,6 @@ type SignupBody = {
   wrapped_master: string;
   wrap_nonce: string;
 };
-
-/**
- * RFC 3339, UTC, trailing Z — §7.5. Not "ISO 8601", which admits week dates,
- * ordinal dates and offset-less local times; a format described loosely is one
- * two implementations can disagree about.
- */
-const rfc3339 = (at: Date): string =>
-  at.toISOString().replace(/\.\d{3}Z$/, "Z");
 
 export function credentialRoutes(deps: CredentialRoutesDeps) {
   return async function register(app: FastifyInstance): Promise<void> {
