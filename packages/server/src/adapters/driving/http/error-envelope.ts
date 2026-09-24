@@ -303,7 +303,9 @@ function projectValidation(
     };
 
     const missing =
-      entry.keyword === "required" ? entry.params["missingProperty"] : undefined;
+      entry.keyword === "required"
+        ? entry.params["missingProperty"]
+        : undefined;
 
     // Conditional rather than `missingProperty: undefined`, for the reason
     // `body` below is conditional: exactOptionalPropertyTypes distinguishes an
@@ -340,6 +342,8 @@ const APPLICATION_ERRORS = {
   // says WHICH id collided is the only thing a `409` with no `details` gives.
   DUPLICATE_ALBUM_ID: "CONFLICT",
   DUPLICATE_MEDIA_ID: "CONFLICT",
+  ALBUM_NOT_FOUND: "NOT_FOUND",
+  MEDIA_NOT_FOUND: "NOT_FOUND",
 } as const satisfies Record<ApplicationErrorCode, ThrowableCode>;
 
 export function errorEnvelope(
@@ -356,7 +360,10 @@ export function errorEnvelope(
      * `detail` holds the submitted address (see the note on `cause` above).
      */
     if (error.cause !== undefined) {
-      request.log.warn({ err: error }, "request failed with an underlying cause");
+      request.log.warn(
+        { err: error },
+        "request failed with an underlying cause",
+      );
     }
     const code = APPLICATION_ERRORS[error.code];
     return reply.code(STATUS[code]).send(body(code));
@@ -389,7 +396,10 @@ export function errorEnvelope(
      * removes the case instead. See `ThrowableCode` above.
      */
     if (error.cause !== undefined) {
-      request.log.warn({ err: error }, "request failed with an underlying cause");
+      request.log.warn(
+        { err: error },
+        "request failed with an underlying cause",
+      );
     }
     return reply.code(STATUS[error.code]).send(body(error.code, error.details));
   }

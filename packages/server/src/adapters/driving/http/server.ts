@@ -10,6 +10,7 @@ import { errorEnvelope, notFoundEnvelope } from "./error-envelope.js";
 import health from "./routes/health.js";
 import { credentialRoutes } from "./routes/credentials.js";
 import { albumRoutes } from "./routes/albums.js";
+import { mediaRoutes } from "./routes/media.js";
 
 /*
  * What the log is allowed to carry, and how an error is shaped when it gets
@@ -200,6 +201,9 @@ export async function buildServer(
       // §9.2's two. Its own plugin, so the `no-store` hook is encapsulated to
       // the routes that carry a wrapping rather than to everything under /v1.
       await v1.register(albumRoutes({ useCases: deps.useCases }));
+      // §9.6's create, and §9.7 and §9.8 when they land. No `no-store` hook —
+      // see the note at the head of routes/media.ts.
+      await v1.register(mediaRoutes({ useCases: deps.useCases }));
       for (const plugin of deps.v1Plugins ?? []) {
         await v1.register(plugin);
       }

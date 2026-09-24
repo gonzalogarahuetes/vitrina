@@ -19,6 +19,12 @@ export type NewMedia = {
 export type CreatedMedia = {
   readonly id: string;
   readonly createdAt: Date;
+  /**
+   * Read from the column, never asserted — §9.6's `201` would otherwise have
+   * the route emit a status string, which is the one thing §9.7 forbids of
+   * every route. The default makes it `pending`; this reports what it made.
+   */
+  readonly status: MediaStatus;
 };
 
 /** §9.8's shape, plus the `albums` join §9.3 resolves media scope against. */
@@ -26,7 +32,6 @@ export type MediaRow = CreatedMedia & {
   readonly albumId: string;
   readonly ownerId: string;
   readonly kind: MediaKind;
-  readonly status: MediaStatus;
   /** Null until `ready`; then the sum of the two `HEAD` lengths (§9.7). */
   readonly byteSize: number | null;
   readonly updatedAt: Date;
@@ -35,7 +40,6 @@ export type MediaRow = CreatedMedia & {
 /** §9.4's row. Every media row is listed, whatever its `status`. */
 export type MediaListing = CreatedMedia & {
   readonly kind: MediaKind;
-  readonly status: MediaStatus;
 };
 
 /** §9.5's row. The column verbatim — header and chunks, never inspected. */

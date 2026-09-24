@@ -4,19 +4,7 @@
  * schema into test/route-table.test.mjs, or the walk stops covering it.
  */
 
-/** Encoded character counts. 48 bytes → 64 chars, 24 → 32. */
-const B64URL = { pattern: "^[A-Za-z0-9_-]+$" } as const;
-const b64url = (chars: number) =>
-  ({ type: "string", minLength: chars, maxLength: chars, ...B64URL }) as const;
-
-/**
- * Enforced, not decorative: Fastify's ajv-compiler registers `ajv-formats`,
- * verified 23 September 2026 by asserting a bad value answers 400. Without it
- * a malformed id reaches Postgres and 22P02 becomes a 500.
- */
-const uuid = { type: "string", format: "uuid" } as const;
-
-const timestamp = { type: "string" } as const; // RFC 3339 UTC, built by the route
+import { b64url, timestamp, uuid } from "./fragments.js";
 
 /** Plaintext on the relay (§5.3). 200 is a column bound, not a product rule. */
 const title = { type: "string", minLength: 1, maxLength: 200 } as const;

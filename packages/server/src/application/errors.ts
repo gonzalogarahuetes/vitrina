@@ -20,7 +20,15 @@ export type ApplicationErrorCode =
   /** §9.2's `409`, meaning "already created" — a new id orphans the wrapping. */
   | "DUPLICATE_ALBUM_ID"
   /** §9.6's, meaning the same — a new id orphans the metadata envelope. */
-  | "DUPLICATE_MEDIA_ID";
+  | "DUPLICATE_MEDIA_ID"
+  /**
+   * §9.3's `404`: the album is absent OR is not the caller's, indistinguishably.
+   * One code for both, because a `403` would confirm the album exists — brief
+   * §9.1's easiest way to leak album access.
+   */
+  | "ALBUM_NOT_FOUND"
+  /** The same rule one level down — §9.3 resolves a media id through its album. */
+  | "MEDIA_NOT_FOUND";
 
 /**
  * `message` is the code itself: a constant, never interpolated with request

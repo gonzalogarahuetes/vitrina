@@ -18,8 +18,11 @@ import { describe, it } from "node:test";
 import * as albums from "../dist/adapters/driving/http/schemas/albums.js";
 import * as credentials from "../dist/adapters/driving/http/schemas/credentials.js";
 import * as health from "../dist/adapters/driving/http/schemas/health.js";
+import * as media from "../dist/adapters/driving/http/schemas/media.js";
 
-const SCHEMAS = Object.entries({ ...albums, ...credentials, ...health });
+// fragments.js is deliberately absent: it exports pieces, not route schemas,
+// and adding it would count helpers towards the coverage guard below.
+const SCHEMAS = Object.entries({ ...albums, ...credentials, ...health, ...media });
 
 /**
  * Names that may never appear as a property, inbound or outbound. `wrapped_`

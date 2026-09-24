@@ -37,6 +37,10 @@ import { createAlbum } from "./application/use-cases/create-album.js";
 import type { AlbumRepository } from "./application/ports/album-repository.js";
 import { listAlbums } from "./application/use-cases/list-albums.js";
 import { createAlbumRepository } from "./adapters/driven/postgres/album-repository.js";
+import type { MediaRepository } from "./application/ports/media-repository.js";
+import { createMedia } from "./application/use-cases/create-media.js";
+import { createMediaRepository } from "./adapters/driven/postgres/media-repository.js";
+import { findMediaById } from "./application/use-cases/find-media-by-id.js";
 
 /**
  * The v1 Argon2id parameters, declared in `@vitrina/shared` because the client
@@ -50,6 +54,7 @@ const kdfV1: OwnerKdfParameters = OWNER_KDF_V1;
 export type Adapters = {
   readonly pool: Pool;
   readonly owners: OwnerRepository;
+  readonly media: MediaRepository;
   readonly albums: AlbumRepository;
   readonly recipients: RecipientRepository;
   readonly tokenHasher: TokenHasher;
@@ -59,6 +64,7 @@ export type Adapters = {
 /** What the use cases need, with no vendor in sight. */
 export type UseCaseAdapters = {
   readonly owners: OwnerRepository;
+  readonly media: MediaRepository;
   readonly albums: AlbumRepository;
   readonly recipients: RecipientRepository;
   readonly credentialHasher: CredentialHasher;
@@ -87,8 +93,15 @@ export function buildUseCases(
   adapters: UseCaseAdapters,
   options: UseCaseOptions,
 ): UseCases {
-  const { owners, recipients, credentialHasher, tokenHasher, clock, albums } =
-    adapters;
+  const {
+    owners,
+    recipients,
+    credentialHasher,
+    tokenHasher,
+    clock,
+    albums,
+    media,
+  } = adapters;
   const mintSession = makeMintSession(owners, tokenHasher, clock);
 
   return {
@@ -109,6 +122,8 @@ export function buildUseCases(
     authenticateRecipient: authenticateRecipient({ recipients, tokenHasher }),
     createAlbum: createAlbum({ albums }),
     listAlbums: listAlbums({ albums }),
+    createMedia: createMedia({ media, albums }),
+    findMediaById: findMediaById({ media }),
   };
 }
 
@@ -130,6 +145,7 @@ export function buildComposition(config: CompositionConfig): {
     owners: createOwnerRepository(pool),
     albums: createAlbumRepository(pool),
     recipients: createRecipientRepository(pool),
+    media: createMediaRepository(pool),
     credentialHasher: createCredentialHasher(config.serverSecret),
     tokenHasher: createTokenHasher(),
     clock: createSystemClock(),

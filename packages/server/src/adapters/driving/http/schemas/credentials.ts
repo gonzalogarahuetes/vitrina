@@ -7,10 +7,7 @@
  * Wire names are snake_case; the port's are camelCase. The routes map between.
  */
 
-/** Encoded character counts. 32 bytes → 43 chars, 16 → 22, 48 → 64, 24 → 32. */
-const B64URL = { pattern: "^[A-Za-z0-9_-]+$" } as const;
-const b64url = (chars: number) =>
-  ({ type: "string", minLength: chars, maxLength: chars, ...B64URL }) as const;
+import { b64url, timestamp } from "./fragments.js";
 
 /**
  * As typed: no `format: email` and no `pattern`. The relay normalises
@@ -32,7 +29,6 @@ const kdfParameters = {
   kdf_parallelism: { type: "integer", minimum: 1 },
 } as const;
 
-const timestamp = { type: "string" } as const; // RFC 3339 UTC, built by the route
 
 export const signupSchema = {
   body: {
