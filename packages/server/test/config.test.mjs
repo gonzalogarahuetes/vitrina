@@ -18,6 +18,11 @@ const env = (overrides = {}) => ({
   CLIENT_ORIGIN: "http://localhost:5173",
   VITRINA_SERVER_SECRET: SECRET_32,
   DATABASE_URL: "postgres://admin:password@localhost:5432/vitrina",
+  S3_ENDPOINT: "http://localhost:8333",
+  AWS_DEFAULT_REGION: "us-east-1",
+  S3_BUCKET: "vitrina-media",
+  AWS_ACCESS_KEY_ID: "an-access-key",
+  AWS_SECRET_ACCESS_KEY: "a-secret-key",
   ...overrides,
 });
 
@@ -78,6 +83,83 @@ describe("loadConfig", () => {
 
     it("CLIENT_ORIGIN absent is a hard failure", () => {
       assert.throws(() => loadConfig(env({ CLIENT_ORIGIN: undefined })), /CLIENT_ORIGIN/);
+    });
+  });
+
+  describe("the object store — api-sketch §9.7, brief §10.1", () => {
+    it("carries every field the SDK needs", () => {
+      const { storage } = loadConfig(env());
+
+      assert.deepEqual(storage, {
+        endpoint: "http://localhost:8333",
+        region: "us-east-1",
+        bucket: "vitrina-media",
+        accessKeyId: "an-access-key",
+        secretAccessKey: "a-secret-key",
+      });
+    });
+
+    const required = [
+      "S3_ENDPOINT",
+      "AWS_DEFAULT_REGION",
+      "S3_BUCKET",
+      "AWS_ACCESS_KEY_ID",
+      "AWS_SECRET_ACCESS_KEY",
+    ];
+    for (const name of required) {
+      it(`${name} absent is a hard failure`, () => {
+        assert.throws(() => loadConfig(env({ [name]: undefined })), new RegExp(name));
+      });
+    }
+
+    it("never defaults the bucket", () => {
+      /*
+       * The row worth writing separately from the loop above. A defaulted
+       * bucket name is the #17 shape one level over from the secret: the
+       * process boots, every PUT succeeds, and the ciphertext is in a bucket
+       * nobody looks in — discovered when an owner opens an album, not at boot.
+       */
+      let config;
+      try {
+        config = loadConfig(env({ S3_BUCKET: undefined }));
+      } catch {
+        return; // threw, as required
+      }
+      assert.fail(`loadConfig invented the bucket "${config.storage.bucket}"`);
+    });
+
+    it("requires an origin, not a URL with a path", () => {
+      // The SDK appends the bucket and key itself, so a path here produces
+      // request URLs that 404 against a store that is working perfectly.
+      for (const raw of [
+        "http://localhost:8333/vitrina-media",
+        "http://localhost:8333/?x=1",
+        "http://localhost:8333/#f",
+      ]) {
+        assert.throws(() => loadConfig(env({ S3_ENDPOINT: raw })), /S3_ENDPOINT/);
+      }
+    });
+
+    it("normalises a trailing slash rather than refusing it", () => {
+      // `new URL("…:8333/").pathname` is "/", so this is the one spelling that
+      // passes the path check — and `url.origin` strips it, exactly as
+      // parseOrigin does for CLIENT_ORIGIN. Asserted because the loop above
+      // reads as if it would reject this.
+      assert.equal(
+        loadConfig(env({ S3_ENDPOINT: "http://localhost:8333/" })).storage.endpoint,
+        "http://localhost:8333",
+      );
+    });
+
+    it("requires https unless localhost", () => {
+      assert.throws(
+        () => loadConfig(env({ S3_ENDPOINT: "http://storage.example.com" })),
+        /https/,
+      );
+      assert.equal(
+        loadConfig(env({ S3_ENDPOINT: "https://storage.example.com" })).storage.endpoint,
+        "https://storage.example.com",
+      );
     });
   });
 });

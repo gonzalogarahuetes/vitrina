@@ -11,6 +11,7 @@ import { randomBytes } from "node:crypto";
 import { Pool } from "pg";
 import { OWNER_KDF_V1 } from "@vitrina/shared";
 
+import type { StorageConfig } from "./config.js";
 import { createCredentialHasher } from "./adapters/driven/hashing/credential-hasher.js";
 import { createTokenHasher } from "./adapters/driven/hashing/token-hasher.js";
 import { createOwnerRepository } from "./adapters/driven/postgres/owner-repository.js";
@@ -41,6 +42,9 @@ import type { MediaRepository } from "./application/ports/media-repository.js";
 import { createMedia } from "./application/use-cases/create-media.js";
 import { createMediaRepository } from "./adapters/driven/postgres/media-repository.js";
 import { findMediaById } from "./application/use-cases/find-media-by-id.js";
+import type { ObjectStore } from "./application/ports/object-store.js";
+import { createObjectStore } from "./adapters/driven/s3/object-store.js";
+import { S3Client } from "@aws-sdk/client-s3";
 
 /**
  * The v1 Argon2id parameters, declared in `@vitrina/shared` because the client
@@ -53,12 +57,14 @@ const kdfV1: OwnerKdfParameters = OWNER_KDF_V1;
 
 export type Adapters = {
   readonly pool: Pool;
+  readonly client: S3Client;
   readonly owners: OwnerRepository;
   readonly media: MediaRepository;
   readonly albums: AlbumRepository;
   readonly recipients: RecipientRepository;
   readonly tokenHasher: TokenHasher;
   readonly clock: Clock;
+  readonly objectStore: ObjectStore;
 };
 
 /** What the use cases need, with no vendor in sight. */
@@ -130,6 +136,7 @@ export function buildUseCases(
 export type CompositionConfig = {
   readonly serverSecret: Uint8Array;
   readonly databaseUrl: string;
+  readonly storage: StorageConfig;
 };
 
 /**
@@ -140,6 +147,15 @@ export function buildComposition(config: CompositionConfig): {
   adapters: Adapters;
   useCases: UseCases;
 } {
+  const client = new S3Client({
+    endpoint: config.storage.endpoint,
+    region: config.storage.region,
+    credentials: {
+      accessKeyId: config.storage.accessKeyId,
+      secretAccessKey: config.storage.secretAccessKey,
+    },
+    forcePathStyle: true,
+  });
   const pool = new Pool({ connectionString: config.databaseUrl });
   const adapters = {
     owners: createOwnerRepository(pool),
@@ -149,10 +165,11 @@ export function buildComposition(config: CompositionConfig): {
     credentialHasher: createCredentialHasher(config.serverSecret),
     tokenHasher: createTokenHasher(),
     clock: createSystemClock(),
+    objectStore: createObjectStore(client, config.storage.bucket),
   };
 
   return {
-    adapters: { pool, ...adapters },
+    adapters: { pool, client, ...adapters },
     useCases: buildUseCases(adapters, {
       kdfV1,
       dummyAuthHash: randomBytes(32),

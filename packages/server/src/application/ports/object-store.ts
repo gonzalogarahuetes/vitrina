@@ -47,9 +47,15 @@ export type StoredObject = {
 
 export interface ObjectStore {
   /**
-   * `length` is HTTP framing, not a client claim (§9.7 requires it, §411).
+   * `length` is HTTP framing, not a client claim (§9.7 requires it, 411).
    * Reports no byte count: that is the use case's evidence, and it still holds
    * the number when this rejects. Any rejection means the object did not land.
+   *
+   * The length is also what lets the adapter stream: an S3 client handed a
+   * Node stream without one buffers the whole body to discover the size.
+   *
+   * `PUT` replaces, because §9.7 permits re-upload in `pending`, `processing`
+   * and `failed` — the second attempt is the client's latest, not a conflict.
    */
   put(key: ObjectKey, body: Readable, length: number): Promise<void>;
 
@@ -57,6 +63,12 @@ export interface ObjectStore {
    * The confirming `HEAD` — §9.7. `null` for absent, THROWS for unreachable:
    * a not-found cannot distinguish "failed to land" from "not yet published",
    * so absence stays `processing` and a network blip cannot mark a row `failed`.
+   *
+   * THE ADAPTER MUST DECIDE THAT ON THE STATUS CODE, not the error's name. A
+   * `HEAD` has no response body, so an S3 client cannot read an error code
+   * from one and synthesises its own — which is a detail of whichever client
+   * and store are in use, and SeaweedFS is not AWS. Verify it against the real
+   * store; `infra/object-store-adapter.test.mjs` is where.
    */
   head(key: ObjectKey): Promise<StoredObject | null>;
 }

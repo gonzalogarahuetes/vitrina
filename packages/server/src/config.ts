@@ -26,6 +26,22 @@ export type Config = {
    */
   readonly serverSecret: Uint8Array;
   readonly databaseUrl: string;
+  /** Where ciphertext lives — brief §10.1, api-sketch §9.7. */
+  readonly storage: StorageConfig;
+};
+
+/**
+ * The object store, S3-compatible. Every field is required, INCLUDING the
+ * bucket: a defaulted bucket name is a deployment that writes somewhere else
+ * and looks healthy doing it (brief §6 #17, the same rule as the secret).
+ */
+export type StorageConfig = {
+  /** SeaweedFS locally, Hetzner in production — never assumed to be AWS. */
+  readonly endpoint: string;
+  readonly region: string;
+  readonly bucket: string;
+  readonly accessKeyId: string;
+  readonly secretAccessKey: string;
 };
 
 type Env = Readonly<Record<string, string | undefined>>;
@@ -83,6 +99,23 @@ function parseOrigin(raw: string): string {
   return url.origin; // normalised, no trailing slash
 }
 
+/**
+ * An endpoint is a bare origin, as `parseOrigin` requires of CLIENT_ORIGIN and
+ * for a related reason: the SDK appends the bucket and key itself, so a
+ * trailing slash or a path here produces request URLs that 404 against a store
+ * that is working perfectly.
+ */
+function parseEndpoint(raw: string): string {
+  const url = new URL(raw); // throws on malformed input
+  if (url.protocol !== "https:" && url.hostname !== "localhost") {
+    throw new Error(`S3_ENDPOINT must be https unless localhost: ${raw}`);
+  }
+  if (url.pathname !== "/" || url.search || url.hash) {
+    throw new Error(`S3_ENDPOINT must be an origin, not a URL: ${raw}`);
+  }
+  return url.origin;
+}
+
 function parsePort(raw: string): number {
   const port = Number(raw);
   if (!Number.isInteger(port) || port < 1 || port > 65535) {
@@ -96,6 +129,13 @@ export function loadConfig(env: Env = process.env): Config {
     clientOrigin: parseOrigin(requireEnv(env, "CLIENT_ORIGIN")),
     serverSecret: parseServerSecret(requireEnv(env, "VITRINA_SERVER_SECRET")),
     databaseUrl: requireEnv(env, "DATABASE_URL"),
+    storage: {
+      endpoint: parseEndpoint(requireEnv(env, "S3_ENDPOINT")),
+      region: requireEnv(env, "AWS_DEFAULT_REGION"),
+      bucket: requireEnv(env, "S3_BUCKET"),
+      accessKeyId: requireEnv(env, "AWS_ACCESS_KEY_ID"),
+      secretAccessKey: requireEnv(env, "AWS_SECRET_ACCESS_KEY"),
+    },
     // 0.0.0.0 so the process is reachable from outside its container.
     host: env["HOST"] ?? "0.0.0.0",
     port: parsePort(env["PORT"] ?? "3000"),

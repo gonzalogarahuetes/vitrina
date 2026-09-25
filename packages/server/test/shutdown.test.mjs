@@ -23,7 +23,7 @@ function recorder() {
     calls,
     log,
     /** `behaviour` lets one step hang or reject without touching the other. */
-    make({ close = async () => {}, end = async () => {} } = {}) {
+    make({ close = async () => {}, end = async () => {}, destroy = () => {} } = {}) {
       return {
         app: {
           close: async () => {
@@ -37,6 +37,13 @@ function recorder() {
             calls.push("pool.end:start");
             await end();
             calls.push("pool.end:done");
+          },
+        },
+        storage: {
+          destroy: () => {
+            calls.push("storage.destroy:start");
+            destroy();
+            calls.push("storage.destroy:done");
           },
         },
         log: (message) => log.push(message),
@@ -68,6 +75,8 @@ describe("createShutdown", () => {
         "app.close:done",
         "pool.end:start",
         "pool.end:done",
+        "storage.destroy:start",
+        "storage.destroy:done",
       ]);
     });
 
@@ -109,6 +118,8 @@ describe("createShutdown", () => {
         "app.close:done",
         "pool.end:start",
         "pool.end:done",
+        "storage.destroy:start",
+        "storage.destroy:done",
       ]);
     });
 
@@ -120,7 +131,7 @@ describe("createShutdown", () => {
       await createShutdown(first.make())("SIGTERM");
       await createShutdown(second.make())("SIGTERM");
 
-      assert.equal(second.calls.length, 4, "a fresh instance must shut down too");
+      assert.equal(second.calls.length, 6, "a fresh instance must shut down too");
     });
   });
 
@@ -131,7 +142,13 @@ describe("createShutdown", () => {
       const deps = r.make({ close: async () => { throw new Error("close exploded"); } });
       await createShutdown(deps)("SIGTERM");
 
-      assert.deepEqual(r.calls, ["app.close:start", "pool.end:start", "pool.end:done"]);
+      assert.deepEqual(r.calls, [
+        "app.close:start",
+        "pool.end:start",
+        "pool.end:done",
+        "storage.destroy:start",
+        "storage.destroy:done",
+      ]);
     });
 
     it("exits non-zero", async () => {
@@ -164,6 +181,35 @@ describe("createShutdown", () => {
     it("does not reject — index.ts calls this as void, so a rejection is unhandled", async () => {
       const r = recorder();
       const shutdown = createShutdown(r.make({ end: async () => { throw new Error("pool exploded"); } }));
+
+      await assert.doesNotReject(() => shutdown("SIGTERM"));
+    });
+
+    it("still destroys the storage client", async () => {
+      // Its own try for exactly this: one dependency failing to close must
+      // not leave the next one open.
+      const r = recorder();
+      await createShutdown(r.make({ end: async () => { throw new Error("pool exploded"); } }))("SIGTERM");
+
+      assert.ok(r.calls.includes("storage.destroy:done"));
+    });
+  });
+
+  describe("when the storage client fails to close", () => {
+    it("is reported and exits non-zero", async () => {
+      const r = recorder();
+      await createShutdown(r.make({ destroy: () => { throw new Error("client exploded"); } }))("SIGTERM");
+
+      assert.equal(process.exitCode, 1);
+      assert.match(r.log.join(" "), /client exploded/);
+    });
+
+    it("does not reject", async () => {
+      // `destroy()` is synchronous, so an unguarded throw here escapes the
+      // async function and reaches index.ts's `void shutdown(s)` as an
+      // unhandled rejection — which terminates the process under Node 22.
+      const r = recorder();
+      const shutdown = createShutdown(r.make({ destroy: () => { throw new Error("client exploded"); } }));
 
       await assert.doesNotReject(() => shutdown("SIGTERM"));
     });

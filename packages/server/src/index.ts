@@ -7,6 +7,7 @@ import { buildComposition } from "./composition-root.js";
 import { loadConfig } from "./config.js";
 import { buildServer } from "./adapters/driving/http/server.js";
 import { createShutdown } from "./shutdown.js";
+import { verifyBucket } from "./adapters/driven/s3/object-store.js";
 
 async function main(): Promise<void> {
   // First, so a missing CLIENT_ORIGIN or server secret fails before a socket
@@ -15,6 +16,10 @@ async function main(): Promise<void> {
   const config = loadConfig();
 
   const { useCases, adapters } = buildComposition(config);
+
+  // Before the socket opens, for the reason the secret is: a wrong bucket is
+  // the one misconfiguration that never announces itself (see verifyBucket).
+  await verifyBucket(adapters.client, config.storage.bucket, config.storage.endpoint);
 
   const app = await buildServer({
     config: { clientOrigin: config.clientOrigin },
@@ -26,6 +31,7 @@ async function main(): Promise<void> {
   const shutdown = createShutdown({
     app,
     pool: adapters.pool,
+    storage: adapters.client,
     log: (m) => app.log.info(m),
   });
   process.on("SIGTERM", (s) => void shutdown(s));
