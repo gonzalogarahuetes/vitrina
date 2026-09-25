@@ -1119,6 +1119,8 @@ Each row names the assertion, not just the gap, so that writing it is mechanical
 | §9.5 only `ready` rows' envelopes are returned                                   | **PR 3, prose only.** Create a row, do not upload, call `/metadata`, assert it is absent; then assert §9.4 still lists it as `pending`. The pair is the assertion — the two routes filter differently on purpose                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | §9.4 identical body for owner and recipient                                      | **PR 3, prose only.** Same album, one owner session and one recipient token, deep-equal the two responses. Fails the day someone adds an owner-only field to the shared route instead of to §9.2                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | §9.2 every album's wrapping is in the list, and the list is `no-store`           | **PR 3, prose only.** Header assertion plus: create two albums, list, assert both `wrapped_key`s equal what was posted                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| §9.7 the route enforces its own size limit — `Content-Length` over it        | **PR 3.** `Content-Length` above the route's limit → `413` with the handler never entered and no byte read. The framework does NOT provide this on a streaming parser (§9.7, measured), so the row asserts our own check on the path we take rather than Fastify's on one we do not                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| §9.7 the route enforces its own size limit — a body over it mid-stream       | **PR 3.** A body that exceeds the limit while being read → `413`, covering the case where the framing and the body disagree. The handler is already counting for the evidence rule, so this asserts the count is acted on rather than merely taken                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 | §3 `methods` is `GET, POST, PUT`                                                 | **PR 3.** Extend the existing OPTIONS preflight test: `PUT` allowed, `DELETE` not                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 | §4.1 no response schema declares a key-named field                               | **PR 4, prose only.** The outbound half of the route-table walk: every route's response schema, asserted free of `key`, `K_album`, `K_master`, `kek`, `passphrase`, `password`, `proof` as property names. Same test file as the inbound walk, second loop                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | §10.1 returns the caller's row and only that                                     | **PR 4, prose only, structural** — no id in the path. Owed anyway, as §8.3's is: two passphrase recipients on one album, each token's `GET` returns its own `wrapped` and `id`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
@@ -2684,12 +2686,73 @@ provisional, and marked so.
 
 **`Content-Length` is required; chunked transfer encoding is not accepted.** A
 request without it is `411 LENGTH_REQUIRED`, a code this PR adds (§1.1). This is
-not a client-declared size in the sense §9.7's status rule forbids — it is HTTP
-framing, and the server does not _believe_ it: it counts. What requiring it buys
-is that the framework's `bodyLimit` check happens before the first byte rather
-than after the last, and that the storage `PutObject` can be given a length up
-front, so a stream that ends early fails at the store rather than committing a
-short object.
+not a client-declared size in the sense the status rule forbids — it is HTTP
+framing, and the server does not _believe_ it: it counts.
+
+**The route enforces its own size limit, because Fastify's does not reach the
+streaming path.** Measured 25 September 2026: `bodyLimit` is applied by the
+parsers that accumulate a body, which is where the counting happens. A parser
+that hands the raw stream through — the only kind this route can use — counts
+nothing, so a 5000-byte body passes a 1024-byte limit and reaches the handler in
+full. Buffering to recover the check defeats the streaming the design rests on.
+
+So the handler does it in two places, and neither is expensive:
+
+- **Before reading a byte**, compare `Content-Length` against the route's limit
+  and answer `413 PAYLOAD_TOO_LARGE`. This is the pre-check the framework was
+  assumed to provide.
+- **While reading**, assert the running count never exceeds the limit. The
+  handler is already counting for the evidence rule above, so this is free, and
+  it covers the case where the framing and the body disagree.
+
+**Two earlier versions of this paragraph were wrong about the same mechanism:**
+the first said `Content-Length` makes a short stream fail at the store — it does
+not, SeaweedFS waits — and the second said `bodyLimit` is checked before the
+first byte, which is true of buffering parsers and false of this route's. Both
+were corrected by measurement rather than by reading.
+
+**Registering a parser for `application/octet-stream` alone gives the `415` for
+free:** with no parser registered for a content type, Fastify already refuses
+it, so "anything but `application/octet-stream`" needs no handler code.
+
+**Where this system depends on a framework guarantee, assert the guarantee on
+the path this system actually takes.** It looks like testing someone else's
+library and is not: the framework's behaviour is not in question, only whether
+our configuration is inside the conditions it holds under. `bodyLimit` above is
+the worked example — the limit is enforced by the parsers that accumulate a
+body, so a route handing the stream through gets no enforcement while the
+configuration still says 16 MiB. Three readings of framework documentation
+produced three wrong sentences in this section; one route test would have caught
+all three.
+
+_All three were the same error rather than three errors: a real guarantee,
+correctly described in someone's documentation, conditional on something this
+route had opted out of. `bodyLimit` is enforced — by buffering parsers.
+`Content-Length` does let a store reject early — a store that checks.
+`requestTimeout` does measure from request start — and answers `408` itself.
+This is the only part of §9 describing framework behaviour rather than this
+system's own rules, and it is the part that has been wrong every time._
+
+**An upload therefore needs a deadline, and the route sets it.** A client that
+disappears mid-body otherwise leaves a request, a stream and an S3 upload open
+indefinitely; unlike §9.7's abandoned create, which costs a row, an abandoned
+upload holds resources. The handler aborts a body that has not completed within
+a bounded time, marks the row `failed`, and answers nothing — the client is
+gone. **Provisional: 120 seconds**, which is generous for 16 MiB on the
+connection brief §10.1 targets and short enough that a hung upload is not a
+leak. Aborting mid-`PutObject` may leave a partial object in the store; that is
+safe by construction — the row is `failed`, no route serves a non-`ready` row
+(§11.2), and a re-upload replaces the object.
+
+**Two events, one catch.** A client that vanishes makes the stream error on its
+own, immediately and for free — the deadline never fires. The deadline is
+specifically for the client that stays connected and stops sending, which
+nothing else detects. Both arrive as the stream throwing inside the read loop,
+so there is one `markFailed` and one recovery path; what distinguishes them is
+the timer's own flag, not the stream.
+
+**`request.raw.destroyed` cannot be used to tell an abort from a completion** —
+it is true on the successful path too. The stream throwing is the signal.
 
 #### Status is set by the server, on evidence, and no client-declared size is involved
 
@@ -2713,7 +2776,7 @@ moves the row along it:
 
 **What `ready` therefore means, stated exactly:** both objects exist, each was confirmed against the server's own count at the time it was written, and both were present when the row transitioned. The older object's length at that moment comes from its `HEAD` rather than from a remembered count — the relay is the only writer and re-upload before `ready` re-verifies, so the two cannot drift.
 
-_§9.7 said "one `HEAD`" until 21 September 2026, which specified evidence for one object under a rule requiring two. Found by writing the handler._
+_§9.7 said "one `HEAD`" until 25 September 2026, which specified evidence for one object under a rule requiring two. Found by writing the handler._
 
 **`ready` therefore _means_ something a viewer can rely on: both objects exist,
 and each is the size the server itself counted while streaming it.** Nothing is
@@ -2745,7 +2808,10 @@ is between the client that encrypted it and the client that opens it.
   that marks rows stale after some interval is Phase 2 and needs a number nobody
   has; until then §9.4 lists such rows honestly as `pending`, the owner's client
   can offer a retry, and the owner's storage is not charged because nothing was
-  stored. Recorded so the state is known rather than discovered.
+  stored. Recorded so the state is known rather than discovered. **An abandoned
+  upload now can be detected** — the deadline above marks it `failed`. What
+  remains undetectable is an abandoned _create_: a row at `pending` whose client
+  never uploads, where nothing happens and nothing can therefore be observed.
 - **Errors:** `401 UNAUTHENTICATED` · `404 NOT_FOUND` · `409 CONFLICT` (row is
   `ready`) · `411 LENGTH_REQUIRED` · `413 PAYLOAD_TOO_LARGE` ·
   `415 UNSUPPORTED_MEDIA_TYPE` (anything but `application/octet-stream`).
@@ -2802,6 +2868,9 @@ application/octet-stream` is not a CORS-safelisted value, so the upload
   (schema §5). §9.7's `409` after `ready` is where the first of these will have
   to be argued.
 - **The stall interval** — §9.7. `updated_at` is there; the number is not.
+- **The upload deadline** — §9.7. 120 seconds, provisional, and a different
+  number from the stall interval: this one bounds a request the server is
+  holding, that one bounds a row nobody has touched.
 - **Quotas and abuse limits** — Phase 2. The body limits in §9.7 are edge
   protection, not policy.
 - **Whether `albums.title` becomes ciphertext** — §5.3. If it does, §9.2's
