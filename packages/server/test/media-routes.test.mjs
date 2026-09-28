@@ -635,26 +635,26 @@ describe("PUT /v1/media/{media_id}/{asset,thumbnail} — §9.7", () => {
       );
     });
 
-    it("is 415 for a content type with no parser", async (t) => {
-      /*
-       * Free only for types Fastify has no parser for. Measured 26 September
-       * 2026, and NOT the whole of §9.7's "anything but octet-stream":
-       * `application/json` answers `400` because the default parser runs and
-       * fails, and `text/plain` answers `200` because its default parser
-       * SUCCEEDS — the handler then runs with a string where it expects a
-       * stream. Closing that needs the uploads in their own encapsulated
-       * scope with the inherited parsers removed; until then this asserts the
-       * case that does hold.
-       */
-      const { put } = await withMedia(t);
+    const refusedTypes = [
+      // `application/json` and `text/plain` are the two Fastify installs by
+      // default, and both would be accepted without the nested scope: JSON
+      // answers `400` from its own parser, and text/plain answers `200` with
+      // `request.body` a STRING — on which the deadline's `destroy()` fails
+      // and the counting generator iterates characters (§9.7, measured).
+      "application/json",
+      "text/plain",
+      // And one Fastify has no parser for, which would be refused either way.
+      "image/jpeg",
+    ];
+    for (const contentType of refusedTypes) {
+      it(`is 415 for ${contentType}`, async (t) => {
+        const { put } = await withMedia(t);
 
-      const response = await put("asset", {
-        body: envelope(200),
-        contentType: "image/jpeg",
+        const response = await put("asset", { body: envelope(200), contentType });
+
+        assert.equal(response.statusCode, 415, `${contentType}: ${response.body}`);
       });
-
-      assert.equal(response.statusCode, 415, response.body);
-    });
+    }
 
     it("is 401 without a token, before any of the above", async (t) => {
       const { port, mediaId } = await withMedia(t);

@@ -40,6 +40,8 @@ const ASSET_MAX_BYTES = 16 * 1024 * 1024;
 const ENVELOPE_MIN_BYTES = 81;
 const THUMBNAIL_MAX_BYTES = 1024 * 1024;
 const UPLOAD_DEADLINE_MS = 120_000; // §9.7, provisional
+
+type UploadRoute = { Body: Readable; Params: { media_id: string } };
 /**
  * §9.8's seven fields, and the shape §9.7's uploads return too — "one type for
  * where this row is, whether the client asked or was told". Mapped field by
@@ -59,17 +61,6 @@ export function mediaRoutes(deps: MediaRoutesDeps) {
   return async function register(app: FastifyInstance): Promise<void> {
     const requireOwner = makeRequireOwner(deps.useCases);
 
-    /*
-     * Registered for `application/octet-stream` ONLY, which is what gives
-     * §9.7's `415` for free: Fastify refuses a content type it has no parser
-     * for, so "anything but octet-stream" needs no handler code. Handing the
-     * raw stream through is also why `bodyLimit` cannot help — measured, it is
-     * applied by the parsers that accumulate a body (§9.7).
-     */
-    app.addContentTypeParser("application/octet-stream", (req, payload, done) =>
-      done(null, payload),
-    );
-
     /**
      * ONE handler for both objects, parameterised — §9.7's "one handler serves
      * both variants without caring which it is". §6.2 names the alternative as
@@ -83,7 +74,10 @@ export function mediaRoutes(deps: MediaRoutesDeps) {
      */
     const upload = (variant: MediaVariant, maxBytes: number) =>
       async function handler(
-        request: FastifyRequest<{ Body: Readable; Params: { media_id: string } }>,
+        request: FastifyRequest<{
+          Body: Readable;
+          Params: { media_id: string };
+        }>,
         reply: FastifyReply,
       ) {
         const caller = request.caller;
@@ -156,14 +150,22 @@ export function mediaRoutes(deps: MediaRoutesDeps) {
           // §9.7: the row looks identical to one behind a merely slow store,
           // and this line is the only place the two differ.
           request.log.error(
-            { err: outcome.failure.cause, mediaId: request.params.media_id, variant },
+            {
+              err: outcome.failure.cause,
+              mediaId: request.params.media_id,
+              variant,
+            },
             "confirming HEAD failed; row left processing",
           );
         }
 
         if (outcome.failure?.kind === "upload") {
           request.log.error(
-            { err: outcome.failure.cause, mediaId: request.params.media_id, variant },
+            {
+              err: outcome.failure.cause,
+              mediaId: request.params.media_id,
+              variant,
+            },
             "the store refused the object; row is failed",
           );
         }
@@ -236,16 +238,37 @@ export function mediaRoutes(deps: MediaRoutesDeps) {
       },
     );
 
-    app.put<{ Body: Readable; Params: { media_id: string } }>(
-      "/media/:media_id/asset",
-      { schema: uploadAssetSchema, preHandler: requireOwner },
-      upload("asset", ASSET_MAX_BYTES),
-    );
+    /*
+     * §9.7's two uploads, in a scope of their own so the parser surgery reaches
+     * them and nothing else. Measured: registering a parser does NOT displace
+     * Fastify's defaults, it adds a third — `application/json` would still
+     * reach the default parser and `text/plain` would reach the HANDLER, with
+     * `request.body` a string, on which the deadline's `destroy()` fails and
+     * the counting generator iterates characters.
+     *
+     * It cannot be done one level up: §9.6's create needs the JSON parser.
+     *
+     * Handing the raw stream through is also why `bodyLimit` cannot help — it
+     * is applied by the parsers that accumulate a body, so the limits below
+     * are the handler's (§9.7).
+     */
+    await app.register(async (uploads) => {
+      uploads.removeAllContentTypeParsers();
+      uploads.addContentTypeParser(
+        "application/octet-stream",
+        (req, payload, done) => done(null, payload),
+      );
 
-    app.put<{ Body: Readable; Params: { media_id: string } }>(
-      "/media/:media_id/thumbnail",
-      { schema: uploadThumbnailSchema, preHandler: requireOwner },
-      upload("thumbnail", THUMBNAIL_MAX_BYTES),
-    );
+      uploads.put<UploadRoute>(
+        "/media/:media_id/asset",
+        { schema: uploadAssetSchema, preHandler: requireOwner },
+        upload("asset", ASSET_MAX_BYTES),
+      );
+      uploads.put<UploadRoute>(
+        "/media/:media_id/thumbnail",
+        { schema: uploadThumbnailSchema, preHandler: requireOwner },
+        upload("thumbnail", THUMBNAIL_MAX_BYTES),
+      );
+    });
   };
 }
