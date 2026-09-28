@@ -114,14 +114,74 @@ function inMemoryAlbums() {
   };
 }
 
+
+/** §9.4's listing and §9.5's envelopes, from one map of rows. */
+function inMemoryMedia() {
+  const rows = new Map();
+  return {
+    rows,
+    add(albumId, { status = "pending", envelope = Buffer.alloc(81, 0x11) } = {}) {
+      const id = randomUUID();
+      rows.set(id, {
+        id,
+        albumId,
+        kind: "photo",
+        status,
+        metadata: envelope,
+        createdAt: new Date(`2026-09-21T09:00:0${rows.size}.000Z`),
+      });
+      return id;
+    },
+    async listByAlbum(albumId) {
+      // §9.4: every row, whatever its status, oldest first.
+      return [...rows.values()]
+        .filter((row) => row.albumId === albumId)
+        .sort((a, b) => a.createdAt - b.createdAt);
+    },
+    async listReadyEnvelopes(albumId) {
+      // §9.5: the one place the server filters on status.
+      return [...rows.values()]
+        .filter((row) => row.albumId === albumId && row.status === "ready")
+        .map((row) => ({ mediaId: row.id, envelope: row.metadata }));
+    },
+  };
+}
+
+/**
+ * §7.7's create route is PR 2's and unbuilt, so grants are registered here —
+ * keyed by the hash the real TokenHasher produces, as the table would be.
+ */
+function inMemoryRecipients() {
+  const byHash = new Map();
+  const hasher = createTokenHasher();
+  return {
+    grant(albumId, { revokedAt = null } = {}) {
+      const token = Buffer.alloc(32, byHash.size + 1);
+      byHash.set(Buffer.from(hasher.hash(token)).toString("hex"), {
+        id: randomUUID(),
+        albumId,
+        revokedAt,
+      });
+      return { authorization: `Bearer ${token.toString("base64url")}` };
+    },
+    async findGrantByTokenHash(tokenHash) {
+      return byHash.get(Buffer.from(tokenHash).toString("hex")) ?? null;
+    },
+  };
+}
+
 /** A server over the real graph, plus a signed-in owner's bearer token. */
 async function buildTestServer() {
   const albums = inMemoryAlbums();
+  const media = inMemoryMedia();
+  const recipients = inMemoryRecipients();
   const useCases = buildUseCases(
     {
       owners: inMemoryOwners(),
       albums,
-      recipients: { async findGrantByTokenHash() { return null; } },
+      media,
+      recipients,
+      objectStore: { async put() {}, async head() { return null; } },
       credentialHasher: createCredentialHasher(SECRET),
       tokenHasher: createTokenHasher(),
       clock: { now: () => new Date("2026-09-21T09:00:00.000Z") },
@@ -143,7 +203,13 @@ async function buildTestServer() {
   });
   assert.equal(signup.statusCode, 201, signup.body);
 
-  return { app, albums, auth: { authorization: `Bearer ${signup.json().token}` } };
+  return {
+    app,
+    albums,
+    media,
+    recipients,
+    auth: { authorization: `Bearer ${signup.json().token}` },
+  };
 }
 
 const createAlbum = (app, auth, body) =>
@@ -331,5 +397,188 @@ describe("GET /v1/albums — §9.2", () => {
 
     assert.equal(response.statusCode, 401);
     assert.deepEqual(Object.keys(response.json()).sort(), ["code", "message"]);
+  });
+});
+
+const getAlbum = (app, auth, albumId) =>
+  app.inject({ method: "GET", url: `/v1/albums/${albumId}`, headers: auth });
+
+const getMetadata = (app, auth, albumId) =>
+  app.inject({ method: "GET", url: `/v1/albums/${albumId}/metadata`, headers: auth });
+
+describe("GET /v1/albums/{album_id} — §9.4", () => {
+  /** An album with one row in each of three statuses. */
+  async function withAlbum() {
+    const server = await buildTestServer();
+    const album = albumBody();
+    assert.equal((await createAlbum(server.app, server.auth, album)).statusCode, 201);
+    const pending = server.media.add(album.id, { status: "pending" });
+    const ready = server.media.add(album.id, { status: "ready" });
+    const failed = server.media.add(album.id, { status: "failed" });
+    return { ...server, album, pending, ready, failed };
+  }
+
+  it("lists every media row, whatever its status, oldest first", async () => {
+    // §9.4: a video in `processing` must not vanish from the owner's grid, so
+    // the status filter is the client's (#9).
+    const { app, auth, album, pending, ready, failed } = await withAlbum();
+
+    const body = (await getAlbum(app, auth, album.id)).json();
+
+    assert.deepEqual(
+      body.media.map((row) => row.id),
+      [pending, ready, failed],
+    );
+    assert.deepEqual(body.media.map((row) => row.status).sort(), [
+      "failed",
+      "pending",
+      "ready",
+    ]);
+  });
+
+  it("carries no wrapping — the key is §9.2's, owner-only", async () => {
+    const { app, auth, album } = await withAlbum();
+
+    const body = (await getAlbum(app, auth, album.id)).json();
+
+    assert.deepEqual(Object.keys(body).sort(), ["created_at", "id", "media", "title"]);
+    assert.deepEqual(Object.keys(body.media[0]).sort(), [
+      "created_at",
+      "id",
+      "kind",
+      "status",
+    ]);
+  });
+
+  it("answers a recipient with a byte-identical body", async () => {
+    /*
+     * §6.2's owed row. Fails the day someone adds an owner-only field to the
+     * shared route instead of to §9.2.
+     */
+    const { app, auth, recipients, album } = await withAlbum();
+    const recipient = recipients.grant(album.id);
+
+    const asOwner = await getAlbum(app, auth, album.id);
+    const asRecipient = await getAlbum(app, recipient, album.id);
+
+    assert.equal(asRecipient.statusCode, 200, asRecipient.body);
+    assert.equal(asRecipient.body, asOwner.body);
+  });
+
+  describe("§7.3's steps 3 and 4, in that order", () => {
+    it("is 403 for a revoked recipient on their OWN album", async () => {
+      const { app, recipients, album } = await withAlbum();
+      const revoked = recipients.grant(album.id, { revokedAt: new Date() });
+
+      const response = await getAlbum(app, revoked, album.id);
+
+      assert.equal(response.statusCode, 403, response.body);
+      assert.equal(response.json().code, "ACCESS_REVOKED");
+    });
+
+    it("is 404 for a revoked recipient on ANY other album, identically", async () => {
+      /*
+       * The assertion the order exists for. Checking revocation first answers
+       * `403` here too, which confirms the other album exists — brief §9.1's
+       * easiest way to leak album access.
+       */
+      const { app, recipients, album } = await withAlbum();
+      const revoked = recipients.grant(album.id, { revokedAt: new Date() });
+      const live = recipients.grant(album.id);
+      const other = randomUUID();
+
+      const fromRevoked = await getAlbum(app, revoked, other);
+      const fromLive = await getAlbum(app, live, other);
+
+      assert.equal(fromRevoked.statusCode, 404);
+      assert.equal(fromRevoked.body, fromLive.body);
+    });
+
+    it("is 404 for another owner's album", async () => {
+      // A second owner on the SAME server: a token minted by a different
+      // instance is unknown here, and 401 would pass this without ever
+      // reaching §9.3.
+      const { app, album } = await withAlbum();
+      const signup = await app.inject({
+        method: "POST",
+        url: "/v1/signup",
+        payload: signupBody(`stranger-${randomUUID()}@x.es`),
+      });
+      const stranger = { authorization: `Bearer ${signup.json().token}` };
+
+      const response = await getAlbum(app, stranger, album.id);
+
+      assert.equal(response.statusCode, 404, response.body);
+      assert.equal(response.json().code, "NOT_FOUND");
+    });
+  });
+
+  it("is 401 without a token", async () => {
+    const { app, album } = await withAlbum();
+
+    assert.equal((await getAlbum(app, {}, album.id)).statusCode, 401);
+  });
+});
+
+describe("GET /v1/albums/{album_id}/metadata — §9.5", () => {
+  async function withEnvelopes() {
+    const server = await buildTestServer();
+    const album = albumBody();
+    assert.equal((await createAlbum(server.app, server.auth, album)).statusCode, 201);
+    const envelope = Buffer.alloc(120, 0x33);
+    const ready = server.media.add(album.id, { status: "ready", envelope });
+    const pending = server.media.add(album.id, { status: "pending" });
+    return { ...server, album, ready, pending, envelope };
+  }
+
+  it("returns only ready rows, and §9.4 still lists the pending one", async () => {
+    /*
+     * §6.2's owed row, and the pair IS the assertion — the two routes filter
+     * differently on purpose, so either alone would pass a server that
+     * filtered everywhere or nowhere.
+     */
+    const { app, auth, album, ready, pending } = await withEnvelopes();
+
+    const envelopes = (await getMetadata(app, auth, album.id)).json().metadata;
+    const listed = (await getAlbum(app, auth, album.id)).json().media;
+
+    assert.deepEqual(
+      envelopes.map((row) => row.media_id),
+      [ready],
+    );
+    assert.equal(listed.length, 2, "the listing is what makes this non-vacuous");
+    assert.ok(listed.some((row) => row.id === pending && row.status === "pending"));
+  });
+
+  it("returns the envelope bytes verbatim", async () => {
+    // The relay does not parse the header (§9.1's format-blindness).
+    const { app, auth, album, envelope } = await withEnvelopes();
+
+    const [row] = (await getMetadata(app, auth, album.id)).json().metadata;
+
+    assert.equal(row.envelope, envelope.toString("base64url"));
+  });
+
+  it("carries Cache-Control: no-store", async () => {
+    // The first ciphertext response in the document (§9.5, §11.3).
+    const { app, auth, album } = await withEnvelopes();
+
+    const response = await getMetadata(app, auth, album.id);
+
+    assert.equal(response.headers["cache-control"], "no-store");
+  });
+
+  it("answers a recipient too, and refuses a revoked one on their own album", async () => {
+    const { app, recipients, album } = await withEnvelopes();
+
+    const live = await getMetadata(app, recipients.grant(album.id), album.id);
+    const revoked = await getMetadata(
+      app,
+      recipients.grant(album.id, { revokedAt: new Date() }),
+      album.id,
+    );
+
+    assert.equal(live.statusCode, 200, live.body);
+    assert.equal(revoked.statusCode, 403);
   });
 });

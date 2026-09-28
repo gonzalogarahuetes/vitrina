@@ -46,6 +46,8 @@ import type { ObjectStore } from "./application/ports/object-store.js";
 import { createObjectStore } from "./adapters/driven/s3/object-store.js";
 import { S3Client } from "@aws-sdk/client-s3";
 import { uploadMediaObject } from "./application/use-cases/upload-media-object.js";
+import { findAlbumById } from "./application/use-cases/find-album-by-id.js";
+import { getAlbumMetadata } from "./application/use-cases/get-album-metadata.js";
 
 /**
  * The v1 Argon2id parameters, declared in `@vitrina/shared` because the client
@@ -134,6 +136,8 @@ export function buildUseCases(
     createMedia: createMedia({ media, albums }),
     findMediaById: findMediaById({ media }),
     uploadMediaObject: uploadMediaObject({ media, objectStore }),
+    findAlbumById: findAlbumById({ albums, media }),
+    getAlbumMetadata: getAlbumMetadata({ albums, media }),
   };
 }
 

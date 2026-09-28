@@ -1,17 +1,23 @@
 /*
- * §9.2's two album routes — api-sketch §9.1, §9.2, §4.1.
- * Each handler decodes the wire into bytes, calls one use case, and encodes
- * the result back. The relay never inspects a wrapping (§9.1).
+ * The album routes — api-sketch §9.2's create and list, §9.4's details,
+ * §9.5's metadata. Each handler decodes the wire, calls one use case, and
+ * encodes the result back. The relay never inspects a wrapping (§9.1).
  */
 
 import type { FastifyInstance } from "fastify";
 import type { UseCases } from "../../../../application/use-cases/index.js";
 import { makeRequireOwner } from "../auth/owner.js";
+import { makeRequireOwnerOrRecipient } from "../auth/either.js";
 import { encodeBase64url } from "../base64url.js";
 import { decodeOr400 } from "../decode-field.js";
 import { ApiError } from "../error-envelope.js";
 import { rfc3339 } from "../rfc3339.js";
-import { createAlbumSchema, listAlbumsSchema } from "../schemas/albums.js";
+import {
+  createAlbumSchema,
+  findAlbumByIdSchema,
+  getAlbumMetadataSchema,
+  listAlbumsSchema,
+} from "../schemas/albums.js";
 
 export type AlbumRoutesDeps = {
   readonly useCases: UseCases;
@@ -94,6 +100,63 @@ export function albumRoutes(deps: AlbumRoutesDeps) {
             wrapped_key: encodeBase64url(album.wrappedKey),
             wrap_nonce: encodeBase64url(album.wrapNonce),
             media_count: album.mediaCount,
+          })),
+        });
+      },
+    );
+
+    /*
+     * §9.4 and §9.5 declare BOTH schemes — the only routes that do, and where
+     * `ACCESS_REVOKED` first becomes reachable (§9.3).
+     */
+    const requireCaller = makeRequireOwnerOrRecipient(deps.useCases);
+
+    app.get<{ Params: { album_id: string } }>(
+      "/albums/:album_id",
+      { schema: findAlbumByIdSchema, preHandler: requireCaller },
+      async (request, reply) => {
+        const principal = request.caller;
+        if (principal === undefined) throw new ApiError("UNAUTHENTICATED");
+
+        const details = await deps.useCases.findAlbumById({
+          albumId: request.params.album_id,
+          principal,
+        });
+
+        // Identical for both caller kinds: one identity resolved, one query,
+        // and nothing in the body saying which kind asked (§9.4).
+        return reply.send({
+          id: details.album.id,
+          title: details.album.title,
+          created_at: rfc3339(details.album.createdAt),
+          media: details.media.map((row) => ({
+            id: row.id,
+            kind: row.kind,
+            status: row.status,
+            created_at: rfc3339(row.createdAt),
+          })),
+        });
+      },
+    );
+
+    app.get<{ Params: { album_id: string } }>(
+      "/albums/:album_id/metadata",
+      { schema: getAlbumMetadataSchema, preHandler: requireCaller },
+      async (request, reply) => {
+        const principal = request.caller;
+        if (principal === undefined) throw new ApiError("UNAUTHENTICATED");
+
+        const { metadata } = await deps.useCases.getAlbumMetadata({
+          albumId: request.params.album_id,
+          principal,
+        });
+
+        // The column verbatim — header and chunks — and `no-store` from the
+        // plugin hook, which this route needs as ciphertext (§11.3).
+        return reply.send({
+          metadata: metadata.map((row) => ({
+            media_id: row.mediaId,
+            envelope: encodeBase64url(row.envelope),
           })),
         });
       },

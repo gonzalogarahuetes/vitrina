@@ -1,17 +1,17 @@
 /*
- * What §7.3 step 1 resolved, and the one `FastifyRequest` augmentation — two
- * declarations of `caller` with different types do not compile. NOT §7.1's
- * `Caller`: the route builds that from this, after steps 3 and 4.
+ * The one `FastifyRequest` augmentation — two declarations of `caller` with
+ * different types do not compile, so this file exists to be the only one.
+ *
+ * The type itself is `application/caller.ts`'s: who is calling is an
+ * application concept, and this adapter only parks it on a request. The import
+ * points inward, which is the direction architecture §1 allows.
  */
 
-import type { RecipientGrant } from "../../../../application/ports/recipient-repository.js";
-
-export type AuthenticatedPrincipal =
-  | { kind: "owner"; ownerId: string }
-  | { kind: "recipient"; grant: RecipientGrant };
+import type { AuthenticatedPrincipal } from "../../../../application/caller.js";
 
 declare module "fastify" {
   interface FastifyRequest {
+    /** §7.3 step 1's result. §7.1's `Caller` is what a route builds from it. */
     caller?: AuthenticatedPrincipal;
   }
 }

@@ -19,15 +19,30 @@ import type {
 import type { AuthenticateRecipientInput } from "./authenticate-recipient.js";
 import type { RecipientGrant } from "../ports/recipient-repository.js";
 import type { ListAlbumsInput } from "./list-albums.js";
-import type { CreatedAlbum, OwnerAlbum } from "../ports/album-repository.js";
+import type {
+  AlbumRow,
+  CreatedAlbum,
+  OwnerAlbum,
+} from "../ports/album-repository.js";
 import type { CreateAlbumInput } from "./create-album.js";
 import type { CreateMediaInput } from "./create-media.js";
-import type { CreatedMedia, MediaRow } from "../ports/media-repository.js";
+import type {
+  CreatedMedia,
+  MediaRow,
+} from "../ports/media-repository.js";
 import type { FindMediaByIdMediaInput } from "./find-media-by-id.js";
 import type {
   UploadMediaObjectInput,
   UploadOutcome,
 } from "./upload-media-object.js";
+import type {
+  AlbumDetails,
+  FindAlbumByIdInput,
+} from "./find-album-by-id.js";
+import type {
+  AlbumMetadata,
+  GetAlbumMetadataInput,
+} from "./get-album-metadata.js";
 
 export type UseCases = {
   // PR 2b — the owner credential lifecycle (api-sketch §7.5, §8.3).
@@ -42,6 +57,12 @@ export type UseCases = {
   readonly createAlbum: (input: CreateAlbumInput) => Promise<CreatedAlbum>;
   readonly createMedia: (input: CreateMediaInput) => Promise<CreatedMedia>;
   readonly findMediaById: (input: FindMediaByIdMediaInput) => Promise<MediaRow>;
+  readonly findAlbumById: (
+    input: FindAlbumByIdInput,
+  ) => Promise<AlbumDetails>;
+  readonly getAlbumMetadata: (
+    input: GetAlbumMetadataInput,
+  ) => Promise<AlbumMetadata>;
   readonly uploadMediaObject: (
     input: UploadMediaObjectInput,
   ) => Promise<UploadOutcome>;

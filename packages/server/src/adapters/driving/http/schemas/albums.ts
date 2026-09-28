@@ -4,7 +4,7 @@
  * schema into test/route-table.test.mjs, or the walk stops covering it.
  */
 
-import { b64url, timestamp, uuid } from "./fragments.js";
+import { B64URL, b64url, timestamp, uuid } from "./fragments.js";
 
 /** Plaintext on the relay (§5.3). 200 is a column bound, not a product rule. */
 const title = { type: "string", minLength: 1, maxLength: 200 } as const;
@@ -73,6 +73,73 @@ export const listAlbumsSchema = {
         },
       },
       required: ["albums"],
+      additionalProperties: false,
+    },
+  },
+} as const;
+
+/** §9.3's `{album_id}`, flat for both caller kinds. */
+const albumIdParams = {
+  type: "object",
+  properties: { album_id: uuid },
+  required: ["album_id"],
+  additionalProperties: false,
+} as const;
+
+/** §9.4's media row: ids, kind, status. No byte sizes, no envelopes. */
+const mediaListing = {
+  type: "object",
+  properties: {
+    id: uuid,
+    kind: { type: "string", enum: ["photo", "video"] },
+    status: {
+      type: "string",
+      enum: ["pending", "processing", "ready", "failed"],
+    },
+    created_at: timestamp,
+  },
+  required: ["id", "kind", "status", "created_at"],
+  additionalProperties: false,
+} as const;
+
+export const findAlbumByIdSchema = {
+  params: albumIdParams,
+  response: {
+    200: {
+      type: "object",
+      // No `wrapped_key`: the wrapping is §9.2's, owner-only, and this route
+      // is shared. That absence is what keeps §7.1's no-branch rule holdable.
+      properties: {
+        id: uuid,
+        title,
+        created_at: timestamp,
+        media: { type: "array", items: mediaListing },
+      },
+      required: ["id", "title", "created_at", "media"],
+      additionalProperties: false,
+    },
+  },
+} as const;
+
+export const getAlbumMetadataSchema = {
+  params: albumIdParams,
+  response: {
+    200: {
+      type: "object",
+      properties: {
+        metadata: {
+          type: "array",
+          items: {
+            type: "object",
+            // The complete envelope bytes, returned verbatim — the relay does
+            // not parse the header (§9.1's format-blindness).
+            properties: { media_id: uuid, envelope: { type: "string", ...B64URL } },
+            required: ["media_id", "envelope"],
+            additionalProperties: false,
+          },
+        },
+      },
+      required: ["metadata"],
       additionalProperties: false,
     },
   },

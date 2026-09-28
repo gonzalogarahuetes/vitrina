@@ -35,7 +35,13 @@ export type ApplicationErrorCode =
    * three `CONFLICT` codes are, and this one is why the wire message cannot
    * say "duplicated value".
    */
-  | "MEDIA_ALREADY_READY";
+  | "MEDIA_ALREADY_READY"
+  /**
+   * §7.3 step 4: a recipient whose grant is revoked, asking for THEIR OWN
+   * album. Reachable only after step 3 has put the album in scope — probing
+   * any other album is `ALBUM_NOT_FOUND`, identically to an unrevoked one.
+   */
+  | "ALBUM_ACCESS_REVOKED";
 
 /**
  * `message` is the code itself: a constant, never interpolated with request

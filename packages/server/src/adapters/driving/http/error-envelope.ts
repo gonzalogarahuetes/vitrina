@@ -347,6 +347,7 @@ const APPLICATION_ERRORS = {
   ALBUM_NOT_FOUND: "NOT_FOUND",
   MEDIA_NOT_FOUND: "NOT_FOUND",
   MEDIA_ALREADY_READY: "CONFLICT",
+  ALBUM_ACCESS_REVOKED: "ACCESS_REVOKED",
 } as const satisfies Record<ApplicationErrorCode, ThrowableCode>;
 
 export function errorEnvelope(
