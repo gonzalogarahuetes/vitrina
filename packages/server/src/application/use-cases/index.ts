@@ -24,6 +24,10 @@ import type { CreateAlbumInput } from "./create-album.js";
 import type { CreateMediaInput } from "./create-media.js";
 import type { CreatedMedia, MediaRow } from "../ports/media-repository.js";
 import type { FindMediaByIdMediaInput } from "./find-media-by-id.js";
+import type {
+  UploadMediaObjectInput,
+  UploadOutcome,
+} from "./upload-media-object.js";
 
 export type UseCases = {
   // PR 2b — the owner credential lifecycle (api-sketch §7.5, §8.3).
@@ -38,6 +42,9 @@ export type UseCases = {
   readonly createAlbum: (input: CreateAlbumInput) => Promise<CreatedAlbum>;
   readonly createMedia: (input: CreateMediaInput) => Promise<CreatedMedia>;
   readonly findMediaById: (input: FindMediaByIdMediaInput) => Promise<MediaRow>;
+  readonly uploadMediaObject: (
+    input: UploadMediaObjectInput,
+  ) => Promise<UploadOutcome>;
   /** §7.3 steps 1-2. Null for unknown, revoked or expired — the adapter maps. */
   readonly authenticateOwner: (
     input: AuthenticateOwnerInput,

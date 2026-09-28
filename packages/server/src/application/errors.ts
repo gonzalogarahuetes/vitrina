@@ -28,7 +28,14 @@ export type ApplicationErrorCode =
    */
   | "ALBUM_NOT_FOUND"
   /** The same rule one level down — §9.3 resolves a media id through its album. */
-  | "MEDIA_NOT_FOUND";
+  | "MEDIA_NOT_FOUND"
+  /**
+   * §9.7's `409`: the row is already `ready`, so an upload would replace an
+   * object a recipient may be mid-fetch on. NOT a duplicate id — the other
+   * three `CONFLICT` codes are, and this one is why the wire message cannot
+   * say "duplicated value".
+   */
+  | "MEDIA_ALREADY_READY";
 
 /**
  * `message` is the code itself: a constant, never interpolated with request

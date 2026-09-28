@@ -73,7 +73,9 @@ const MESSAGES = {
   INVALID_CREDENTIALS: "Invalid credentials for logging in.",
   ACCESS_REVOKED: "Recipient access has been revoked.",
   NOT_FOUND: "Not found.",
-  CONFLICT: "Conflict, duplicated value.",
+  // Widened: three of the four conditions behind this code are duplicate ids,
+  // and §9.7's fourth — the row is already `ready` — is not one.
+  CONFLICT: "The request conflicts with the current state of the resource.",
   LENGTH_REQUIRED: "Content-Length is required.",
   PAYLOAD_TOO_LARGE: "Body limit of the request exceeded.",
   UNSUPPORTED_MEDIA_TYPE: "Content type not supported.",
@@ -344,6 +346,7 @@ const APPLICATION_ERRORS = {
   DUPLICATE_MEDIA_ID: "CONFLICT",
   ALBUM_NOT_FOUND: "NOT_FOUND",
   MEDIA_NOT_FOUND: "NOT_FOUND",
+  MEDIA_ALREADY_READY: "CONFLICT",
 } as const satisfies Record<ApplicationErrorCode, ThrowableCode>;
 
 export function errorEnvelope(

@@ -1,7 +1,7 @@
 /*
- * §9.6's media create — api-sketch §9.1, §9.3, §9.6.
- * The handler decodes the wire into bytes, calls one use case, and encodes the
- * result back. §9.7's uploads and §9.8's status join it here.
+ * The media routes — api-sketch §9.6's create, §9.7's two uploads, §9.8's
+ * status. Each handler decodes the wire, calls one use case, and encodes the
+ * result back; the status ladder and the confirming HEADs are inward of here.
  *
  * NO `no-store` HOOK. Nothing this plugin returns carries a wrapping or
  * ciphertext — §9.6's `201` and §9.8's status object are identifiers and a
@@ -9,14 +9,22 @@
  * which §11.3 argues against; a route that needs it adds it and says why.
  */
 
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { UseCases } from "../../../../application/use-cases/index.js";
 import { makeRequireOwner } from "../auth/owner.js";
 import { decodeRangeOr400 } from "../decode-field.js";
 import { ApiError } from "../error-envelope.js";
 import { rfc3339 } from "../rfc3339.js";
-import { createMediaSchema, getMediaSchema } from "../schemas/media.js";
+import {
+  createMediaSchema,
+  getMediaSchema,
+  uploadAssetSchema,
+  uploadThumbnailSchema,
+} from "../schemas/media.js";
 import type { MediaRow } from "../../../../application/ports/media-repository.js";
+import type { Readable } from "node:stream";
+import type { MediaVariant } from "../../../../domain/media/object-key.js";
+import type { UploadOutcome } from "../../../../application/use-cases/upload-media-object.js";
 
 export type MediaRoutesDeps = {
   readonly useCases: UseCases;
@@ -28,6 +36,10 @@ type CreateMediaBody = {
   metadata: string;
 };
 
+const ASSET_MAX_BYTES = 16 * 1024 * 1024;
+const ENVELOPE_MIN_BYTES = 81;
+const THUMBNAIL_MAX_BYTES = 1024 * 1024;
+const UPLOAD_DEADLINE_MS = 120_000; // §9.7, provisional
 /**
  * §9.8's seven fields, and the shape §9.7's uploads return too — "one type for
  * where this row is, whether the client asked or was told". Mapped field by
@@ -46,6 +58,120 @@ const statusBody = (row: MediaRow) => ({
 export function mediaRoutes(deps: MediaRoutesDeps) {
   return async function register(app: FastifyInstance): Promise<void> {
     const requireOwner = makeRequireOwner(deps.useCases);
+
+    /*
+     * Registered for `application/octet-stream` ONLY, which is what gives
+     * §9.7's `415` for free: Fastify refuses a content type it has no parser
+     * for, so "anything but octet-stream" needs no handler code. Handing the
+     * raw stream through is also why `bodyLimit` cannot help — measured, it is
+     * applied by the parsers that accumulate a body (§9.7).
+     */
+    app.addContentTypeParser("application/octet-stream", (req, payload, done) =>
+      done(null, payload),
+    );
+
+    /**
+     * ONE handler for both objects, parameterised — §9.7's "one handler serves
+     * both variants without caring which it is". §6.2 names the alternative as
+     * the bug: a handler written for the asset and copied for the thumbnail,
+     * which marks `ready` on the first object. Copying is what this prevents.
+     *
+     * `maxBytes` is per variant; the FLOOR is not. 81 bytes is a property of
+     * the envelope format — 64-byte header, one chunk, 16-byte tag — and is
+     * the same for both, so parameterising it would be as wrong as sharing
+     * the ceiling.
+     */
+    const upload = (variant: MediaVariant, maxBytes: number) =>
+      async function handler(
+        request: FastifyRequest<{ Body: Readable; Params: { media_id: string } }>,
+        reply: FastifyReply,
+      ) {
+        const caller = request.caller;
+        if (caller?.kind !== "owner") throw new ApiError("UNAUTHENTICATED");
+
+        if (!request.headers["content-length"]) {
+          throw new ApiError("LENGTH_REQUIRED");
+        }
+
+        const contentLength = Number(request.headers["content-length"]);
+
+        // Not `NaN > max`, which is false and would let a malformed framing
+        // through every check below it.
+        if (!Number.isInteger(contentLength) || contentLength < 0) {
+          throw new ApiError("VALIDATION_FAILED");
+        }
+
+        if (contentLength > maxBytes) {
+          throw new ApiError("PAYLOAD_TOO_LARGE");
+        }
+
+        // §9.7's floor, and the one check the confirming HEAD cannot back up:
+        // a zero-length body compares 0 against a count of 0 and would reach
+        // `ready`, which is the only false `ready` the evidence rule admits.
+        if (contentLength < ENVELOPE_MIN_BYTES) {
+          throw new ApiError("VALIDATION_FAILED");
+        }
+
+        /*
+         * The deadline is a timer here, not `requestTimeout` — measured, that
+         * one answers `408` itself, and §9.7 needs the handler to mark the row
+         * and answer nothing. Destroying the body propagates through the
+         * counting generator, so `put` rejects and the use case's own catch
+         * marks `failed`: no extra branch in the ladder.
+         */
+        let timedOut = false;
+        const deadline = setTimeout(() => {
+          timedOut = true;
+          request.body.destroy(new Error("upload deadline"));
+        }, UPLOAD_DEADLINE_MS);
+
+        let outcome: UploadOutcome;
+        try {
+          outcome = await deps.useCases.uploadMediaObject({
+            mediaId: request.params.media_id,
+            ownerId: caller.ownerId,
+            variant,
+            body: request.body,
+            length: contentLength,
+          });
+        } finally {
+          clearTimeout(deadline);
+        }
+
+        /*
+         * `raw.complete` is the signal, measured: false when the deadline
+         * fired and when the client vanished, true when the store refused with
+         * the client still connected. `raw.destroyed` is true on the success
+         * path too and cannot be used (§9.7).
+         */
+        if (!request.raw.complete) {
+          request.log.warn(
+            { mediaId: request.params.media_id, variant, timedOut },
+            "upload did not complete; answering nothing",
+          );
+          return reply.hijack();
+        }
+
+        if (outcome.failure?.kind === "confirmation") {
+          // §9.7: the row looks identical to one behind a merely slow store,
+          // and this line is the only place the two differ.
+          request.log.error(
+            { err: outcome.failure.cause, mediaId: request.params.media_id, variant },
+            "confirming HEAD failed; row left processing",
+          );
+        }
+
+        if (outcome.failure?.kind === "upload") {
+          request.log.error(
+            { err: outcome.failure.cause, mediaId: request.params.media_id, variant },
+            "the store refused the object; row is failed",
+          );
+        }
+
+        // `200` even for a `failed` row: the request succeeded and the server
+        // is reporting its opinion of the bytes (§9.7).
+        return reply.code(200).send(statusBody(outcome.row));
+      };
 
     /*
      * NO IP LIMITER HERE. §7.6's is for the three routes with no token to key
@@ -108,6 +234,18 @@ export function mediaRoutes(deps: MediaRoutesDeps) {
 
         return reply.code(200).send(statusBody(row));
       },
+    );
+
+    app.put<{ Body: Readable; Params: { media_id: string } }>(
+      "/media/:media_id/asset",
+      { schema: uploadAssetSchema, preHandler: requireOwner },
+      upload("asset", ASSET_MAX_BYTES),
+    );
+
+    app.put<{ Body: Readable; Params: { media_id: string } }>(
+      "/media/:media_id/thumbnail",
+      { schema: uploadThumbnailSchema, preHandler: requireOwner },
+      upload("thumbnail", THUMBNAIL_MAX_BYTES),
     );
   };
 }

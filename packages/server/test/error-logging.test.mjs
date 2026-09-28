@@ -485,13 +485,21 @@ describe("an ApiError logs when it carries a cause, and not otherwise", () => {
   });
 
   it("keeps the cause chain structured rather than flattened into the message", async () => {
-    // The §6.2 row. Under the default `err` serialiser this line's message
-    // would be "Conflict, duplicated value.: owners.email already taken (pg
-    // 23505)" and there would be no `cause` key at all.
-    const { lines: logged } = await get("/v1/conflict");
+    /*
+     * The §6.2 row. Under the default `err` serialiser this line's message
+     * would be the wire message joined to "owners.email already taken (pg
+     * 23505)" with ": ", and there would be no `cause` key at all.
+     *
+     * Compared against the message ON THE WIRE rather than a copy of the
+     * constant: both come from MESSAGES, so this asserts they agree instead of
+     * pinning a string that a widening of the code's wording breaks. One did,
+     * on 26 September 2026 — §9.7's `409` is not a duplicate, so `CONFLICT`
+     * stopped saying "duplicated value".
+     */
+    const { res, lines: logged } = await get("/v1/conflict");
     const { err } = logged[0];
 
-    assert.equal(err.message, "Conflict, duplicated value.");
+    assert.equal(err.message, res.json().message);
     assert.ok(!err.message.includes(AUTHORED), `flattened: ${err.message}`);
     assert.equal(typeof err.cause, "object");
     assert.equal(err.cause.message, AUTHORED);

@@ -8,6 +8,7 @@
 
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
+import http from "node:http";
 import { describe, it } from "node:test";
 
 import { OWNER_KDF_V1 } from "@vitrina/shared";
@@ -136,6 +137,43 @@ function inMemoryMedia(albums) {
       if (!row) return null;
       return { ...row, ownerId: albums.rows.get(row.albumId).ownerId };
     },
+    /* §9.7's transitions, with the guards the SQL has — a fake without them
+     * passes tests the database would fail. */
+    async beginUpload(mediaId) {
+      const row = rows.get(mediaId);
+      if (!row) return null;
+      if (row.status === "ready") return "already_ready";
+      row.status = "processing";
+      return "started";
+    },
+    async markReady(mediaId, byteSize) {
+      const row = rows.get(mediaId);
+      if (row.status !== "processing") return;
+      row.status = "ready";
+      row.byteSize = byteSize;
+    },
+    async markFailed(mediaId) {
+      const row = rows.get(mediaId);
+      if (row.status !== "processing") return;
+      row.status = "failed";
+    },
+  };
+}
+
+/** The store, as key → length. Counts what it is actually handed. */
+function fakeStore() {
+  const objects = new Map();
+  return {
+    objects,
+    async put(key, body) {
+      let written = 0;
+      for await (const chunk of body) written += chunk.length;
+      objects.set(key, written);
+    },
+    async head(key) {
+      const length = objects.get(key);
+      return length === undefined ? null : { length };
+    },
   };
 }
 
@@ -143,11 +181,13 @@ function inMemoryMedia(albums) {
 async function buildTestServer() {
   const albums = inMemoryAlbums();
   const media = inMemoryMedia(albums);
+  const objectStore = fakeStore();
   const useCases = buildUseCases(
     {
       owners: inMemoryOwners(),
       albums,
       media,
+      objectStore,
       recipients: { async findGrantByTokenHash() { return null; } },
       credentialHasher: createCredentialHasher(SECRET),
       tokenHasher: createTokenHasher(),
@@ -183,7 +223,7 @@ async function buildTestServer() {
   });
   assert.equal(created.statusCode, 201, created.body);
 
-  return { app, auth, signIn, album, albums, media };
+  return { app, auth, signIn, album, albums, media, objectStore };
 }
 
 const postMedia = (app, auth, albumId, payload) =>
@@ -480,5 +520,275 @@ describe("GET /v1/media/{media_id} — §9.8", () => {
 
     assert.equal(response.statusCode, 400, response.body);
     assert.equal(response.json().code, "VALIDATION_FAILED");
+  });
+});
+
+/*
+ * §9.7's uploads run over a REAL SOCKET, not app.inject, and that is not a
+ * preference. The route decides between answering and staying silent on
+ * `request.raw.complete`, which light-my-request does not model — it is
+ * `undefined` under inject, so every upload would take the hijack branch and
+ * the assertion would hang rather than fail. These two routes are the first
+ * in the system whose contract is about the connection rather than the body,
+ * so they are the first that a mock request cannot express.
+ */
+
+/** A `PUT` with the framing under the test's control. */
+function putObject(port, path, options = {}) {
+  const { auth = {}, body, contentType = "application/octet-stream" } = options;
+  return new Promise((resolve) => {
+    const headers = { ...auth };
+    if (contentType !== null) headers["content-type"] = contentType;
+    // Node uses chunked when a body is written and this is unset, which is how
+    // the `411` case is expressed — there is no other way to omit it.
+    if (!options.omitLength) {
+      headers["content-length"] = String(options.contentLength ?? body?.length ?? 0);
+    }
+
+    const request = http.request(
+      { host: "127.0.0.1", port, method: "PUT", path, headers },
+      (response) => {
+        let raw = "";
+        response.on("data", (chunk) => (raw += chunk));
+        response.on("end", () =>
+          resolve({ statusCode: response.statusCode, body: raw, json: () => JSON.parse(raw) }),
+        );
+      },
+    );
+    request.on("error", (error) => resolve({ statusCode: null, error: error.code }));
+    // A hijacked reply never answers, so the assertion needs a deadline of its
+    // own or it hangs instead of failing.
+    setTimeout(() => resolve({ statusCode: "NO RESPONSE", body: "" }), 2000).unref();
+
+    if (body) request.write(body);
+    request.end();
+  });
+}
+
+/** A body of `bytes`, which is also what the server must count. */
+const envelope = (bytes) => Buffer.alloc(bytes, 0x5a);
+
+describe("PUT /v1/media/{media_id}/{asset,thumbnail} — §9.7", () => {
+  /** A listening server, a signed-in owner, an album and a `pending` row. */
+  async function withMedia(t) {
+    const server = await buildTestServer();
+    const body = mediaBody();
+    const created = await postMedia(server.app, server.auth, server.album.id, body);
+    assert.equal(created.statusCode, 201, created.body);
+
+    await server.app.listen({ host: "127.0.0.1", port: 0 });
+    t.after(() => server.app.close());
+
+    const port = server.app.server.address().port;
+    const put = (variant, options) =>
+      putObject(port, `/v1/media/${body.id}/${variant}`, { auth: server.auth, ...options });
+
+    return { ...server, mediaId: body.id, port, put };
+  }
+
+  describe("the pre-read checks", () => {
+    it("is 411 with no Content-Length", async (t) => {
+      const { put } = await withMedia(t);
+
+      const response = await put("asset", { body: envelope(200), omitLength: true });
+
+      assert.equal(response.statusCode, 411, response.body);
+      assert.equal(response.json().code, "LENGTH_REQUIRED");
+    });
+
+    it("is 400 below the 81-byte floor", async (t) => {
+      /*
+       * The one check the confirming HEAD cannot back up: a zero-length body
+       * compares a count of 0 against a length of 0 and matches, so it would
+       * reach `ready` — the only false `ready` the evidence rule admits.
+       */
+      const { put, media, mediaId } = await withMedia(t);
+
+      for (const bytes of [0, 80]) {
+        const response = await put("asset", { body: envelope(bytes) });
+
+        assert.equal(response.statusCode, 400, `${bytes} bytes: ${response.body}`);
+        assert.equal(media.rows.get(mediaId).status, "pending", "the row must not move");
+      }
+    });
+
+    it("accepts exactly 81 bytes", async (t) => {
+      // The floor is inclusive: 81 is the smallest legal envelope, not the
+      // smallest rejected one.
+      const { put } = await withMedia(t);
+
+      const response = await put("asset", { body: envelope(81) });
+
+      assert.equal(response.statusCode, 200, response.body);
+    });
+
+    it("is 400 for a malformed Content-Length", async (t) => {
+      // `Number("abc")` is NaN, and `NaN > max` is false — without the integer
+      // guard a malformed framing passes every check below it.
+      const { put } = await withMedia(t);
+
+      const response = await put("asset", { body: envelope(200), contentLength: "abc" });
+
+      assert.ok(
+        response.statusCode === 400 || response.statusCode === null,
+        `expected 400 or a refused framing, got ${response.statusCode}`,
+      );
+    });
+
+    it("is 415 for a content type with no parser", async (t) => {
+      /*
+       * Free only for types Fastify has no parser for. Measured 26 September
+       * 2026, and NOT the whole of §9.7's "anything but octet-stream":
+       * `application/json` answers `400` because the default parser runs and
+       * fails, and `text/plain` answers `200` because its default parser
+       * SUCCEEDS — the handler then runs with a string where it expects a
+       * stream. Closing that needs the uploads in their own encapsulated
+       * scope with the inherited parsers removed; until then this asserts the
+       * case that does hold.
+       */
+      const { put } = await withMedia(t);
+
+      const response = await put("asset", {
+        body: envelope(200),
+        contentType: "image/jpeg",
+      });
+
+      assert.equal(response.statusCode, 415, response.body);
+    });
+
+    it("is 401 without a token, before any of the above", async (t) => {
+      const { port, mediaId } = await withMedia(t);
+
+      const response = await putObject(port, `/v1/media/${mediaId}/asset`, {
+        body: envelope(200),
+        omitLength: true,
+      });
+
+      assert.equal(response.statusCode, 401, "authentication precedes 411");
+    });
+  });
+
+  describe("the ceiling is per variant and the floor is not", () => {
+    const OVER_THUMBNAIL = 1024 * 1024 + 1;
+
+    it("refuses a body over 1 MiB on the thumbnail", async (t) => {
+      const { put } = await withMedia(t);
+
+      const response = await put("thumbnail", { body: envelope(OVER_THUMBNAIL) });
+
+      assert.equal(response.statusCode, 413, response.body);
+      assert.equal(response.json().code, "PAYLOAD_TOO_LARGE");
+    });
+
+    it("accepts the same body on the asset, whose ceiling is 16 MiB", async (t) => {
+      /*
+       * The assertion the extraction exists for. One handler serves both
+       * variants, so the ceiling is a parameter and the floor is not — and a
+       * copied handler carrying the asset's constant passes the test above
+       * and fails this one, or the reverse.
+       */
+      const { put } = await withMedia(t);
+
+      const response = await put("asset", { body: envelope(OVER_THUMBNAIL) });
+
+      assert.equal(response.statusCode, 200, response.body);
+    });
+  });
+
+  describe("§9.3 scope and §9.7's 409", () => {
+    it("is 404 for an unknown media id", async (t) => {
+      const { port, auth } = await withMedia(t);
+
+      const response = await putObject(port, `/v1/media/${randomUUID()}/asset`, {
+        auth,
+        body: envelope(200),
+      });
+
+      assert.equal(response.statusCode, 404);
+      assert.equal(response.json().code, "NOT_FOUND");
+    });
+
+    it("is 404, byte for byte, for another owner's media", async (t) => {
+      const { port, signIn, mediaId } = await withMedia(t);
+      const intruder = await signIn();
+
+      const theirs = await putObject(port, `/v1/media/${mediaId}/asset`, {
+        auth: intruder,
+        body: envelope(200),
+      });
+      const absent = await putObject(port, `/v1/media/${randomUUID()}/asset`, {
+        auth: intruder,
+        body: envelope(200),
+      });
+
+      assert.equal(theirs.statusCode, 404);
+      assert.equal(theirs.body, absent.body);
+    });
+
+    it("is 409 once the row is ready", async (t) => {
+      // "PUT is idempotent" is the instinct that removes this check; after
+      // `ready`, replacing an object a recipient may be mid-fetch on is editing.
+      const { put } = await withMedia(t);
+      await put("asset", { body: envelope(200) });
+      await put("thumbnail", { body: envelope(100) });
+
+      const response = await put("asset", { body: envelope(200) });
+
+      assert.equal(response.statusCode, 409, response.body);
+      assert.equal(response.json().code, "CONFLICT");
+    });
+  });
+
+  describe("the ladder, through the route", () => {
+    it("answers §9.8's status object, processing after one object", async (t) => {
+      const { put } = await withMedia(t);
+
+      const response = await put("asset", { body: envelope(200) });
+
+      assert.equal(response.statusCode, 200, response.body);
+      assert.equal(response.json().status, "processing");
+      assert.equal(response.json().byte_size, null);
+      assert.deepEqual(Object.keys(response.json()).sort(), [
+        "album_id",
+        "byte_size",
+        "created_at",
+        "id",
+        "kind",
+        "status",
+        "updated_at",
+      ]);
+    });
+
+    it("reaches ready on the second object, with byte_size the sum", async (t) => {
+      const { put } = await withMedia(t);
+
+      await put("asset", { body: envelope(200) });
+      const response = await put("thumbnail", { body: envelope(100) });
+
+      assert.equal(response.json().status, "ready");
+      assert.strictEqual(response.json().byte_size, 300);
+    });
+
+    it("reaches ready in the other order too", async (t) => {
+      // §9.7: "Order is free. Asset first or thumbnail first; `ready` waits
+      // for both." One handler is what makes that true rather than asserted.
+      const { put } = await withMedia(t);
+
+      await put("thumbnail", { body: envelope(100) });
+      const response = await put("asset", { body: envelope(200) });
+
+      assert.equal(response.json().status, "ready");
+      assert.strictEqual(response.json().byte_size, 300);
+    });
+
+    it("writes each variant to its own key", async (t) => {
+      const { put, mediaId, objectStore } = await withMedia(t);
+
+      await put("asset", { body: envelope(200) });
+      await put("thumbnail", { body: envelope(100) });
+
+      assert.equal(objectStore.objects.get(`media/${mediaId}/asset`), 200);
+      assert.equal(objectStore.objects.get(`media/${mediaId}/thumbnail`), 100);
+    });
   });
 });

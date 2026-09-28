@@ -45,6 +45,7 @@ import { findMediaById } from "./application/use-cases/find-media-by-id.js";
 import type { ObjectStore } from "./application/ports/object-store.js";
 import { createObjectStore } from "./adapters/driven/s3/object-store.js";
 import { S3Client } from "@aws-sdk/client-s3";
+import { uploadMediaObject } from "./application/use-cases/upload-media-object.js";
 
 /**
  * The v1 Argon2id parameters, declared in `@vitrina/shared` because the client
@@ -76,6 +77,7 @@ export type UseCaseAdapters = {
   readonly credentialHasher: CredentialHasher;
   readonly tokenHasher: TokenHasher;
   readonly clock: Clock;
+  readonly objectStore: ObjectStore;
 };
 
 export type UseCaseOptions = {
@@ -107,6 +109,7 @@ export function buildUseCases(
     clock,
     albums,
     media,
+    objectStore,
   } = adapters;
   const mintSession = makeMintSession(owners, tokenHasher, clock);
 
@@ -130,6 +133,7 @@ export function buildUseCases(
     listAlbums: listAlbums({ albums }),
     createMedia: createMedia({ media, albums }),
     findMediaById: findMediaById({ media }),
+    uploadMediaObject: uploadMediaObject({ media, objectStore }),
   };
 }
 

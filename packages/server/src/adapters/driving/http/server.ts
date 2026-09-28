@@ -140,7 +140,13 @@ export async function buildServer(
   await app.register(cors, {
     origin: deps.config.clientOrigin, // exact string from config — never true, never "*"
     credentials: false, // Authorization header only; see note below
-    methods: ["GET", "POST", "DELETE"], // narrow to what the route table needs
+    /*
+     * §9.9: `PUT` in for §9.7's two uploads — the first in the system — and
+     * `DELETE` out, because §4.2 means no route deletes anything in v1.
+     * `Content-Type: application/octet-stream` is not CORS-safelisted, so the
+     * uploads preflight; every authenticated request already does (§3.1).
+     */
+    methods: ["GET", "POST", "PUT"],
     /*
      * Authorization is listed EXPLICITLY and not by wildcard: the Fetch standard
      * makes it a non-wildcard header, so `Access-Control-Allow-Headers: *` does

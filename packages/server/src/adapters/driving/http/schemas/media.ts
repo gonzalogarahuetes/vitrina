@@ -46,40 +46,68 @@ export const createMediaSchema = {
   },
 } as const;
 
+/** The media id in the path — §9.3's flat form: the row determines its album. */
+const mediaIdParams = {
+  type: "object",
+  properties: { media_id: uuid },
+  required: ["media_id"],
+  additionalProperties: false,
+} as const;
+
+/**
+ * §9.8's status object, shared by the status route and both uploads — "one
+ * type for where this row is, whether the client asked or was told".
+ */
+const statusObject = {
+  type: "object",
+  properties: {
+    id: uuid,
+    created_at: timestamp,
+    status,
+    album_id: uuid,
+    kind,
+    /*
+     * Integer once `ready`, null before — so the union, not a plain integer.
+     * Verified: a bare `null` here is not a schema and fails at boot with
+     * "must be object,boolean" rather than at request time.
+     */
+    byte_size: { type: ["integer", "null"] },
+    updated_at: timestamp,
+  },
+  required: [
+    "id",
+    "created_at",
+    "status",
+    "album_id",
+    "kind",
+    "byte_size",
+    "updated_at",
+  ],
+  additionalProperties: false,
+} as const;
+
 export const getMediaSchema = {
-  params: {
-    type: "object",
-    properties: { media_id: uuid },
-    required: ["media_id"],
-    additionalProperties: false,
-  },
-  response: {
-    200: {
-      type: "object",
-      properties: {
-        id: uuid,
-        created_at: timestamp,
-        status,
-        album_id: uuid,
-        kind,
-        /*
-         * Integer once `ready`, null before — so the union, not a plain
-         * integer. Verified: a bare `null` here is not a schema and fails at
-         * boot with "must be object,boolean" rather than at request time.
-         */
-        byte_size: { type: ["integer", "null"] },
-        updated_at: timestamp,
-      },
-      required: [
-        "id",
-        "created_at",
-        "status",
-        "album_id",
-        "kind",
-        "byte_size",
-        "updated_at",
-      ],
-      additionalProperties: false,
-    },
-  },
+  params: mediaIdParams,
+  response: { 200: statusObject },
+} as const;
+
+/*
+ * §9.7's two uploads. NO `body` SCHEMA, deliberately: the body is the raw
+ * envelope as `application/octet-stream`, and a schema here would have Fastify
+ * validate a stream. It is also why the route-table walk's "no body accepts
+ * `status`" holds structurally on the two routes it was written for — they
+ * accept no body fields at all.
+ *
+ * `bodyLimit` is absent for the same reason it cannot help: measured, it is
+ * applied by the parsers that accumulate a body, and this route's hands the
+ * stream through. The 16 MiB and 1 MiB limits are the handler's (§9.7).
+ */
+export const uploadAssetSchema = {
+  params: mediaIdParams,
+  response: { 200: statusObject },
+} as const;
+
+export const uploadThumbnailSchema = {
+  params: mediaIdParams,
+  response: { 200: statusObject },
 } as const;
