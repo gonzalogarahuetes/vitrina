@@ -18,6 +18,7 @@ import { buildUseCases } from "../dist/composition-root.js";
 import { createCredentialHasher } from "../dist/adapters/driven/hashing/credential-hasher.js";
 import { createTokenHasher } from "../dist/adapters/driven/hashing/token-hasher.js";
 import { ApplicationError } from "../dist/application/errors.js";
+import { StorageError } from "../dist/application/ports/object-store.js";
 
 const CLIENT_ORIGIN = "http://localhost:5173";
 const SECRET = Buffer.alloc(32, 0x11);
@@ -161,16 +162,20 @@ function inMemoryMedia(albums) {
 }
 
 /** The store, as key → length. Counts what it is actually handed. */
-function fakeStore() {
+function fakeStore({ headThrows = false } = {}) {
   const objects = new Map();
   return {
     objects,
+    headThrows,
     async put(key, body) {
       let written = 0;
       for await (const chunk of body) written += chunk.length;
       objects.set(key, written);
     },
     async head(key) {
+      if (this.headThrows) {
+        throw new StorageError("UNAVAILABLE", { cause: new Error(`HEAD ${key}`) });
+      }
       const length = objects.get(key);
       return length === undefined ? null : { length };
     },
@@ -178,7 +183,7 @@ function fakeStore() {
 }
 
 /** A server over the real graph, one signed-in owner, and one of their albums. */
-async function buildTestServer() {
+async function buildTestServer({ uploadDeadlineMs, logger = false } = {}) {
   const albums = inMemoryAlbums();
   const media = inMemoryMedia(albums);
   const objectStore = fakeStore();
@@ -199,7 +204,8 @@ async function buildTestServer() {
   const app = await buildServer({
     config: { clientOrigin: CLIENT_ORIGIN },
     useCases,
-    logger: false,
+    logger,
+    ...(uploadDeadlineMs === undefined ? {} : { uploadDeadlineMs }),
   });
   await app.ready();
 
@@ -568,24 +574,25 @@ function putObject(port, path, options = {}) {
 /** A body of `bytes`, which is also what the server must count. */
 const envelope = (bytes) => Buffer.alloc(bytes, 0x5a);
 
+/** A listening server, a signed-in owner, an album and a `pending` row. */
+async function withMedia(t, options) {
+  const server = await buildTestServer(options);
+  const body = mediaBody();
+  const created = await postMedia(server.app, server.auth, server.album.id, body);
+  assert.equal(created.statusCode, 201, created.body);
+
+  await server.app.listen({ host: "127.0.0.1", port: 0 });
+  t.after(() => server.app.close());
+
+  const port = server.app.server.address().port;
+  const put = (variant, options) =>
+    putObject(port, `/v1/media/${body.id}/${variant}`, { auth: server.auth, ...options });
+
+  return { ...server, mediaId: body.id, port, put };
+}
+
+
 describe("PUT /v1/media/{media_id}/{asset,thumbnail} — §9.7", () => {
-  /** A listening server, a signed-in owner, an album and a `pending` row. */
-  async function withMedia(t) {
-    const server = await buildTestServer();
-    const body = mediaBody();
-    const created = await postMedia(server.app, server.auth, server.album.id, body);
-    assert.equal(created.statusCode, 201, created.body);
-
-    await server.app.listen({ host: "127.0.0.1", port: 0 });
-    t.after(() => server.app.close());
-
-    const port = server.app.server.address().port;
-    const put = (variant, options) =>
-      putObject(port, `/v1/media/${body.id}/${variant}`, { auth: server.auth, ...options });
-
-    return { ...server, mediaId: body.id, port, put };
-  }
-
   describe("the pre-read checks", () => {
     it("is 411 with no Content-Length", async (t) => {
       const { put } = await withMedia(t);
@@ -790,5 +797,132 @@ describe("PUT /v1/media/{media_id}/{asset,thumbnail} — §9.7", () => {
       assert.equal(objectStore.objects.get(`media/${mediaId}/asset`), 200);
       assert.equal(objectStore.objects.get(`media/${mediaId}/thumbnail`), 100);
     });
+  });
+});
+
+describe("§9.7's deadline", () => {
+  /**
+   * A client that sends part of its body and then stops, WITHOUT closing the
+   * connection. Nothing else detects this: the stream never errors, it simply
+   * never completes, which is why the deadline exists.
+   */
+  function stall(t, port, path, { auth, contentLength, sent }) {
+    let settle;
+    const done = new Promise((resolve) => (settle = resolve));
+    const request = http.request(
+      {
+        host: "127.0.0.1",
+        port,
+        method: "PUT",
+        path,
+        headers: {
+          "content-type": "application/octet-stream",
+          "content-length": String(contentLength),
+          ...auth,
+        },
+      },
+      (response) => {
+        let raw = "";
+        response.on("data", (chunk) => (raw += chunk));
+        response.on("end", () => settle({ statusCode: response.statusCode, body: raw }));
+      },
+    );
+    request.on("error", (error) => settle({ statusCode: null, error: error.code }));
+    /*
+     * A bound of its own. Without the deadline the server neither answers nor
+     * closes, so an unbounded wait HANGS instead of failing — measured by
+     * deleting the timer. `"NO OUTCOME"` is what a missing deadline looks like.
+     */
+    const bound = setTimeout(() => settle({ statusCode: "NO OUTCOME" }), 3_000);
+    done.finally(() => clearTimeout(bound));
+
+    /*
+     * `app.close()` waits for in-flight requests, and a stalled one never
+     * finishes — so without this the TEARDOWN hangs even when the assertion
+     * has already failed. Also measured, by deleting the timer.
+     */
+    t.after(() => request.destroy());
+
+    request.write(Buffer.alloc(sent, 0x5a)); // and then nothing, ever
+    return { done, abort: () => request.destroy() };
+  }
+
+  it("marks the row failed and answers nothing", async (t) => {
+    /*
+     * §6.2's owed row. `reply.hijack()` means no response is ever written, so
+     * the client sees the socket close rather than a status — asserting on a
+     * status code here would hang instead of failing.
+     */
+    const { port, mediaId, media, auth } = await withMedia(t, { uploadDeadlineMs: 150 });
+
+    const { done, abort } = stall(t, port, `/v1/media/${mediaId}/asset`, {
+      auth,
+      contentLength: 4096,
+      sent: 100,
+    });
+    const outcome = await done;
+    // Explicit, not left to `after`: withMedia registers app.close() first, and
+    // close() waits for in-flight requests, so a later hook never runs.
+    abort();
+
+    assert.equal(outcome.statusCode, null, `expected no response, got ${outcome.statusCode}`);
+    assert.equal(media.rows.get(mediaId).status, "failed");
+  });
+
+  it("does not fire for an upload that completes inside it", async (t) => {
+    // Otherwise the assertion above passes against a deadline of zero.
+    const { put, mediaId, media } = await withMedia(t, { uploadDeadlineMs: 5_000 });
+
+    const response = await put("asset", { body: envelope(200) });
+
+    assert.equal(response.statusCode, 200, response.body);
+    assert.equal(media.rows.get(mediaId).status, "processing");
+  });
+
+  it("a client that vanishes reaches the same markFailed, without the timer", async (t) => {
+    /*
+     * Two events, one catch: a disconnect makes the stream error on its own
+     * and the deadline never fires. The row ends in the same place, which is
+     * what "one recovery path" means (§9.7).
+     */
+    const { port, mediaId, media, auth } = await withMedia(t, { uploadDeadlineMs: 60_000 });
+
+    const { done, abort } = stall(t, port, `/v1/media/${mediaId}/asset`, {
+      auth,
+      contentLength: 4096,
+      sent: 100,
+    });
+    setTimeout(abort, 50);
+    await done;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    assert.equal(media.rows.get(mediaId).status, "failed");
+  });
+});
+
+describe("§9.7's unreachable store, at the route", () => {
+  it("answers 200 with a processing row, and logs at error", async (t) => {
+    /*
+     * §6.2's owed row. The upload succeeded — bytes written and counted — and
+     * what failed is a confirmation the client did not ask for. A 500 would
+     * report a failure that did not happen and have the client re-send.
+     */
+    const lines = [];
+    const { put, mediaId, media, objectStore } = await withMedia(t, {
+      logger: { level: "error", stream: { write: (line) => lines.push(JSON.parse(line)) } },
+    });
+    objectStore.headThrows = true;
+
+    const response = await put("asset", { body: envelope(200) });
+
+    assert.equal(response.statusCode, 200, response.body);
+    assert.equal(response.json().status, "processing");
+    assert.equal(media.rows.get(mediaId).status, "processing", "NOT failed");
+
+    // The row looks identical to one behind a merely slow store; §9.7 says the
+    // log is the only place the two differ.
+    const logged = lines.find((line) => line.level === 50);
+    assert.ok(logged, `expected an error line, got: ${JSON.stringify(lines)}`);
+    assert.equal(logged.err.type, "StorageError");
   });
 });

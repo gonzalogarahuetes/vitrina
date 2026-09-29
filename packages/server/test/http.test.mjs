@@ -297,4 +297,30 @@ describe("CORS", () => {
 
     assert.ok(Number(res.headers["access-control-max-age"]) > 0);
   });
+
+  it("allows PUT for §9.7's uploads and refuses DELETE", async () => {
+    /*
+     * §6.2's row. PUT is a preflighted method, so omitting it from `methods`
+     * fails no server-side test and breaks every browser upload. DELETE is
+     * absent because §4.2 means no v1 route deletes anything.
+     */
+    const preflight = (method) =>
+      app.inject({
+        method: "OPTIONS",
+        url: "/health",
+        headers: { origin: CLIENT_ORIGIN, "access-control-request-method": method },
+      });
+
+    const put = await preflight("PUT");
+    assert.ok(put.statusCode < 300, `PUT preflight failed: ${put.statusCode}`);
+    assert.match(String(put.headers["access-control-allow-methods"]), /PUT/);
+
+    // @fastify/cors answers the preflight either way; the browser reads the
+    // header, so that is what this asserts rather than the status.
+    const del = await preflight("DELETE");
+    assert.doesNotMatch(
+      String(del.headers["access-control-allow-methods"] ?? ""),
+      /DELETE/,
+    );
+  });
 });
