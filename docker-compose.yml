@@ -34,21 +34,36 @@ services:
     ports:
       - "8333:8333"
     restart: unless-stopped
+    # Any HTTP answer, not a successful one: ListBuckets needs credentials and
+    # replies 403, which `wget --spider` reads as a failure. What is being
+    # tested is that the S3 gateway is serving, which 403 proves.
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "wget -q -S -O /dev/null http://localhost:8333/ 2>&1 | grep -q 'HTTP/1'",
+        ]
+      interval: 2s
+      timeout: 3s
+      retries: 30
 
   createbucket:
     image: amazon/aws-cli
-    depends_on: [seaweedfs]
+    depends_on:
+      seaweedfs:
+        condition: service_healthy
     environment:
       AWS_ACCESS_KEY_ID: 10881ccdfa15dda85b360cf10d216988
       AWS_SECRET_ACCESS_KEY: ba68c34138d377ae4522f13c55675c9c
       AWS_DEFAULT_REGION: us-east-1
+    # The readiness poll that was here is now seaweedfs's healthcheck, so this
+    # runs only once the gateway serves. `head-bucket` stays last: it is this
+    # one-shot's verdict, and nothing may come between it and the exit code.
     entrypoint: >
       sh -c '
-        until aws --endpoint-url http://seaweedfs:8333 s3 ls >/dev/null 2>&1; do sleep 1; done;
         aws --endpoint-url http://seaweedfs:8333 s3 mb s3://vitrina-media 2>/dev/null || true;
         aws --endpoint-url http://seaweedfs:8333 s3api head-bucket --bucket vitrina-media
       '
-    command: node packages/server/scripts/migrate.mjs
     restart: "no"
 
   # One-shot, like createbucket: provisions the schema as part of `up`. There
