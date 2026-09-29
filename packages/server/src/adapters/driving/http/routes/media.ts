@@ -28,6 +28,7 @@ import type { UploadOutcome } from "../../../../application/use-cases/upload-med
 
 export type MediaRoutesDeps = {
   readonly useCases: UseCases;
+  readonly uploadDeadlineMs: number;
 };
 
 type CreateMediaBody = {
@@ -39,7 +40,6 @@ type CreateMediaBody = {
 const ASSET_MAX_BYTES = 16 * 1024 * 1024;
 const ENVELOPE_MIN_BYTES = 81;
 const THUMBNAIL_MAX_BYTES = 1024 * 1024;
-const UPLOAD_DEADLINE_MS = 120_000; // §9.7, provisional
 
 type UploadRoute = { Body: Readable; Params: { media_id: string } };
 /**
@@ -117,7 +117,7 @@ export function mediaRoutes(deps: MediaRoutesDeps) {
         const deadline = setTimeout(() => {
           timedOut = true;
           request.body.destroy(new Error("upload deadline"));
-        }, UPLOAD_DEADLINE_MS);
+        }, deps.uploadDeadlineMs);
 
         let outcome: UploadOutcome;
         try {

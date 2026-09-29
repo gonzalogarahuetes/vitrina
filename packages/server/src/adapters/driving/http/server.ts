@@ -13,32 +13,13 @@ import { albumRoutes } from "./routes/albums.js";
 import { mediaRoutes } from "./routes/media.js";
 
 /*
- * What the log is allowed to carry, and how an error is shaped when it gets
- * there. Owned by this adapter and NOT by whoever calls buildServer — see
- * `loggerWithPolicy` below for why that distinction is load-bearing rather than
- * tidy.
+ * What the log may carry — the adapter's, never the caller's (see below).
+ * `redact` is explicit so it survives someone widening the serialisers; it is
+ * the second line of defence, since invite spec §2.1 keys live in the fragment.
  *
- * `redact`: CLAUDE.md's third hard rule puts logs in scope for key material.
- * Fastify's default serialiser logs method and URL only, so a token in an
- * Authorization header is not logged today — but that is an inherited default,
- * and this rule is one the project treats as catastrophic. Made explicit so it
- * survives someone widening the serialisers later.
- *
- * Note what redaction does *not* protect: invite spec §2.1 puts `token` and
- * `key` in the URL *fragment* precisely because fragments are never sent to the
- * server. Redaction is the second line of defence, not the first.
- *
- * `serializers.err`: `errWithCause` rather than pino's default `err`, decided
- * 21 August 2026 — api-sketch §1.2. The default does not lose a cause, and the
- * document's claim that it did was wrong: pino-std-serializers 7.1.0 FLATTENS
- * the chain, joining every cause message into `err.message` with ": " and
- * appending each stack under "caused by:". So this change buys structure, not
- * presence — `err.cause` as a nested object, each link keeping its own message
- * and stack, greppable by field instead of by substring.
- *
- * The cost, since it is a real one: `err.message` is now the top-level message
- * ALONE. Anything reading it for the underlying reason has to walk `err.cause`
- * instead, and a log query written against the flattened form stops matching.
+ * `errWithCause` buys STRUCTURE, not presence: pino's default flattens a cause
+ * chain into `err.message` rather than dropping it (api-sketch §1.2, measured
+ * 21 August 2026). The cost is that `err.message` is now the top level alone.
  */
 const LOG_POLICY = {
   redact: ["req.headers.authorization", "req.headers.cookie"],
@@ -46,26 +27,12 @@ const LOG_POLICY = {
 };
 
 /**
- * The caller chooses where the log goes; this module chooses what it may say.
+ * The caller chooses where the log goes; this chooses what it may say — so the
+ * spread puts LOG_POLICY last. A `??` here let every log-capturing test run
+ * with no redaction, asserting its own configuration rather than production's.
  *
- * `deps.logger` used to be spliced in with `??`, which handed the caller the
- * whole options object and therefore the policy above with it. Every test that
- * captured a log stream passed `{level, stream}` and so silently ran with no
- * redaction and no serialisers — harmless in production, which passes no
- * logger, but it meant no test could prove either rule held. Worse for the rule
- * added today: a test asserting the cause chain reaches the log would have been
- * asserting its own configuration, which is the same failure mode `v1Plugins`
- * documents below — "a test written that way passes against the very bug it is
- * meant to catch".
- *
- * So the spread puts LOG_POLICY last and a caller cannot override it. `false`
- * is passed through, because "no logger at all" is a destination and not a
- * policy.
- *
- * `NonNullable` on the return type is not cosmetic: `exactOptionalPropertyTypes`
- * refuses `undefined` for `logger`, and a signature admitting it sends
- * `fastify()` down its HTTP/2 overload, which fails four lines later with an
- * error about `Http2ServerRequest`. This function always returns a value.
+ * `NonNullable` is not cosmetic: admitting `undefined` sends `fastify()` down
+ * its HTTP/2 overload under `exactOptionalPropertyTypes`.
  */
 function loggerWithPolicy(
   override: BuildServerDeps["logger"],
@@ -77,11 +44,7 @@ function loggerWithPolicy(
   return { ...destination, ...LOG_POLICY };
 }
 
-/**
- * What the HTTP adapter needs from configuration — deliberately not the whole
- * `Config`. Host and port belong to `index.ts`, which does the listening; an
- * adapter that cannot see them cannot come to depend on them.
- */
+/** Not the whole `Config`: host and port belong to index.ts, which listens. */
 export type HttpConfig = {
   readonly clientOrigin: string;
 };
@@ -90,126 +53,93 @@ export type BuildServerDeps = {
   readonly config: HttpConfig;
   readonly useCases: UseCases;
   /**
-   * Logger DESTINATION override, not a logger override. Omit in production;
-   * pass `false` in tests so eight assertions do not emit eighty lines of pino
-   * JSON, or `{level, stream}` to read the lines back.
-   *
-   * `redact` and `serializers` are not yours to set — `loggerWithPolicy` merges
-   * LOG_POLICY over whatever arrives here, so a test reads the same log shape
-   * production writes.
+   * Logger DESTINATION, not policy: `false` to silence, `{level, stream}` to
+   * read lines back. LOG_POLICY is merged over it, so a test reads the same
+   * shape production writes.
    */
   readonly logger?: FastifyServerOptions["logger"];
   /**
-   * Extra plugins registered *inside* the real `/v1` context. Production passes
-   * nothing; B.6's routes will replace the commented-out block below.
-   *
-   * This exists so a test can put a route in the same encapsulated context
-   * B.6's routes will occupy, and that is not a convenience. A route registered
-   * from outside `buildServer` is created after `setErrorHandler` has run, so it
-   * inherits the envelope no matter what order this function uses internally —
-   * a test written that way passes against the very bug it is meant to catch.
-   * Verified both ways before this seam was added.
+   * Extra plugins INSIDE the real `/v1` context; production passes nothing.
+   * A route registered from outside is created after `setErrorHandler`, so it
+   * inherits the envelope either way — and passes against the bug it tests.
    */
   readonly v1Plugins?: readonly FastifyPluginAsync[];
+  /**
+   * §9.7's upload deadline. Omit in production; a test sets it low so the
+   * stalling-client case is a test rather than a two-minute wait.
+   */
+  readonly uploadDeadlineMs?: number;
 };
 
+/** §9.7, provisional: generous for 16 MiB, short enough not to be a leak. */
+const UPLOAD_DEADLINE_MS = 120_000;
+
 /*
- * vitrina-server-architecture.md §2 records this signature as `buildServer(useCases)`. It also
- * needs the allowlisted CORS origin, which is configuration rather than a use
- * case, so deps is an object with both. Flagged rather than silently chosen —
- * §2's line wants updating to match.
+ * architecture §2 records this as `buildServer(useCases)`; it also needs the
+ * allowlisted CORS origin, so deps is an object. §2's line wants updating.
  */
 export async function buildServer(
   deps: BuildServerDeps,
 ): Promise<FastifyInstance> {
   const app = fastify({
     logger: loggerWithPolicy(deps.logger),
-    /*
-     * bodyLimit stays at Fastify's 1 MiB default until B.6 settles the upload
-     * path. Brief §10.1 proxies ciphertext through the API in v1, so whatever
-     * that route accepts has to be sized against the 256 KiB chunk (encryption
-     * spec §3.1) plus its 16-byte tag and envelope header — not guessed here.
-     */
+    // bodyLimit stays at Fastify's 1 MiB default, which covers the JSON routes.
+    // §9.7's uploads enforce their own: measured, `bodyLimit` reaches only the
+    // parsers that accumulate a body, and theirs hands the stream through.
   });
 
-  /*
-   * CORS is registered before any route because @fastify/cors installs an
-   * onRequest hook, and hooks only apply to routes registered after them. The
-   * `await` does not provide that ordering — registration order does.
-   */
+  // Before any route: @fastify/cors installs an onRequest hook, and hooks only
+  // apply to routes registered after them. The `await` does not do that.
   await app.register(cors, {
     origin: deps.config.clientOrigin, // exact string from config — never true, never "*"
     credentials: false, // Authorization header only; see note below
-    /*
-     * §9.9: `PUT` in for §9.7's two uploads — the first in the system — and
-     * `DELETE` out, because §4.2 means no route deletes anything in v1.
-     * `Content-Type: application/octet-stream` is not CORS-safelisted, so the
-     * uploads preflight; every authenticated request already does (§3.1).
-     */
+    // §9.9: `PUT` for §9.7's uploads, no `DELETE` because §4.2 means no route
+    // deletes anything in v1.
     methods: ["GET", "POST", "PUT"],
-    /*
-     * Authorization is listed EXPLICITLY and not by wildcard: the Fetch standard
-     * makes it a non-wildcard header, so `Access-Control-Allow-Headers: *` does
-     * not cover it. Consequence, recorded in api-sketch §3.1 rather than left
-     * for someone to rediscover: every authenticated cross-origin request
-     * preflights — because of bearer auth, not because of Range.
-     */
+    // Authorization is EXPLICIT, not wildcarded: the Fetch standard makes it a
+    // non-wildcard header. So every authenticated request preflights, because
+    // of bearer auth rather than Range (§3.1).
     allowedHeaders: ["Authorization", "Content-Type", "Range"],
     exposedHeaders: ["Content-Range", "Accept-Ranges", "Retry-After"],
     maxAge: 7200, // the maximum Chrome honours — NOT a claim about other browsers
   });
   /*
-   * `credentials: false` is a decision, not a default — api-sketch §3.2. Brief
-   * §6 #6 has since been narrowed to say the same thing: the transport is
-   * `Authorization: Bearer` and cookies are not used, because separate origins
-   * are the deployment and a cookie would need SameSite=None, CORS credentials
-   * and CSRF protection that a bearer header does not.
-   *
-   * `Content-Range` / `Accept-Ranges` are exposed because PR 5's chunk-fetch
-   * route cannot work cross-origin without them: the browser would hide exactly
-   * the headers the client needs to compute the next range (encryption spec
-   * §3.3). `Retry-After` is exposed because a client that cannot read it cannot
-   * back off for the interval the server chose, and PR 2's /login limiter
-   * (api-sketch §7.6) is the first thing here that can answer 429.
-   *
-   * Note `maxAge` is not a promise: WebKit's cap is materially lower than
-   * Chrome's, and the real figure belongs to phase-0-plan §8's V.2 on a real iOS
-   * device rather than to a number copied out of documentation.
+   * `credentials: false` is a decision (§3.2, brief §6 #6): bearer transport,
+   * no cookies, so no SameSite=None or CSRF protection to get right.
+   * `Content-Range`/`Accept-Ranges` are exposed for PR 5's ranged fetch and
+   * `Retry-After` so a client can honour §7.6's backoff. `maxAge` is not a
+   * promise — WebKit caps lower, and V.2 owns the real figure.
    */
 
   app.register(health); // unversioned, for uptime monitors — track-b-plan §3 B.6
 
   /*
-   * BOTH HANDLERS MUST PRECEDE EVERY `await app.register(...)` BELOW. This is
-   * ordering, not style, and reordering it reintroduces a silent #15 leak.
-   *
-   * `await`ing a register forces that plugin to load immediately, and the child
-   * context it creates snapshots the parent's error handler at creation time. A
-   * root `setErrorHandler` called afterwards never reaches it, so a throwing
-   * route inside `/v1` returns Fastify's own body.
-   *
-   * `setNotFoundHandler` is NOT
-   * order-sensitive — Fastify applies it globally at ready time either way. Only
-   * `setErrorHandler` is. They stay together anyway so the pair cannot drift.
+   * BOTH MUST PRECEDE EVERY `await app.register(...)` BELOW — ordering, not
+   * style. An awaited register loads immediately and its child snapshots the
+   * parent's error handler, so a later `setErrorHandler` never reaches it and
+   * a throwing `/v1` route returns Fastify's body (a silent #15 leak).
+   * `setNotFoundHandler` is not order-sensitive; it stays here so the pair
+   * cannot drift.
    */
   app.setErrorHandler(errorEnvelope);
   app.setNotFoundHandler(notFoundEnvelope);
 
-  // The /v1 mount point, registered once. B.6's routes drop in here.
+  // The /v1 mount point, registered once.
   await app.register(
     async (v1) => {
-      /*
-       * PR 2b's four. Registered as their own plugin, so the `no-store` hook
-       * and the limiter inside it are encapsulated to those routes rather than
-       * applying to everything under /v1.
-       */
+      // One plugin each, so a `no-store` hook or a limiter stays encapsulated
+      // to the routes that need it rather than everything under /v1.
       await v1.register(credentialRoutes({ useCases: deps.useCases }));
-      // §9.2's two. Its own plugin, so the `no-store` hook is encapsulated to
-      // the routes that carry a wrapping rather than to everything under /v1.
+      // §9.2's create and list, §9.4's details, §9.5's metadata.
       await v1.register(albumRoutes({ useCases: deps.useCases }));
-      // §9.6's create, and §9.7 and §9.8 when they land. No `no-store` hook —
+      // §9.6's create, §9.7's uploads, §9.8's status. No `no-store` hook —
       // see the note at the head of routes/media.ts.
-      await v1.register(mediaRoutes({ useCases: deps.useCases }));
+      await v1.register(
+        mediaRoutes({
+          useCases: deps.useCases,
+          uploadDeadlineMs: deps.uploadDeadlineMs ?? UPLOAD_DEADLINE_MS,
+        }),
+      );
       for (const plugin of deps.v1Plugins ?? []) {
         await v1.register(plugin);
       }
