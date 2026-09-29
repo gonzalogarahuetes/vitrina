@@ -1125,6 +1125,7 @@ which are only written down. **This table grows with every PR** and is the reaso
 | §9.7 the route's own size ceiling, per variant                                                                      | `Content-Length` above the limit is `413` before the body is read. The ceiling is a parameter of one shared handler and the 81-byte floor is not, asserted by the same body passing on the asset and failing on the thumbnail. `bodyLimit` cannot do this: measured, it reaches only the parsers that accumulate a body.                                                                                                                                                                                                                                      |
 | §9.7 an undersized body is rejected                                                                                 | `Content-Length: 0` and `80` each answer `400` with the row untouched. The one check the confirming `HEAD` cannot back up — a zero-length body compares 0 against a count of 0 and would otherwise reach `ready`.                                                                                                                                                                                                                                                                                                                                             |
 | §3 `methods` is `GET, POST, PUT`                                                                                    | `http.test.mjs`: the preflight's `Access-Control-Allow-Methods` carries `PUT` and not `DELETE`. Asserted on the header rather than the status, because @fastify/cors answers `204` to a `DELETE` preflight either way.                                                                                                                                                                                                                                                                                                                                        |
+| §9.7 `ready` means two objects confirmed in a real store                                                            | Not hermetic, and cannot be. `infra/object-store-adapter.test.mjs` asserts the two answers a fake cannot tell apart — `null` for an absent object, a throw for an unreachable store — and `infra/smoke.test.mjs` heads both objects after a `ready`, which is what shows `byte_size` came from the store rather than from the client's `Content-Length`. The hermetic rows above assert the ladder against a fake; these assert the evidence the ladder rests on. Runs in the `infra` job                                                                     |
 | A body cannot exceed the route's limit (§9.7)                                                                       | Structural, not code. `Content-Length` is compared against the limit before a byte is read — tested. Beyond that, Node delivers at most `Content-Length` bytes to the handler and parses the excess as a pipelined request (measured 29 September 2026), and the only framing that can outrun its declaration is chunked, which this route refuses at `411`. The guarantee is conditional on that `411`: accept chunked uploads and a running-count check becomes required, and §9.7 carries what it must do                                                  |
 
 The suite is hermetic — `app.inject()`, no Docker, no network — so it belongs in
@@ -1135,10 +1136,11 @@ stops holding.
 
 - **Most name a hermetic test.** It fails in `checks` on every PR, and removing
   the enforcement turns it red.
-- **One names a test that cannot be hermetic.** Signup's transaction needs a
-  real Postgres, so it lives in `infra/owner-repository.test.mjs` and runs in
-  the `infra` job. Same guarantee, different job; a broken `infra` job takes it
-  with it.
+- **Two name a test that cannot be hermetic.** Signup's transaction needs a real
+  Postgres; §9.7's evidence rule needs a real store, because the property is
+  that `ready` rests on the store's own answer rather than on a fake's. Both
+  live in `infra/` and run in the `infra` job. Same guarantee, different job; a
+  broken `infra` job takes them with it.
 - **One names no test at all.** §9.7's upload limit is enforced by Node's
   `Content-Length` framing plus the route's `411`, and nothing in CI would go
   red if that stopped being true — a change to the `411` would silently remove a
