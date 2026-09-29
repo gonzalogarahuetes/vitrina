@@ -215,9 +215,17 @@ jobs:
       - name: pnpm test:infra
         run: pnpm test:infra
 
+      # Health probe output is not in `compose logs` — a container marked
+      # unhealthy dumps its service's logs and nothing about why the probe
+      # failed, which is how "container seaweedfs-s3 is unhealthy" arrived as
+      # one line with no diagnosis. `|| true` on each so a container that never
+      # started does not mask the logs above it.
       - name: Dump stack logs
         if: failure()
-        run: docker compose logs --no-color --timestamps
+        run: |
+          docker compose logs --no-color --timestamps
+          docker inspect -f '{{json .State.Health}}' seaweedfs-s3 || true
+          docker inspect -f '{{json .State.Health}}' vitrina-postgres || true
 
       - name: Tear down
         if: always()
