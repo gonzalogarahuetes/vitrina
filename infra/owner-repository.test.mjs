@@ -266,6 +266,10 @@ before(async () => {
 	try {
 		await pool.query('SELECT 1')
 	} catch (cause) {
-		throw new Error('Postgres is not reachable — run `pnpm infra:up` first', { cause })
+		throw new Error(
+			'Postgres is not reachable — run `pnpm infra:up && pnpm infra:wait` first; ' +
+				'`up` returns once containers have STARTED, not once migrate has finished.',
+			{ cause },
+		)
 	}
 })

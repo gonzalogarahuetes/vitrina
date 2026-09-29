@@ -88,7 +88,8 @@ before(async () => {
 	} catch (cause) {
 		throw new Error(
 			`cannot reach bucket "${BUCKET}" at ${ENDPOINT}. Start the stack with ` +
-				`\`pnpm infra:up\` and check the createbucket service succeeded.`,
+				'`pnpm infra:up && pnpm infra:wait`. SeaweedFS has NO healthcheck, so ' +
+				'`up` returns before it can serve and createbucket races it.',
 			{ cause },
 		)
 	}

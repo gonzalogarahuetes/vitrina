@@ -81,7 +81,8 @@ before(async () => {
 	} catch (cause) {
 		throw new Error(
 			`cannot reach Postgres at ${DATABASE_URL}. Start the stack with ` +
-				'`pnpm infra:up` and check the migrate service succeeded.',
+				'`pnpm infra:up && pnpm infra:wait` — `up` returns once containers ' +
+				'have STARTED, and the migrate one-shot races anything after it.',
 			{ cause },
 		)
 	}
