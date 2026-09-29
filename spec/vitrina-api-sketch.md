@@ -1129,9 +1129,30 @@ which are only written down. **This table grows with every PR** and is the reaso
 
 The suite is hermetic — `app.inject()`, no Docker, no network — so it belongs in
 CI's `checks` job, which the workflow keeps free of infrastructure on purpose.
-**One row above is the exception**: signup's transaction can only be shown
-against a real database, so it is enforced by `infra/owner-repository.test.mjs`
-under `pnpm test:infra` and not by the `checks` job.
+
+**Rows above are enforced in three ways**, and the difference matters when one
+stops holding.
+
+- **Most name a hermetic test.** It fails in `checks` on every PR, and removing
+  the enforcement turns it red.
+- **One names a test that cannot be hermetic.** Signup's transaction needs a
+  real Postgres, so it lives in `infra/owner-repository.test.mjs` and runs in
+  the `infra` job. Same guarantee, different job; a broken `infra` job takes it
+  with it.
+- **One names no test at all.** §9.7's upload limit is enforced by Node's
+  `Content-Length` framing plus the route's `411`, and nothing in CI would go
+  red if that stopped being true — a change to the `411` would silently remove a
+  guarantee this table records as held. It sits here rather than in §6.2 because
+  the property does hold today and is not owed to anyone; the row states what it
+  depends on, and that dependency is the whole of its enforcement.
+
+This paragraph claimed one exception until 29 September 2026, which was true
+when every other row named a hermetic test. The structural row made it two
+categories described as one — and the omitted category is the one where
+"enforced" does not mean "tested". A ledger whose purpose is distinguishing code
+from prose now has a row that is neither, and the honest label is structural,
+and conditional on something a future change could remove without failing
+anything.
 
 ### 6.2 Owed — a rule in this document with no code behind it
 
