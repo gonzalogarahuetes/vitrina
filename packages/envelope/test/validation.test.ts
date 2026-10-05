@@ -149,13 +149,27 @@ test("in-range integers reach the crate, whose own rejection is distinguishable"
 // rejects instead. Within one client the repair would round-trip — which is
 // why the test is "is it rejected", never "does it round-trip".
 interface StringRow {
+  name: string;
   param: string;
   call: (s: string) => unknown;
+  /** The code a well-formed input reaches when the call cannot succeed. */
+  acceptedCode?: string;
 }
 
 const stringRows: StringRow[] = [
-  { param: "title", call: (s) => e.encryptAlbumTitle(album, bytes(16), s) },
-  { param: "label", call: (s) => e.encryptRecipientLabel(album, bytes(16), s) },
+  { name: "title", param: "title", call: (s) => e.encryptAlbumTitle(album, bytes(16), s) },
+  { name: "label", param: "label", call: (s) => e.encryptRecipientLabel(album, bytes(16), s) },
+  { name: "wrapAlbumKey passphrase", param: "passphrase", call: (s) => e.wrapAlbumKey(album, s, params, bytes(16)) },
+  {
+    name: "unwrapAlbumKey passphrase",
+    param: "passphrase",
+    call: (s) => e.unwrapAlbumKey(s, params, bytes(16), stored),
+    // `stored` is wrapped under "Café Roble"; any other well-formed string
+    // reaches the KDF and fails to authenticate, which is what proves it passed.
+    acceptedCode: "AuthenticationFailed",
+  },
+  // §6.6.2: the human-typed input, and the case encryption spec §1 names as the worst.
+  { name: "password", param: "password", call: (s) => e.deriveOwnerCredential(s, bytes(16), params) },
 ];
 
 // Lone high, lone low, high at the end, low at the start, and a reversed pair.
@@ -163,24 +177,25 @@ const unpaired = ["\uD800", "a\uDC00b", "abc\uDBFF", "\uDFFFabc", "\uDC00\uD800"
 const notStrings: unknown[] = [123, null, undefined, {}, [], new Uint8Array([0x61])];
 
 for (const row of stringRows) {
-  test(`${row.param}: an unpaired surrogate is UnpairedSurrogate, named by parameter`, () => {
+  test(`${row.name}: an unpaired surrogate is UnpairedSurrogate, named by parameter`, () => {
     for (const s of unpaired) {
       const err = caught(() => row.call(s));
-      assert.equal(err.code, "UnpairedSurrogate", `${row.param} ${JSON.stringify(s)}`);
+      assert.equal(err.code, "UnpairedSurrogate", `${row.name} ${JSON.stringify(s)}`);
       assert.equal(err.param, row.param);
       assert.equal(err.message, `${row.param} contains an unpaired UTF-16 surrogate`);
     }
   });
 
   // A surrogate *pair* is well-formed UTF-16 — 😀 is U+1F600 — and must pass.
-  test(`${row.param}: a surrogate pair is well-formed and accepted`, () => {
-    assert.doesNotThrow(() => row.call("Sofía 😀"));
+  test(`${row.name}: a surrogate pair is well-formed and accepted`, () => {
+    if (row.acceptedCode) assert.equal(caught(() => row.call("Sofía 😀")).code, row.acceptedCode);
+    else assert.doesNotThrow(() => row.call("Sofía 😀"));
   });
 
-  test(`${row.param}: a non-string is NotString, not coerced`, () => {
+  test(`${row.name}: a non-string is NotString, not coerced`, () => {
     for (const v of notStrings) {
       const err = caught(() => row.call(v as string));
-      assert.equal(err.code, "NotString", `${row.param} = ${String(v)}`);
+      assert.equal(err.code, "NotString", `${row.name} = ${String(v)}`);
       assert.equal(err.param, row.param);
     }
   });

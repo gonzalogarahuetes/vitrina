@@ -33,6 +33,14 @@ The check is number-level. It has no opinion about which _fields_ a vector carri
 
 All integers in this format are **little-endian**.
 
+**Strings that cross into the format MUST be well-formed Unicode. A string containing an unpaired UTF-16 surrogate MUST be rejected, not repaired.**
+
+JavaScript and JVM strings can hold lone surrogates, and their UTF-8 encoders repair them differently — JavaScript substitutes `U+FFFD`, the JVM `?`, and a Swift `String` cannot hold one at all. Within a single client the repair is deterministic, so a value wrapped and unwrapped by the same implementation round-trips and nothing fails. The disagreement is across implementations: the same typed string yields different bytes, and therefore a different derived key, depending on which client it passed through — and it cannot be detected until a blob fails to open on a device that did not create it.
+
+The owner password is the worst case. It is typed by a human rather than generated (§6.6.2), so a lone surrogate can reach it in a way §6.3's system-generated passphrases exclude — and a Phase 4 native client deriving a different root makes an account's entire album collection unopenable, which §6.6 records as the highest severity in this system.
+
+The check belongs where the string is still UTF-16. Once converted, the repair has already happened and nothing downstream can tell a repaired string from one that was always valid.
+
 ### 1.1 Forbidden alternatives
 
 These are not stylistic preferences. Each one breaks something specific.
@@ -55,7 +63,9 @@ K_album  (32 bytes, random, one per album)
     │
     ├── K_asset(id) = BLAKE2b-256(key = K_album, msg = "vitrina-asset-v1" ‖ asset_id)
     ├── K_thumb(id) = BLAKE2b-256(key = K_album, msg = "vitrina-thumb-v1" ‖ asset_id)
-    └── K_meta(id)  = BLAKE2b-256(key = K_album, msg = "vitrina-meta-v1"  ‖ asset_id)
+    ├── K_meta(id)  = BLAKE2b-256(key = K_album, msg = "vitrina-meta-v1"  ‖ asset_id)
+    ├── K_title(id) = BLAKE2b-256(key = K_album, msg = "vitrina-title-v1" ‖ album_id)
+    └── K_label(id) = BLAKE2b-256(key = K_album, msg = "vitrina-label-v1" ‖ recipient_id)
 ```
 
 `asset_id` is a **UUIDv4**, generated client-side from a CSPRNG, and appears in the envelope header as its 16 raw bytes. Six of those bits are fixed by the UUID version and variant fields, so it carries 122 bits of entropy rather than 128. Collision remains negligible at any scale this system will reach, so a relay MAY use it as a global identifier and as an object key — but that is a property of how it is generated, not a constraint a client can verify.
@@ -80,7 +90,27 @@ wrapped_key = XChaCha20-Poly1305(
 
 **Binding `album_id` makes `albums.id` client-generated**, on the same rule as `asset_id` and `recipient_id`: a value inside an AAD must exist before the thing it authenticates is computed, so the client cannot wait for a server-assigned id. Three identifiers, three AADs, one rule.
 
-**Status**. The crate and its binding implement this wrap; **the vector does not yet exist**. A round-trip vector is required before any account exists, and joins §9's coverage list when it lands — the list is read by the consistency check at test time (§0), so it is added in the same commit as the vector rather than ahead of it. The reasoning is category 9's, for the passphrase wrap: the construction is format-permanent, the relay cannot re-wrap what it cannot read, and an independent implementation built from this document alone (§0) would otherwise implement bytes nobody has checked. The XChaCha20-Poly1305 primitive is anchored by §9 category 7; this composition is not, until the vector exists.
+**§2 records the format.** Whether something implements it, and whether a vector exists for it, are facts about the repository at a moment — they live in §9's coverage list, which the consistency check reads at test time, and in the repository itself. A status note here has gone stale three times and is not reinstated.
+
+**Album titles and recipient labels, specified 5 October 2026.** `albums.title` and `recipients.label` are ciphertext the relay stores and cannot read. Each is encrypted under its own key derived from `K_album`, as in the hierarchy above:
+
+```
+blob = nonce ‖ XChaCha20-Poly1305(
+                   key   = K_title(album_id)  or  K_label(recipient_id),
+                   nonce = nonce (24 random bytes, fresh per encryption),
+                   msg   = the title or label as UTF-8,
+                   aad   = empty)
+```
+
+The domain strings are 16 ASCII bytes each, and the id is its 16 raw UUID bytes, so each derivation's message is exactly 32 bytes. No message of one derivation in this section can equal a message of another: the asset, thumb, title and label messages are all 32 bytes and differ in their first 16, and the meta message is 31. An `album_id` that happens to equal an `asset_id` or a `recipient_id` therefore cannot yield a shared key.
+
+**Both derive from `K_album`, not `K_master`.** Every reader of either field holds `K_album`, and recipients never hold `K_master`: api-sketch §9.4 returns the title to recipients as well as owners, and api-sketch §11.4 returns the label to the recipient it names, as the input to brief §5's watermark. **Two derivations rather than one**, because the fields have different writers and lifetimes — a title is written once at album creation, a label once per recipient — and one key across both would couple a decision about one to a decision about the other.
+
+**The blob is one field, nonce first, and differs from the key wraps on purpose.** The wraps above and in §6 store `wrap_nonce` in its own column because both halves are fixed length and each is checked independently. Here the ciphertext length varies with the plaintext, so a second field would carry nothing a length check could use. **It is not an envelope** (§3): the envelope exists for random access to chunks, and a title has one chunk by definition.
+
+**The AAD is empty, by the rule every AAD in this document follows: an AAD binds whatever the key does not already separate.** The envelope's AAD authenticates the whole 64-byte header, which §5 requires for `version` and `plaintext_length`; that it also carries `asset_id`, already an input to `K_asset`, is redundant and harmless. The passphrase wrap binds `recipient_id` and the album wrap binds `album_id`, neither of which their keys derive from. The master wrap (§6.6.2) binds a domain string and no identifier, because at signup there is no owner id to bind. The title and label blobs bind nothing: each key derives from its own id, so a title moved to another album meets a different `K_title` and fails to authenticate. The rule is a floor, not a pattern — an AAD may bind more than the key separates, and several do.
+
+**Lengths.** A blob is `24 + plaintext length + 16` bytes. A writer MUST refuse an empty plaintext, so the smallest valid blob is **41 bytes**, and MUST reject a title or label containing an unpaired UTF-16 surrogate (§1). A reader MUST reject a blob shorter than 41 bytes before attempting decryption, and MUST reject a blob that authenticates but whose plaintext is not valid UTF-8, **as an error distinct from an authentication failure** — the first means a broken writer, the second a wrong key or tampering. **The format has no maximum.** The relay's 1024-byte ceiling is policy (`vitrina-schema.md` §3) and can move without a migration; a reader that enforced it would reject valid blobs the day it moved. Categories 18 and 19 (§9) pin both constructions.
 
 ### 2.1 Why derive per-asset keys at all
 
@@ -276,6 +306,8 @@ Because the server stores `wrapped`, anyone with database access can mount an of
 3. Apply the platform's lowercase mapping, **then replace every `U+03C2` (GREEK SMALL LETTER FINAL SIGMA) with `U+03C3` (GREEK SMALL LETTER SIGMA).**
 4. Collapse runs of characters with the Unicode **`White_Space`** property to a single `U+0020`, and trim the same. **Not** ASCII space and tab alone — `U+0085`, `U+2028` and `U+2029` are included, and a document that says only "whitespace" leaves the reference implementation's choice deciding a permanent interop question
 
+A passphrase containing an unpaired UTF-16 surrogate is rejected before step 1 (§1).
+
 Steps 2 and 3 are pinned to Unicode properties rather than to a language's standard library, because the libraries disagree and the convenient function is the wrong one in both cases.
 
 **Step 2 must use Canonical_Combining_Class, not General_Category = Mark**, and the difference is destructive rather than cosmetic. GC=M is a strict superset: Indic dependent vowel signs such as `U+093E` and `U+0903` are `Mc` or `Mn` with CCC = 0, so a GC=M rule strips them. For Latin, Greek, Cyrillic, Hebrew and Arabic the two rules agree — every mark in those scripts has CCC ≠ 0 — so the divergence is invisible until the first script where it isn't. And there it is not decoration being removed but **vowels**: stripping matras collapses distinct words into the collisions §6.3's wordlist rule exists to prevent. Note that `unicode-normalization`'s `is_combining_mark` is GC=M; the CCC table is exposed separately and is the one to use.
@@ -408,7 +440,7 @@ Domain strings are ASCII, no null terminator and no length prefix — §2's conv
 
 **The owner wrap's AAD is the domain string alone, and the reason is worth stating** because the other two wraps bind an identifier. §6.2 binds `recipient_id` and §2 binds `album_id`, and in both the client holds that id before wrapping. **An owner id is server-assigned** — at signup the client has no id to bind, since the relay assigns it in the same transaction that writes the wrapping. Brief §9.3's rule runs _every id inside an AAD is client-generated_, so by contraposition a server-assigned id is not in one; the two facts agree rather than one deriving the other. So this wrap binds nothing but its own domain string, which is enough to stop a blob being moved between the three wrap types and is all that is available. Consistency check: api-sketch §7.5's signup body correctly carries no `id`.
 
-**The password is NFC-normalised and nothing else.** Not §6.3's passphrase normalisation — that strips marks and folds case, which is correct for a system-generated passphrase transcribed by a human and wrong for a password its owner typed, where folding `Café` into `cafe` discards entropy the user chose. NFC alone fixes the composition ambiguity two keyboards can produce without weakening anything. **This is the one place in the system where a human-supplied secret is _not_ aggressively normalised, and the asymmetry is deliberate.**
+**The password is NFC-normalised and nothing else.** Not §6.3's passphrase normalisation — that strips marks and folds case, which is correct for a system-generated passphrase transcribed by a human and wrong for a password its owner typed, where folding `Café` into `cafe` discards entropy the user chose. NFC alone fixes the composition ambiguity two keyboards can produce without weakening anything. **This is the one place in the system where a human-supplied secret is _not_ aggressively normalised, and the asymmetry is deliberate.** A password containing an unpaired UTF-16 surrogate is rejected before NFC (§1).
 
 **An empty password MUST be rejected before Argon2id runs.** This is an interop rule rather than a local choice: a client that accepts `""` creates an account that a rejecting client can never open. Note the rule is narrower than §6.3's for passphrases — that one rejects _empty after normalisation_, because passphrase normalisation collapses whitespace to nothing. NFC does not, so `"   "` remains three characters and is a legal password. **Reject the empty string and nothing else.**
 
@@ -509,6 +541,8 @@ Required coverage:
 15. **Negative:** object truncated **without** adjusting the header → rejected. Distinct from category 12, which adjusts `plaintext_length` and therefore exercises the AAD. Here every present chunk authenticates correctly and only §8's length check catches it — the check found broken on 32-bit targets during exit-criterion review, which is why it needs a vector rather than an argument
 16. `K_album` under `K_master` — wrap and unwrap round trip with a fixed `album_id`, `wrap_nonce` and `K_master` (§2). Externally verifiable: the blob unwraps to `K_album`, which decrypts category 1's object, so no key is ever read. Category 7 anchors the primitive; this vector is what anchors the composition.
 17. `K_master` under the password-derived KEK — the full owner derivation and wrap (§6.6.2): password, salt and parameters → `root`, KEK and `proof`, plus the wrapped blob. Two distinct parameter sets, on category 9's reasoning. The KEK is checkable through what it opens rather than by reading it (§9.3).
+18. An album title under `K_title(album_id)` — fixed `K_album`, `album_id` (category 16's), nonce and multibyte UTF-8 plaintext → `K_title` and the expected blob (§2). Externally verifiable: the blob decrypts to the plaintext. Category 7 anchors the primitive; this vector anchors the derivation, the layout and the empty AAD.
+19. A recipient label under `K_label(recipient_id)` — fixed `K_album`, `recipient_id` (§9.1 vector 5's), nonce and multibyte UTF-8 plaintext → `K_label` and the expected blob (§2). A separate category from 18 because it pins a separate domain string under a separate identifier.
 
 Categories 6, 7 and 8 are one per §1 primitive, deliberately contiguous — every primitive gets its own external anchor, and a missing one is visible as a gap in the sequence.
 
@@ -560,9 +594,9 @@ Two limits on what category 6 proves. It uses the streaming API, which for BLAKE
 
 **A vector written to detect a specific defect must be generated after that defect is fixed, not when it is found.** This sounds too obvious to state and is exactly the trap, because discovering a bug is precisely the moment one reaches for a vector. Protocol vector 7 is the worked example: its expected KEK comes from the same implementation whose over-stripping it exists to catch. Generated at any point before that fix it would have encoded the bug as the correct answer, every implementation matching it would have been wrong identically, and the vector would have looked entirely healthy. It is sound only because the defect was found by reading the source and fixed first. A self-generated vector inherits the state of its generator at the moment of generation — which is this section's whole argument, in the one case where getting the order wrong would have been invisible.
 
-**Where no external anchor exists, an independent reimplementation is the nearest substitute.** Categories 9, 16 and 17 compose primitives this project did not invent into constructions it did — so the primitives are anchored (categories 6 to 8) and the compositions are not. Before committing such a vector, reproduce every field from this document alone, in a different language and with different libraries, and compare. Category 17 was checked this way against a reference Argon2 implementation, `hashlib`'s BLAKE2b and PyNaCl before it landed. **A check that happened once and cannot be re-run is a claim rather than a check,** which is why `scripts/check-vectors` is owed: the reproduction belongs in CI over categories 9, 16 and 17 and protocol vectors 4 and 7, not in whoever's terminal ran it.
+**Where no external anchor exists, an independent reimplementation is the nearest substitute.** Categories 9, 16, 17, 18 and 19 compose primitives this project did not invent into constructions it did — so the primitives are anchored (categories 6 to 8) and the compositions are not. Before committing such a vector, reproduce every field from this document alone, in a different language and with different libraries, and compare. Category 17 was checked this way against a reference Argon2 implementation, `hashlib`'s BLAKE2b and PyNaCl before it landed. **A check that happened once and cannot be re-run is a claim rather than a check,** which is why `scripts/check-vectors` is owed: the reproduction belongs in CI over categories 9, 16, 17, 18 and 19 and protocol vectors 4 and 7, not in whoever's terminal ran it.
 
-**Every external anchor must pass before any self-generated vector that depends on it is produced.** Categories 6, 7 and 8 gate the rest: 6 gates category 5, 7 gates categories 1–4, 10–15 and 16, 8 gates category 9. Generating the set first and checking the primitives afterwards means discovering at C.10 that most of the file needs regenerating. The rule was written about category 6 and applied three times during C.1–C.8, which is why it is stated generally here.
+**Every external anchor must pass before any self-generated vector that depends on it is produced.** Categories 6, 7 and 8 gate the rest: 6 gates categories 5, 18 and 19, 7 gates categories 1–4, 10–15, 16, 18 and 19, 8 gates category 9. Generating the set first and checking the primitives afterwards means discovering at C.10 that most of the file needs regenerating. The rule was written about category 6 and applied three times during C.1–C.8, which is why it is stated generally here.
 
 **XChaCha20-Poly1305 needs the same treatment, and it is the most consequential of the three.** Categories 1 through 4 all encrypt with it, so a construction difference makes the entire envelope vector set self-consistent and wrong. The risk is not a hidden parameter block but the construction itself: HChaCha20 derives a subkey from the key and the first 16 nonce bytes, the remaining 8 bytes are prefixed with four NUL bytes to form the ChaCha20 nonce, and the AEAD mode starts its block counter at **1** rather than 0 because block 0 produces the one-time Poly1305 key. Each of those is a place to differ, and each difference yields a working cipher whose output no other implementation reproduces.
 

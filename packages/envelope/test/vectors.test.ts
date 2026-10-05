@@ -65,6 +65,26 @@ interface OwnerWrapVector {
   wrap_nonce: string;
   wrapped: string;
 }
+interface TitleVector {
+  category: number;
+  name: string;
+  k_album: string;
+  album_id: string;
+  nonce: string;
+  plaintext: string;
+  k_title: string;
+  blob: string;
+}
+interface LabelVector {
+  category: number;
+  name: string;
+  k_album: string;
+  recipient_id: string;
+  nonce: string;
+  plaintext: string;
+  k_label: string;
+  blob: string;
+}
 interface SaltLengthVector extends Omit<WrapVector, "wrapped" | "category"> {
   vector: number;
   wrapped?: string;
@@ -99,6 +119,8 @@ interface VectorFile {
   wrap: WrapVector[];
   album_wrap: AlbumWrapVector[];
   owner_wrap: OwnerWrapVector[];
+  album_title: TitleVector[];
+  recipient_label: LabelVector[];
   protocol: {
     token: { vector: number; token_raw: string; token_base64url: string; sha256: string; expect: string };
     token_noncanonical: { vector: number; token_base64url: string; expect: string };
@@ -130,6 +152,8 @@ test("vector file targets envelope version 1", () => {
   assert.deepEqual(file.envelope_negative.map((v) => v.category), [10, 11, 12, 13, 14, 15]);
   assert.deepEqual(file.album_wrap.map((v) => v.category), [16]);
   assert.deepEqual(file.owner_wrap.map((v) => v.category), [17, 17]);
+  assert.deepEqual(file.album_title.map((v) => v.category), [18]);
+  assert.deepEqual(file.recipient_label.map((v) => v.category), [19]);
 });
 
 // Categories 1–4 — decrypt direction is byte-exact. The encrypt direction
@@ -290,6 +314,52 @@ for (const v of file.owner_wrap) {
     assert.equal(wrapped.wrapNonce.length, e.ownerWrapNonceLen());
     assert.notEqual(hex(wrapped.wrapNonce), v.wrap_nonce, "wrap_nonce is fresh (§6.6.2)");
     assertIsTheMasterKey(e.unwrapMasterKey(kek, wrapped));
+  });
+}
+
+// Categories 18 and 19 — §2's title and label blobs. Decrypt direction is
+// byte-exact; the derived keys are internal (§9.3), checked through what they
+// open. Encrypt draws its own nonce, so round trip instead. The AAD is empty,
+// so the derived key is the only binding: a one-byte id change, or the other
+// field's domain string under the same id bytes, must fail to authenticate.
+const blobCases = [
+  {
+    v: file.album_title[0]!,
+    id: file.album_title[0]!.album_id,
+    decrypt: e.decryptAlbumTitle,
+    encrypt: e.encryptAlbumTitle,
+    other: e.decryptRecipientLabel,
+  },
+  {
+    v: file.recipient_label[0]!,
+    id: file.recipient_label[0]!.recipient_id,
+    decrypt: e.decryptRecipientLabel,
+    encrypt: e.encryptRecipientLabel,
+    other: e.decryptAlbumTitle,
+  },
+];
+
+for (const { v, id, decrypt, encrypt, other } of blobCases) {
+  test(`category ${v.category}: ${v.name} — decrypts byte-exact and is bound to its id and domain`, () => {
+    const key = e.AlbumKey.fromBytes(unhex(v.k_album));
+    const blob = unhex(v.blob);
+    assert.equal(hex(blob.subarray(0, 24)), v.nonce, "nonce first (§2)");
+    assert.equal(blob.length, 24 + v.plaintext.length / 2 + 16);
+    assert.equal(hex(new TextEncoder().encode(decrypt(key, unhex(id), blob))), v.plaintext);
+
+    const otherId = unhex(id);
+    otherId[15]! ^= 0x01;
+    assert.equal(caught(() => decrypt(key, otherId, blob)).code, "AuthenticationFailed");
+    assert.equal(caught(() => other(key, unhex(id), blob)).code, "AuthenticationFailed");
+  });
+
+  test(`category ${v.category}: ${v.name} — encrypt then decrypt round-trips`, () => {
+    const key = e.AlbumKey.fromBytes(unhex(v.k_album));
+    const text = new TextDecoder("utf-8", { fatal: true }).decode(unhex(v.plaintext));
+    const blob = encrypt(key, unhex(id), text);
+    assert.equal(blob.length, unhex(v.blob).length);
+    assert.notEqual(hex(blob.subarray(0, 24)), v.nonce, "nonce is fresh (§2)");
+    assert.equal(decrypt(key, unhex(id), blob), text);
   });
 }
 
