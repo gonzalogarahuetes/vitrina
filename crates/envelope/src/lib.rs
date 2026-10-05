@@ -5,6 +5,7 @@
 
 mod aead;
 mod album_wrap;
+mod blob;
 mod chunk;
 mod envelope;
 mod header;
@@ -20,6 +21,10 @@ mod wrap;
 
 pub use album_wrap::{
     AlbumWrapError, MasterWrappedKey, unwrap_album_key_with_master, wrap_album_key_with_master,
+};
+pub use blob::{
+    BlobError, decrypt_album_title, decrypt_recipient_label, encrypt_album_title,
+    encrypt_recipient_label,
 };
 pub use envelope::{
     CHUNK_SIZE, EnvelopeError, decrypt_asset, decrypt_meta, decrypt_thumb, encrypt_asset,

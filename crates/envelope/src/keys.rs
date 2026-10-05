@@ -5,11 +5,14 @@ use chacha20poly1305::XChaCha20Poly1305;
 use zeroize::Zeroizing;
 
 use crate::owner_wrap::OwnerWrapError;
-use crate::{AssetId, WrongLength};
+use crate::{AlbumId, AssetId, RecipientId, WrongLength};
 
-const ASSET_LABEL: &[u8; 16] = b"vitrina-asset-v1";
-const THUMB_LABEL: &[u8; 16] = b"vitrina-thumb-v1";
-const META_LABEL: &[u8; 15] = b"vitrina-meta-v1";
+const TITLE_DOMAIN: &[u8; 16] = b"vitrina-title-v1";
+const LABEL_DOMAIN: &[u8; 16] = b"vitrina-label-v1";
+
+const ASSET_DOMAIN: &[u8; 16] = b"vitrina-asset-v1";
+const THUMB_DOMAIN: &[u8; 16] = b"vitrina-thumb-v1";
+const META_DOMAIN: &[u8; 15] = b"vitrina-meta-v1";
 /// keyed BLAKE2b, 32-byte key, 32-byte output, RFC 7693
 pub(crate) fn keyed_blake2b_256(key: &[u8; 32], msg: &[u8]) -> [u8; 32] {
     let mut hasher = Blake2bMac::<U32>::new_from_slice(key)
@@ -27,6 +30,8 @@ pub struct AlbumKey(Zeroizing<[u8; 32]>);
 pub struct AssetKey(Zeroizing<[u8; 32]>);
 pub struct ThumbKey(Zeroizing<[u8; 32]>);
 pub struct MetaKey(Zeroizing<[u8; 32]>);
+pub struct TitleKey(Zeroizing<[u8; 32]>);
+pub struct LabelKey(Zeroizing<[u8; 32]>);
 
 pub struct MasterKey(Zeroizing<[u8; 32]>);
 
@@ -69,19 +74,35 @@ impl AlbumKey {
         &self.0
     }
     pub(crate) fn derive_asset(&self, asset_id: &AssetId) -> AssetKey {
-        AssetKey(Zeroizing::new(self.derive(ASSET_LABEL, asset_id)))
+        AssetKey(Zeroizing::new(
+            self.derive(ASSET_DOMAIN, asset_id.as_bytes()),
+        ))
     }
     pub(crate) fn derive_thumb(&self, asset_id: &AssetId) -> ThumbKey {
-        ThumbKey(Zeroizing::new(self.derive(THUMB_LABEL, asset_id)))
+        ThumbKey(Zeroizing::new(
+            self.derive(THUMB_DOMAIN, asset_id.as_bytes()),
+        ))
     }
     pub(crate) fn derive_meta(&self, asset_id: &AssetId) -> MetaKey {
-        MetaKey(Zeroizing::new(self.derive(META_LABEL, asset_id)))
+        MetaKey(Zeroizing::new(
+            self.derive(META_DOMAIN, asset_id.as_bytes()),
+        ))
     }
-    fn derive(&self, label: &[u8], asset_id: &AssetId) -> [u8; Self::LEN] {
+    pub(crate) fn derive_title(&self, album_id: &AlbumId) -> TitleKey {
+        TitleKey(Zeroizing::new(
+            self.derive(TITLE_DOMAIN, album_id.as_bytes()),
+        ))
+    }
+    pub(crate) fn derive_label(&self, recipient_id: &RecipientId) -> LabelKey {
+        LabelKey(Zeroizing::new(
+            self.derive(LABEL_DOMAIN, recipient_id.as_bytes()),
+        ))
+    }
+    fn derive(&self, domain: &[u8], id: &[u8; 16]) -> [u8; Self::LEN] {
         let mut buf: [u8; 32] = [0u8; 32];
-        let n: usize = label.len();
-        buf[..n].copy_from_slice(label);
-        buf[n..n + 16].copy_from_slice(asset_id.as_bytes());
+        let n: usize = domain.len();
+        buf[..n].copy_from_slice(domain);
+        buf[n..n + 16].copy_from_slice(id);
         keyed_blake2b_256(self.expose_bytes(), &buf[..n + 16])
     }
     pub fn try_from_slice(bytes: &[u8]) -> Result<AlbumKey, WrongLength> {
@@ -167,6 +188,18 @@ impl LoginProof {
 
     pub(crate) fn from_bytes(bytes: Zeroizing<[u8; Self::LEN]>) -> LoginProof {
         LoginProof(bytes)
+    }
+}
+
+impl TitleKey {
+    pub(crate) fn expose_bytes(&self) -> &[u8; 32] {
+        &self.0
+    }
+}
+
+impl LabelKey {
+    pub(crate) fn expose_bytes(&self) -> &[u8; 32] {
+        &self.0
     }
 }
 
@@ -288,6 +321,86 @@ mod tests {
         assert_ne!(k_asset.expose_bytes(), other_k_asset.expose_bytes());
         assert_ne!(k_thumb.expose_bytes(), other_k_thumb.expose_bytes());
         assert_ne!(k_meta.expose_bytes(), other_k_meta.expose_bytes());
+    }
+
+    // Title and Label Derivation Tests
+    // ----------------------------------------------------
+
+    fn derive_title_and_label(album_bytes: [u8; 32], id_bytes: [u8; 16]) -> (TitleKey, LabelKey) {
+        let k_album: AlbumKey = AlbumKey::from_bytes(album_bytes);
+
+        let k_title: TitleKey = k_album.derive_title(&AlbumId::from_bytes(id_bytes));
+        let k_label: LabelKey = k_album.derive_label(&RecipientId::from_bytes(id_bytes));
+        (k_title, k_label)
+    }
+
+    /// §2 written out by hand: BLAKE2b-256(key = K_album, msg = domain ‖ id), with
+    /// the domain typed here as a literal rather than read from the constant. Pins
+    /// the domain strings and the message layout; the primitive is pinned above.
+    #[test]
+    fn title_and_label_match_section_2_construction() {
+        let (k_title, k_label) = derive_title_and_label(K_ALBUM, ASSET_ID);
+
+        let title_msg: Vec<u8> = [b"vitrina-title-v1".as_slice(), &ASSET_ID].concat();
+        let label_msg: Vec<u8> = [b"vitrina-label-v1".as_slice(), &ASSET_ID].concat();
+
+        assert_eq!(k_title.expose_bytes(), &keyed_blake2b_256(&K_ALBUM, &title_msg));
+        assert_eq!(k_label.expose_bytes(), &keyed_blake2b_256(&K_ALBUM, &label_msg));
+    }
+
+    /// The collision argument as a test: the same 16 id bytes fed to all five
+    /// derivations give five different keys, so an `album_id` that happens to equal
+    /// an `asset_id` or a `recipient_id` cannot yield a shared key.
+    #[test]
+    fn all_five_derivations_differ_for_the_same_id_bytes() {
+        let (k_asset, k_thumb, k_meta) = derive_keys_from_bytes(K_ALBUM, ASSET_ID);
+        let (k_title, k_label) = derive_title_and_label(K_ALBUM, ASSET_ID);
+
+        let keys: [(&str, &[u8; 32]); 5] = [
+            ("asset", k_asset.expose_bytes()),
+            ("thumb", k_thumb.expose_bytes()),
+            ("meta", k_meta.expose_bytes()),
+            ("title", k_title.expose_bytes()),
+            ("label", k_label.expose_bytes()),
+        ];
+
+        for (i, (name_a, a)) in keys.iter().enumerate() {
+            for (name_b, b) in &keys[i + 1..] {
+                assert_ne!(a, b, "K_{name_a} == K_{name_b}");
+            }
+        }
+    }
+
+    #[test]
+    fn title_and_label_unequal_to_album_key() {
+        let (k_title, k_label) = derive_title_and_label(K_ALBUM, ASSET_ID);
+
+        assert_ne!(k_title.expose_bytes(), &K_ALBUM);
+        assert_ne!(k_label.expose_bytes(), &K_ALBUM);
+    }
+
+    #[test]
+    fn flipping_id_derives_different_title_and_label_keys() {
+        let mut other: [u8; 16] = ASSET_ID;
+        other[0] ^= 1;
+
+        let (k_title, k_label) = derive_title_and_label(K_ALBUM, ASSET_ID);
+        let (other_k_title, other_k_label) = derive_title_and_label(K_ALBUM, other);
+
+        assert_ne!(k_title.expose_bytes(), other_k_title.expose_bytes());
+        assert_ne!(k_label.expose_bytes(), other_k_label.expose_bytes());
+    }
+
+    #[test]
+    fn flipping_k_album_derives_different_title_and_label_keys() {
+        let mut other: [u8; 32] = K_ALBUM;
+        other[0] ^= 1;
+
+        let (k_title, k_label) = derive_title_and_label(K_ALBUM, ASSET_ID);
+        let (other_k_title, other_k_label) = derive_title_and_label(other, ASSET_ID);
+
+        assert_ne!(k_title.expose_bytes(), other_k_title.expose_bytes());
+        assert_ne!(k_label.expose_bytes(), other_k_label.expose_bytes());
     }
 
     // Album Key Length Tests
