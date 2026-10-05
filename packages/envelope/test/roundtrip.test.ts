@@ -186,6 +186,75 @@ test("K_album round-trips under K_master and is bound to album_id (§2)", () => 
   assert.equal(caught(() => e.unwrapAlbumKeyWithMaster(reloaded, otherMaster, albumId)).code, "AuthenticationFailed");
 });
 
+// §2: titles and labels are blobs — nonce ‖ ciphertext ‖ tag in one field —
+// under keys derived from K_album. The AAD is empty, so the derived key is the
+// only thing binding a blob to its album or recipient.
+const TITLE = "Sofía's first birthday";
+const LABEL = "María";
+const utf8Len = (s: string) => new TextEncoder().encode(s).length;
+
+test("an album title round-trips and its blob is nonce + ciphertext + tag", () => {
+  const albumId = new Uint8Array(randomBytes(16));
+  const blob = e.encryptAlbumTitle(key, albumId, TITLE);
+  assert.ok(utf8Len(TITLE) > TITLE.length, "the fixture must be multibyte to test UTF-8");
+  assert.equal(blob.length, 24 + utf8Len(TITLE) + 16);
+  assert.equal(e.decryptAlbumTitle(key, albumId, blob), TITLE);
+});
+
+test("a recipient label round-trips", () => {
+  const recipientId = new Uint8Array(randomBytes(16));
+  const blob = e.encryptRecipientLabel(key, recipientId, LABEL);
+  assert.equal(blob.length, 24 + utf8Len(LABEL) + 16);
+  assert.equal(e.decryptRecipientLabel(key, recipientId, blob), LABEL);
+});
+
+test("a title or label is bound to its id and to K_album by the derived key", () => {
+  const id = new Uint8Array(randomBytes(16));
+  const otherId = id.slice();
+  otherId[15]! ^= 1;
+  const otherKey = e.AlbumKey.fromBytes(new Uint8Array(randomBytes(32)));
+  const title = e.encryptAlbumTitle(key, id, TITLE);
+  const label = e.encryptRecipientLabel(key, id, LABEL);
+
+  assert.equal(caught(() => e.decryptAlbumTitle(key, otherId, title)).code, "AuthenticationFailed");
+  assert.equal(caught(() => e.decryptRecipientLabel(key, otherId, label)).code, "AuthenticationFailed");
+  assert.equal(caught(() => e.decryptAlbumTitle(otherKey, id, title)).code, "AuthenticationFailed");
+  assert.equal(caught(() => e.decryptRecipientLabel(otherKey, id, label)).code, "AuthenticationFailed");
+
+  // Same 16 id bytes on both sides: only the domain string separates them.
+  assert.equal(caught(() => e.decryptAlbumTitle(key, id, label)).code, "AuthenticationFailed");
+  assert.equal(caught(() => e.decryptRecipientLabel(key, id, title)).code, "AuthenticationFailed");
+});
+
+test("title and label encryption draw a fresh nonce per call", () => {
+  const id = new Uint8Array(randomBytes(16));
+  const nonce = (b: Uint8Array) => b.subarray(0, 24);
+  assert.notDeepEqual(nonce(e.encryptAlbumTitle(key, id, TITLE)), nonce(e.encryptAlbumTitle(key, id, TITLE)));
+  assert.notDeepEqual(nonce(e.encryptRecipientLabel(key, id, LABEL)), nonce(e.encryptRecipientLabel(key, id, LABEL)));
+});
+
+// The relay's 1024 bytes is policy; neither the crate nor the binding has a ceiling.
+test("a title above the relay's ceiling still round-trips through the binding", () => {
+  const albumId = new Uint8Array(randomBytes(16));
+  const long = "a".repeat(2000);
+  const blob = e.encryptAlbumTitle(key, albumId, long);
+  assert.ok(blob.length > 1024);
+  assert.equal(e.decryptAlbumTitle(key, albumId, blob), long);
+});
+
+test("an empty title or label is rejected, not encrypted", () => {
+  const id = new Uint8Array(randomBytes(16));
+  assert.equal(caught(() => e.encryptAlbumTitle(key, id, "")).code, "EmptyPlaintext");
+  assert.equal(caught(() => e.encryptRecipientLabel(key, id, "")).code, "EmptyPlaintext");
+});
+
+// §2.2: K_title and K_label are created and dropped inside the module, like
+// the per-asset keys, so there is no handle to test for opacity — only the
+// absence of one.
+test("no title or label key type crosses the boundary", () => {
+  assert.deepEqual(Object.keys(e).filter((n) => /title.*key|label.*key/i.test(n)), []);
+});
+
 test("the exported lengths are §6.2's, §3.1's, §2's and §6.6.2's", () => {
   assert.equal(e.ownerWrappedLen(), 48);
   assert.equal(e.ownerWrapNonceLen(), 24);

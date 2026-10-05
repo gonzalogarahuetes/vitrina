@@ -111,3 +111,39 @@ test("no thrown value carries key material, plaintext or the password (§2.2, §
     for (const s of secrets) assert.doesNotMatch(dump.toLowerCase(), new RegExp(s));
   }
 });
+
+// §2: the blob floor is structural — nonce (24) + one byte + tag (16). Below
+// it is BlobTooShort; at it, garbage must reach authentication. The pair is
+// what stops a floor of 42 passing every TooShort assertion.
+test("title blobs below 41 bytes are BlobTooShort; a 41-byte garbage blob is AuthenticationFailed", () => {
+  const albumId = Uint8Array.from({ length: 16 }, (_, i) => 0x40 + i);
+  for (const got of [0, 24, 40]) {
+    const err = caught(() => e.decryptAlbumTitle(key, albumId, new Uint8Array(got)));
+    assert.equal(err.code, "BlobTooShort", `length ${got}`);
+    assert.equal(err.got, got);
+    assert.equal(err.min, 41);
+  }
+  assert.equal(caught(() => e.decryptAlbumTitle(key, albumId, new Uint8Array(41))).code, "AuthenticationFailed");
+  assert.equal(caught(() => e.decryptRecipientLabel(key, albumId, new Uint8Array(40))).code, "BlobTooShort");
+  assert.equal(caught(() => e.decryptRecipientLabel(key, albumId, new Uint8Array(41))).code, "AuthenticationFailed");
+});
+
+test("a failed title or label decrypt carries neither the plaintext nor K_album (§2.2)", () => {
+  const TITLE = "Sofía's first birthday";
+  const LABEL = "María";
+  const id = Uint8Array.from({ length: 16 }, (_, i) => 0x50 + i);
+  const title = e.encryptAlbumTitle(key, id, TITLE);
+  const label = e.encryptRecipientLabel(key, id, LABEL);
+  const tampered = (b: Uint8Array) => mutated((o) => (o[o.length - 1]! ^= 1), b);
+  const secrets = [hex(ALBUM_KEY), TITLE.toLowerCase(), LABEL.toLowerCase(), hex(Buffer.from(TITLE)), hex(Buffer.from(LABEL))];
+
+  for (const f of [
+    () => e.decryptAlbumTitle(key, id, tampered(title)),
+    () => e.decryptRecipientLabel(key, id, tampered(label)),
+    () => e.decryptAlbumTitle(key, id, title.subarray(0, 40)),
+  ]) {
+    const err = caught(f);
+    const dump = JSON.stringify(Object.fromEntries(Object.getOwnPropertyNames(err).map((k) => [k, (err as unknown as Record<string, unknown>)[k]])));
+    for (const s of secrets) assert.doesNotMatch(dump.toLowerCase(), new RegExp(s));
+  }
+});

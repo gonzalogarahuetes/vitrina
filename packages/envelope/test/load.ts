@@ -32,6 +32,8 @@ export interface EnvelopeErrorShape {
   reason?: string;
   expected?: number;
   got?: number;
+  /** BlobTooShort's floor: a minimum, so not `expected`. */
+  min?: number;
 }
 
 export function isEnvelopeError(e: unknown): e is Error & EnvelopeErrorShape {

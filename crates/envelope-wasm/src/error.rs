@@ -2,12 +2,12 @@
 //! `EnvelopeError` with a `code` string and, where useful, structured fields.
 //! Messages carry lengths, offsets and parameter names — never key material (§2.2).
 
-use js_sys::{Error, Reflect};
+use js_sys::{Error, JsString, Reflect};
 use vitrina_envelope::{
-    AlbumWrapError, EnvelopeError, HeaderError, InvalidParams, LayoutError, OwnerWrapError,
+    AlbumWrapError, BlobError, EnvelopeError, HeaderError, InvalidParams, LayoutError, OwnerWrapError,
     WrapError, WrongLength,
 };
-use wasm_bindgen::JsValue;
+use wasm_bindgen::{JsCast, JsValue};
 
 pub(crate) struct Failure {
     code: &'static str,
@@ -54,6 +54,25 @@ pub(crate) fn wrong_length(param: &'static str, e: WrongLength) -> Failure {
     .with("param", param)
     .with("expected", e.expected as f64)
     .with("got", e.got as f64)
+}
+
+/// Checks a string while it is still UTF-16 (encryption spec §1). A `&str`
+/// parameter would let wasm-bindgen's UTF-8 conversion repair an unpaired
+/// surrogate to U+FFFD before Rust ever saw it; other platforms repair
+/// differently, so the repair is rejected rather than allowed to happen.
+/// Messages name the parameter, never the value.
+pub(crate) fn string_param(value: &JsValue, param: &'static str) -> Result<String, Failure> {
+    let s: &JsString = value.dyn_ref::<JsString>().ok_or_else(|| {
+        Failure::new("NotString", format!("{param} must be a string")).with("param", param)
+    })?;
+    if !s.is_valid_utf16() {
+        return Err(Failure::new(
+            "UnpairedSurrogate",
+            format!("{param} contains an unpaired UTF-16 surrogate"),
+        )
+        .with("param", param));
+    }
+    Ok(String::from(s))
 }
 
 /// Rejects everything ToInt32 would silently reshape: non-numbers, fractions,
@@ -216,6 +235,33 @@ impl From<AlbumWrapError> for Failure {
                 "AuthenticationFailed",
                 "unwrap failed: authentication failed",
             ),
+        }
+    }
+}
+
+/// Title and label blobs (§2). `BlobTooShort` is the structural floor, not the
+/// relay's ceiling, and is distinct from `AuthenticationFailed`; `InvalidUtf8`
+/// means the blob authenticated, so the writer was broken, not the key.
+impl From<BlobError> for Failure {
+    fn from(e: BlobError) -> Failure {
+        match e {
+            BlobError::AuthenticationFailed => {
+                Failure::new("AuthenticationFailed", "authentication failed")
+            }
+            BlobError::TooShort { got, min } => Failure::new(
+                "BlobTooShort",
+                format!("blob too short: at least {min} bytes, got {got}"),
+            )
+            .with("min", min as f64)
+            .with("got", got as f64),
+            BlobError::EmptyPlaintext => Failure::new("EmptyPlaintext", "plaintext is empty"),
+            BlobError::InvalidUtf8 => Failure::new(
+                "InvalidUtf8",
+                "blob authenticated but its contents are not valid UTF-8",
+            ),
+            BlobError::RandomnessUnavailable => {
+                Failure::new("RandomnessUnavailable", "no CSPRNG available")
+            }
         }
     }
 }

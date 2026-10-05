@@ -4,7 +4,7 @@
 
 mod error;
 
-use error::{Failure, u32_param, wrong_length};
+use error::{Failure, string_param, u32_param, wrong_length};
 use vitrina_envelope as envelope;
 use wasm_bindgen::prelude::*;
 use zeroize::Zeroizing;
@@ -330,6 +330,67 @@ pub fn unwrap_album_key_with_master(
     envelope::unwrap_album_key_with_master(&wrapped.0, &master.0, &self::album_id(album_id)?)
         .map(AlbumKey)
         .map_err(|e| Failure::from(e).into())
+}
+
+// Album titles and recipient labels (§2). Both are short blobs under keys
+// derived from `K_album`; the derived keys never cross the boundary, so these
+// four functions are the whole surface. The relay's 1024-byte ceiling is
+// policy and lives at the relay, not here.
+
+fn blob_result<T>(r: Result<T, envelope::BlobError>) -> Result<T, JsValue> {
+    r.map_err(|e| Failure::from(e).into())
+}
+
+#[wasm_bindgen(js_name = encryptAlbumTitle)]
+pub fn encrypt_album_title(
+    album: &AlbumKey,
+    #[wasm_bindgen(js_name = albumId)] album_id: &[u8],
+    #[wasm_bindgen(unchecked_param_type = "string")] title: JsValue,
+) -> Result<Vec<u8>, JsValue> {
+    let album_id = self::album_id(album_id)?;
+    let title: String = string_param(&title, "title")?;
+    blob_result(envelope::encrypt_album_title(&album.0, &album_id, &title))
+}
+
+#[wasm_bindgen(js_name = decryptAlbumTitle)]
+pub fn decrypt_album_title(
+    album: &AlbumKey,
+    #[wasm_bindgen(js_name = albumId)] album_id: &[u8],
+    blob: &[u8],
+) -> Result<String, JsValue> {
+    blob_result(envelope::decrypt_album_title(
+        &album.0,
+        &self::album_id(album_id)?,
+        blob,
+    ))
+}
+
+#[wasm_bindgen(js_name = encryptRecipientLabel)]
+pub fn encrypt_recipient_label(
+    album: &AlbumKey,
+    #[wasm_bindgen(js_name = recipientId)] recipient_id: &[u8],
+    #[wasm_bindgen(unchecked_param_type = "string")] label: JsValue,
+) -> Result<Vec<u8>, JsValue> {
+    let recipient_id = self::recipient_id(recipient_id)?;
+    let label: String = string_param(&label, "label")?;
+    blob_result(envelope::encrypt_recipient_label(
+        &album.0,
+        &recipient_id,
+        &label,
+    ))
+}
+
+#[wasm_bindgen(js_name = decryptRecipientLabel)]
+pub fn decrypt_recipient_label(
+    album: &AlbumKey,
+    #[wasm_bindgen(js_name = recipientId)] recipient_id: &[u8],
+    blob: &[u8],
+) -> Result<String, JsValue> {
+    blob_result(envelope::decrypt_recipient_label(
+        &album.0,
+        &self::recipient_id(recipient_id)?,
+        blob,
+    ))
 }
 
 /// The owner KEK (§6.6.2) as an opaque handle. It outlives one network round
