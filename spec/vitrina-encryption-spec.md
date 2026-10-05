@@ -353,7 +353,7 @@ Neither mode dominates. Direct mode remains the default because database theft i
 
 ### 6.6 Owner key wrapping
 
-**The shape was decided on 20 August 2026 (brief §11) and the derivation on 15 September 2026 — §6.6.2 gives the formulas, the domain strings, the lengths and the wrap's AAD. Its conformance vectors are still owed per §9.1 and are required before Phase 1.**
+**The shape was decided on 20 August 2026 (brief §11) and the derivation on 15 September 2026 — §6.6.2 gives the formulas, the domain strings, the lengths and the wrap's AAD.**
 
 An owner holds `K_master`, 32 random bytes, generated client-side at signup. Every `K_album` they own is wrapped under it and stored server-side. `K_master` itself is wrapped once per credential and stored in `owner_keys` — one row for the password today, one for a recovery key in Phase 2, potentially one per device later.
 
@@ -451,8 +451,6 @@ Domain strings are ASCII, no null terminator and no length prefix — §2's conv
 _An earlier revision of this paragraph claimed the pepper made a stolen database uncrackable regardless, and that a weak password was therefore a live-compromise risk rather than an at-rest one. Both halves were wrong, and they contradicted §6.6's own second constraint three subsections earlier. Corrected 15 September 2026._
 
 A minimum length is still a product decision belonging to the client and the API rather than to this format — but it is one with a consequence, not a nicety.
-
-**Conformance vectors are required before Phase 1**, per §9.1: a password, a salt, parameters, and the expected `root`, KEK and proof — plus the wrapped blob, so the KEK is externally checkable through what it opens (§9.3). This is the vector set §6.6 has flagged as owed since the account model closed.
 
 The relay receives:
 
