@@ -48,6 +48,10 @@ import { S3Client } from "@aws-sdk/client-s3";
 import { uploadMediaObject } from "./application/use-cases/upload-media-object.js";
 import { findAlbumById } from "./application/use-cases/find-album-by-id.js";
 import { getAlbumMetadata } from "./application/use-cases/get-album-metadata.js";
+import { logout } from "./application/use-cases/logout.js";
+import { logoutAll } from "./application/use-cases/logout-all.js";
+import { createRecipient } from "./application/use-cases/create-recipient.js";
+import { revokeRecipient } from "./application/use-cases/revoke-recipient.js";
 
 /**
  * The v1 Argon2id parameters, declared in `@vitrina/shared` because the client
@@ -128,6 +132,8 @@ export function buildUseCases(
       mintSession,
       dummyAuthHash: options.dummyAuthHash,
     }),
+    logout: logout({ owners, tokenHasher }),
+    logoutAll: logoutAll({ owners }),
     ownerKey: ownerKey({ owners }),
     authenticateOwner: authenticateOwner({ owners, tokenHasher, clock }),
     authenticateRecipient: authenticateRecipient({ recipients, tokenHasher }),
@@ -138,6 +144,8 @@ export function buildUseCases(
     uploadMediaObject: uploadMediaObject({ media, objectStore }),
     findAlbumById: findAlbumById({ albums, media }),
     getAlbumMetadata: getAlbumMetadata({ albums, media }),
+    createRecipient: createRecipient({ recipients, albums }),
+    revokeRecipient: revokeRecipient({ recipients }),
   };
 }
 

@@ -17,38 +17,37 @@ import type {
   OwnerPasswordKey,
 } from "../ports/owner-repository.js";
 import type { AuthenticateRecipientInput } from "./authenticate-recipient.js";
-import type { RecipientGrant } from "../ports/recipient-repository.js";
-import type { ListAlbumsInput } from "./list-albums.js";
 import type {
-  AlbumRow,
-  CreatedAlbum,
-  OwnerAlbum,
-} from "../ports/album-repository.js";
+  CreatedRecipient,
+  RecipientGrant,
+} from "../ports/recipient-repository.js";
+import type { ListAlbumsInput } from "./list-albums.js";
+import type { CreatedAlbum, OwnerAlbum } from "../ports/album-repository.js";
 import type { CreateAlbumInput } from "./create-album.js";
 import type { CreateMediaInput } from "./create-media.js";
-import type {
-  CreatedMedia,
-  MediaRow,
-} from "../ports/media-repository.js";
+import type { CreatedMedia, MediaRow } from "../ports/media-repository.js";
 import type { FindMediaByIdMediaInput } from "./find-media-by-id.js";
 import type {
   UploadMediaObjectInput,
   UploadOutcome,
 } from "./upload-media-object.js";
-import type {
-  AlbumDetails,
-  FindAlbumByIdInput,
-} from "./find-album-by-id.js";
+import type { AlbumDetails, FindAlbumByIdInput } from "./find-album-by-id.js";
 import type {
   AlbumMetadata,
   GetAlbumMetadataInput,
 } from "./get-album-metadata.js";
+import type { CreateRecipientInput } from "./create-recipient.js";
+import type { LogoutInput } from "./logout.js";
+import type { LogoutAllInput } from "./logout-all.js";
+import type { RevokeRecipientInput } from "./revoke-recipient.js";
 
 export type UseCases = {
   // PR 2b — the owner credential lifecycle (api-sketch §7.5, §8.3).
   readonly signup: (input: SignupInput) => Promise<SignupResult>;
   readonly loginParams: (input: LoginParamsInput) => Promise<OwnerKdfRow>;
   readonly login: (input: LoginInput) => Promise<MintedSession>;
+  readonly logout: (input: LogoutInput) => Promise<void>;
+  readonly logoutAll: (input: LogoutAllInput) => Promise<void>;
   readonly ownerKey: (input: OwnerKeyInput) => Promise<OwnerPasswordKey>;
   // PR 3 - the album lifecycle for §9.2
   readonly listAlbums: (
@@ -57,9 +56,7 @@ export type UseCases = {
   readonly createAlbum: (input: CreateAlbumInput) => Promise<CreatedAlbum>;
   readonly createMedia: (input: CreateMediaInput) => Promise<CreatedMedia>;
   readonly findMediaById: (input: FindMediaByIdMediaInput) => Promise<MediaRow>;
-  readonly findAlbumById: (
-    input: FindAlbumByIdInput,
-  ) => Promise<AlbumDetails>;
+  readonly findAlbumById: (input: FindAlbumByIdInput) => Promise<AlbumDetails>;
   readonly getAlbumMetadata: (
     input: GetAlbumMetadataInput,
   ) => Promise<AlbumMetadata>;
@@ -78,4 +75,8 @@ export type UseCases = {
   readonly authenticateRecipient: (
     input: AuthenticateRecipientInput,
   ) => Promise<RecipientGrant | null>;
+  readonly createRecipient: (
+    input: CreateRecipientInput,
+  ) => Promise<CreatedRecipient>;
+  readonly revokeRecipient: (input: RevokeRecipientInput) => Promise<Date>;
 };

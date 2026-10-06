@@ -8,7 +8,7 @@
 import type { FastifyInstance } from "fastify";
 import type { UseCases } from "../../../../application/use-cases/index.js";
 import { makeRequireOwner } from "../auth/owner.js";
-import { encodeBase64url } from "../base64url.js";
+import { decodeBase64url, encodeBase64url } from "../base64url.js";
 import { decodeOr400 } from "../decode-field.js";
 import { ApiError } from "../error-envelope.js";
 import { makeIpRateLimit } from "../rate-limit.js";
@@ -16,6 +16,8 @@ import { rfc3339 } from "../rfc3339.js";
 import {
   loginParamsSchema,
   loginSchema,
+  logoutAllSchema,
+  logoutSchema,
   ownerKeySchema,
   signupSchema,
 } from "../schemas/credentials.js";
@@ -132,6 +134,40 @@ export function credentialRoutes(deps: CredentialRoutesDeps) {
           wrapped_master: encodeBase64url(key.wrappedMaster),
           wrap_nonce: encodeBase64url(key.wrapNonce),
         });
+      },
+    );
+
+    app.post(
+      "/logout",
+      { schema: logoutSchema, preHandler: requireOwner },
+      async (request, reply) => {
+        const caller = request.caller;
+        if (caller?.kind !== "owner") throw new ApiError("UNAUTHENTICATED");
+
+        const authorization = request.headers.authorization;
+        const presented = authorization!.slice("Bearer ".length);
+
+        const token = decodeBase64url(presented, 32);
+
+        await deps.useCases.logout({
+          ownerId: caller.ownerId,
+          token,
+        });
+        return reply.code(204).send();
+      },
+    );
+
+    app.post(
+      "/logout/all",
+      { schema: logoutAllSchema, preHandler: requireOwner },
+      async (request, reply) => {
+        const caller = request.caller;
+        if (caller?.kind !== "owner") throw new ApiError("UNAUTHENTICATED");
+
+        await deps.useCases.logoutAll({
+          ownerId: caller.ownerId,
+        });
+        return reply.code(204).send();
       },
     );
   };

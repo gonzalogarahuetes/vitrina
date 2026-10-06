@@ -29,7 +29,6 @@ const kdfParameters = {
   kdf_parallelism: { type: "integer", minimum: 1 },
 } as const;
 
-
 export const signupSchema = {
   body: {
     type: "object",
@@ -83,7 +82,12 @@ export const loginParamsSchema = {
     200: {
       type: "object",
       properties: { kdf_salt: b64url(22), ...kdfParameters },
-      required: ["kdf_salt", "kdf_memory_kib", "kdf_iterations", "kdf_parallelism"],
+      required: [
+        "kdf_salt",
+        "kdf_memory_kib",
+        "kdf_iterations",
+        "kdf_parallelism",
+      ],
       additionalProperties: false,
     },
   },
@@ -129,3 +133,16 @@ export const ownerKeySchema = {
     },
   },
 } as const;
+
+export const logoutSchema = {
+  response: {
+    204: {
+      type: "object",
+      properties: {},
+      required: [],
+      additionalProperties: false,
+    },
+  },
+} as const;
+
+export const logoutAllSchema = { response: { 204: { type: "null" } } } as const;

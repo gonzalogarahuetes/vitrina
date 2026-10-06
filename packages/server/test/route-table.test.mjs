@@ -19,10 +19,17 @@ import * as albums from "../dist/adapters/driving/http/schemas/albums.js";
 import * as credentials from "../dist/adapters/driving/http/schemas/credentials.js";
 import * as health from "../dist/adapters/driving/http/schemas/health.js";
 import * as media from "../dist/adapters/driving/http/schemas/media.js";
+import * as recipients from "../dist/adapters/driving/http/schemas/recipients.js";
 
 // fragments.js is deliberately absent: it exports pieces, not route schemas,
 // and adding it would count helpers towards the coverage guard below.
-const SCHEMAS = Object.entries({ ...albums, ...credentials, ...health, ...media });
+const SCHEMAS = Object.entries({
+  ...albums,
+  ...credentials,
+  ...health,
+  ...media,
+  ...recipients,
+});
 
 /**
  * Names that may never appear as a property, inbound or outbound. `wrapped_`
@@ -134,4 +141,51 @@ describe("the route table", () => {
     assert.ok(names.includes("wrap_nonce"));
     assert.ok(names.includes("proof"));
   });
+
+  it("permits create-recipient's wrapping — §4.1's second audit subject", () => {
+    /*
+     * §7.7: this route "accepts wrap material and no key material". The walk
+     * above proves the second half; this proves the first, so the forbidden
+     * list cannot grow to cover `wrapped` or `kdf_salt` without a test going
+     * red. Checked in the BODY's top-level properties, because Fastify's
+     * removeAdditional strips anything declared only inside `then`/`else`
+     * before the handler sees it.
+     */
+    const declared = Object.keys(recipients.createRecipientSchema.body.properties);
+    for (const field of [
+      "wrapped",
+      "wrap_nonce",
+      "kdf_salt",
+      "kdf_memory_kib",
+      "kdf_iterations",
+      "kdf_parallelism",
+      "token_hash",
+      "label",
+    ]) {
+      assert.ok(declared.includes(field), `createRecipientSchema does not declare ${field}`);
+    }
+  });
+
+  it("takes the album from the path and never from the body (§7.8's table)", () => {
+    // At create there is no recipient row, so the album must be an input —
+    // and §7.3 resolves scope from the path, before the body is parsed.
+    const schema = recipients.createRecipientSchema;
+    assert.ok(Object.keys(schema.params.properties).includes("album_id"));
+    assert.ok(!propertyNames(schema.body).has("album_id"));
+  });
+
+  for (const [name, schema] of [
+    ["logoutSchema", credentials.logoutSchema],
+    ["logoutAllSchema", credentials.logoutAllSchema],
+    ["revokeRecipientSchema", recipients.revokeRecipientSchema],
+  ]) {
+    it(`${name} declares no body (§7.5, §7.8)`, () => {
+      /*
+       * The bearer token identifies the session; the path identifies the
+       * recipient. A body would be a second, disagreeable source — and on
+       * /logout, §7.5's rejected `{token}` shape, a plaintext token in a body.
+       */
+      assert.equal(schema.body, undefined, `${name} declares a request body`);
+    });
+  }
 });
