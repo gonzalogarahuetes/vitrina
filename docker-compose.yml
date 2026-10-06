@@ -11,11 +11,7 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test:
-        [
-          "CMD-SHELL",
-          'out=$$(wget -q -S -O /dev/null http://127.0.0.1:8333/ 2>&1); echo "$$out" | grep -q ''HTTP/1'' || { echo "$$out"; exit 1; }',
-        ]
+      test: ["CMD-SHELL", "pg_isready -U admin -d vitrina"]
       interval: 2s
       timeout: 3s
       retries: 30
@@ -41,11 +37,23 @@ services:
     # Any HTTP answer, not a successful one: ListBuckets needs credentials and
     # replies 403, which `wget --spider` reads as a failure. What is being
     # tested is that the S3 gateway is serving, which 403 proves.
+    #
+    # 127.0.0.1, never `localhost`. On the GitHub runner `localhost` inside
+    # this container can resolve to ::1, where the gateway is not listening;
+    # Docker Desktop has no IPv6, so the same probe passed locally and failed
+    # in CI on every cold start. The gateway was serving ~3 s after start in
+    # each failed run — start_period was never the fix, and is kept only as
+    # slack for a slow runner.
+    #
+    # On failure the probe prints wget's own output, which lands in the
+    # container's health log (`docker inspect … .State.Health`, dumped by CI's
+    # "Dump stack logs" step). The earlier probe piped everything into
+    # `grep -q` and so reported every failure as an empty string.
     healthcheck:
       test:
         [
           "CMD-SHELL",
-          "wget -q -S -O /dev/null http://localhost:8333/ 2>&1 | grep -q 'HTTP/1'",
+          'out=$$(wget -q -S -O /dev/null http://127.0.0.1:8333/ 2>&1); echo "$$out" | grep -q ''HTTP/1'' || { echo "$$out"; exit 1; }',
         ]
       interval: 2s
       timeout: 3s
