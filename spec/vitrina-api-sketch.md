@@ -1929,6 +1929,14 @@ of this section guaranteed _length_ for all four and canonical form for
 `token_hash` alone, which left three fields with a weaker guarantee for no stated
 reason.
 
+**`label` is the fifth, and the first bounded by a range rather than an exact
+length** — 41–1024 bytes since `003`. The canonical-form rules are identical:
+alphabet, no padding, the re-encode check. Only the length check differs: a
+character range on the schema, and a byte range in the decoder, which is the
+check that means anything — a character bound alone does not pin a byte bound.
+Its spare bits vary with its length, so no single row in the table below
+describes it; that is the uniform rule's argument at its strongest.
+
 **One field is worse than `token_hash`, which is the argument for making the rule
 uniform rather than per-field.** Schema §6 derives the re-encode check from
 base64url's spare trailing bits, and those depend on whether the byte length
@@ -1945,7 +1953,7 @@ So the field carrying the _most_ non-canonical spellings is `kdf_salt`, not
 `token_hash` — sixteen strings that decode to one salt — while `wrapped` and
 `wrap_nonce` have none at all, their lengths being multiples of three. Deciding
 this field by field means getting that ordering right and re-deriving it whenever a
-length changes. One decoder applied to all four is cheaper than the analysis, and
+length changes. One decoder applied to all five is cheaper than the analysis, and
 it is the same argument schema §6 makes for hashing `owner_tokens` by the recipient
 rule: one rule for both is cheaper than two.
 
@@ -1977,7 +1985,8 @@ must run.
 read without being added to `exposedHeaders` is a cost with no buyer.
 
 **Errors:** `400 VALIDATION_FAILED` · `401 UNAUTHENTICATED` · `404 NOT_FOUND`
-(album absent or not the caller's) · `409 CONFLICT` · `413 PAYLOAD_TOO_LARGE`.
+(album absent or not the caller's) · `409 CONFLICT` · `413 PAYLOAD_TOO_LARGE` ·
+`415 UNSUPPORTED_MEDIA_TYPE`.
 
 **`409 CONFLICT` carries no `details`, deliberately**, so it does not say whether
 `id` or `token_hash` collided. `id` colliding is the client retrying a create whose
@@ -2053,7 +2062,7 @@ immediate — the UI may say so without hedging.
 
 **Errors:** `401 UNAUTHENTICATED` · `404 NOT_FOUND`.
 
-### 7.9 The seven routes, in one table
+### 7.9 The owner-auth routes, in one table
 
 **Five rows became seven, 21 August 2026** — `/signup` and `/login/params`, per
 §7.5. `/login`'s body is no longer a gap.
@@ -2065,7 +2074,7 @@ immediate — the UI may say so without hedging.
 | `POST /v1/login`                            | none   | address as typed · proof (§7.5)                                                                                                | `200` `{token, expires_at}`, `no-store`                                   | 400 · 401 `INVALID_CREDENTIALS` · 413 · 415 · 429 |
 | `POST /v1/logout`                           | owner  | none                                                                                                                           | `204`                                                                     | 401                                               |
 | `POST /v1/logout/all`                       | owner  | none                                                                                                                           | `204`                                                                     | 401                                               |
-| `POST /v1/albums/{album_id}/recipients`     | owner  | §7.7                                                                                                                           | `201` `{id, created_at}`                                                  | 400 · 401 · 404 · 409 · 413                       |
+| `POST /v1/albums/{album_id}/recipients`     | owner  | §7.7                                                                                                                           | `201` `{id, created_at}`                                                  | 400 · 401 · 404 · 409 · 413 · 415                 |
 | `POST /v1/recipients/{recipient_id}/revoke` | owner  | none                                                                                                                           | `200` `{revoked_at}`                                                      | 401 · 404                                         |
 | `GET /v1/owner/key` _(PR 2b, §8.3)_         | owner  | none                                                                                                                           | `200` `{kdf_salt, params, wrapped_master, wrap_nonce}`, `no-store`        | 401                                               |
 
@@ -2107,11 +2116,10 @@ the route's only purpose.
   this list either**: §6.6.1 settled it on 21 August 2026 as `HMAC(pepper, proof)`,
   which withdrew the second parameter set and voided §7.6's memory-exhaustion
   argument — rewritten there, not carried forward.
-- **Whether `recipients.label` is encrypted** — §5.3. **No longer described as
-  coupled to §5.1**, which is closed and closed in the direction that dissolves
-  the coupling; it is simply undecided. §7.7 accepts the field as plaintext today
-  and the field's _shape_ is what would change, not the route's. Deferring costs a
-  client-side lazy migration later, per §5.3.
+- ~~**Whether `recipients.label` is encrypted**~~ — **decided, not deferred**:
+  ciphertext under `K_label(recipient_id)` since `003` (§5.3). §7.7 accepts it as
+  base64url, 41–1024 bytes. This bullet said "§7.7 accepts the field as plaintext
+  today" until the route was built.
 - **Whether an owner ever authenticates as a recipient of someone else's album**
   — brief §11's "recipients will become owners". The tagged union in §7.1 is chosen
   so that this is additive: a nullable FK from `recipients` to `owners` changes no
