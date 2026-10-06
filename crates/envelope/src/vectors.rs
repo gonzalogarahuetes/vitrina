@@ -4,6 +4,7 @@
 
 use crate::aead::aead_encrypt;
 use crate::album_wrap::{album_wrap_aad, wrap_with_nonce};
+use crate::blob::encrypt_cipher_with_nonce;
 use crate::chunk::decrypt_chunk;
 use crate::envelope::encrypt_with_header;
 use crate::header::{Header, HeaderError};
@@ -16,8 +17,9 @@ use crate::test_fixtures::{
 use crate::wrap::{derive_kek, normalize_passphrase, wrap_aad, wrap_with_salt_and_nonce};
 use crate::{
     AlbumId, AlbumKey, AssetId, CHUNK_SIZE, EnvelopeError, MasterKey, MasterWrappedKey,
-    RecipientId, Salt, WrapError, WrapParams, WrappedKey, WrappedMaster, decrypt_asset,
-    derive_owner_credential, unwrap_album_key, unwrap_album_key_with_master, unwrap_master_key,
+    RecipientId, Salt, WrapError, WrapParams, WrappedKey, WrappedMaster, decrypt_album_title,
+    decrypt_asset, decrypt_recipient_label, derive_owner_credential, unwrap_album_key,
+    unwrap_album_key_with_master, unwrap_master_key,
 };
 use argon2::{Algorithm, Argon2, AssociatedData, ParamsBuilder, Version};
 use base64::Engine;
@@ -93,6 +95,8 @@ struct VectorFile {
     wrap: Vec<WrapVector>,
     album_wrap: Vec<AlbumWrapVector>,
     owner_wrap: Vec<OwnerWrapVector>,
+    album_title: Vec<TitleVector>,
+    recipient_label: Vec<LabelVector>,
     protocol: Protocol,
 }
 
@@ -180,6 +184,36 @@ struct OwnerWrapVector {
     proof: String,
     wrap_nonce: String,
     wrapped: String,
+}
+
+/// §9 category 18: an album title under `K_title(album_id)` (§2). `blob` is
+/// nonce ‖ ciphertext ‖ tag in one field; `plaintext` is hex so its bytes are
+/// unambiguous (NFC vs NFD). `k_title` is the known answer read from inside;
+/// a consumer checks `blob` by decrypting it (§9.3). `album_id` is category 16's.
+#[derive(Serialize, Deserialize)]
+struct TitleVector {
+    category: u8,
+    name: String,
+    k_album: String,
+    album_id: String,
+    nonce: String,
+    plaintext: String,
+    k_title: String,
+    blob: String,
+}
+
+/// §9 category 19: category 18's construction for a recipient label under
+/// `K_label(recipient_id)`. `recipient_id` is §9.1 vector 5's.
+#[derive(Serialize, Deserialize)]
+struct LabelVector {
+    category: u8,
+    name: String,
+    k_album: String,
+    recipient_id: String,
+    nonce: String,
+    plaintext: String,
+    k_label: String,
+    blob: String,
 }
 
 /// §9.1's protocol vectors, keyed by name in §9.1's order. Every field is
@@ -509,6 +543,62 @@ fn album_wrap_vectors() -> Vec<AlbumWrapVector> {
         album_id: hex(&ALBUM_ID),
         wrap_nonce: hex(&ALBUM_WRAP_NONCE),
         wrapped: hex(&wrapped),
+    }]
+}
+
+// Title and label fixtures (§2). Each blob takes its own nonce, distinct from
+// every other nonce in the file; the plaintexts are multibyte UTF-8, NFC,
+// written as escapes so an editor cannot re-normalise them.
+// ---------------------------------------------------------------------------
+
+const TITLE_NONCE: [u8; 24] = [
+    0x59, 0x7a, 0x45, 0x22, 0xc8, 0xd1, 0xf3, 0xc0, 0x89, 0x1a, 0x4e, 0x6f, 0x0e, 0xba, 0xbb, 0x7a,
+    0x6c, 0x79, 0x5e, 0x42, 0x91, 0x18, 0x3e, 0xef,
+];
+const LABEL_NONCE: [u8; 24] = [
+    0x59, 0x91, 0xaa, 0xb1, 0x1c, 0x40, 0x76, 0x01, 0x7c, 0x53, 0x78, 0x49, 0x5e, 0x95, 0x81, 0x24,
+    0x75, 0x2c, 0xcf, 0x5f, 0x4a, 0xb0, 0x1a, 0x6b,
+];
+const TITLE: &str = "Sof\u{ed}a's first birthday";
+const LABEL: &str = "Mar\u{ed}a";
+
+fn album_title_vectors() -> Vec<TitleVector> {
+    let k_title = album_key().derive_title(&AlbumId::from_bytes(ALBUM_ID));
+    let blob: Vec<u8> = encrypt_cipher_with_nonce(
+        &cipher_for(k_title.expose_bytes()),
+        &TITLE_NONCE,
+        TITLE.as_bytes(),
+    )
+    .unwrap();
+    vec![TitleVector {
+        category: 18,
+        name: "album title under K_title(album_id) (§2)".to_string(),
+        k_album: hex(&K_ALBUM),
+        album_id: hex(&ALBUM_ID),
+        nonce: hex(&TITLE_NONCE),
+        plaintext: hex(TITLE.as_bytes()),
+        k_title: hex(k_title.expose_bytes()),
+        blob: hex(&blob),
+    }]
+}
+
+fn recipient_label_vectors() -> Vec<LabelVector> {
+    let k_label = album_key().derive_label(&RecipientId::from_bytes(RECIPIENT_ID));
+    let blob: Vec<u8> = encrypt_cipher_with_nonce(
+        &cipher_for(k_label.expose_bytes()),
+        &LABEL_NONCE,
+        LABEL.as_bytes(),
+    )
+    .unwrap();
+    vec![LabelVector {
+        category: 19,
+        name: "recipient label under K_label(recipient_id) (§2)".to_string(),
+        k_album: hex(&K_ALBUM),
+        recipient_id: hex(&RECIPIENT_ID),
+        nonce: hex(&LABEL_NONCE),
+        plaintext: hex(LABEL.as_bytes()),
+        k_label: hex(k_label.expose_bytes()),
+        blob: hex(&blob),
     }]
 }
 
@@ -942,6 +1032,8 @@ fn build() -> VectorFile {
         wrap: wrap_vectors(),
         album_wrap: album_wrap_vectors(),
         owner_wrap: owner_wrap_vectors(),
+        album_title: album_title_vectors(),
+        recipient_label: recipient_label_vectors(),
         protocol: protocol(),
     }
 }
@@ -1205,6 +1297,67 @@ fn verify_owner_wrap(v: &OwnerWrapVector, c16: &AlbumWrapVector, reference: &Env
     );
 }
 
+/// Shared by categories 18 and 19, which differ only in key and id. Inside
+/// the crate the derived key and the encrypt direction are checked as values;
+/// the public decrypt path is checked against the plaintext.
+fn verify_blob(
+    category: u8,
+    key: &[u8; 32],
+    expected_key: &str,
+    nonce: &str,
+    plaintext: &str,
+    blob: &str,
+    decrypt: impl Fn(&[u8]) -> Result<String, crate::BlobError>,
+) {
+    assert_eq!(hex(key), expected_key, "category {category}: derived key");
+
+    let text: String = String::from_utf8(unhex(plaintext)).expect("plaintext is UTF-8");
+    assert!(
+        text.len() > text.chars().count(),
+        "category {category}: the plaintext must be multibyte to test UTF-8"
+    );
+
+    let got: Vec<u8> =
+        encrypt_cipher_with_nonce(&cipher_for(key), &unhex_array(nonce), &unhex(plaintext))
+            .unwrap();
+    assert_eq!(hex(&got), blob, "category {category}: encrypt");
+    assert_eq!(&blob[..48], nonce, "category {category}: nonce first");
+
+    let decrypted: String =
+        decrypt(&unhex(blob)).unwrap_or_else(|e| panic!("category {category}: decrypt: {e:?}"));
+    assert_eq!(decrypted, text, "category {category}: decrypt");
+}
+
+fn verify_album_title(v: &TitleVector) {
+    assert_eq!(v.category, 18);
+    let album: AlbumKey = album_from(&v.k_album);
+    let album_id: AlbumId = AlbumId::from_bytes(unhex_array(&v.album_id));
+    verify_blob(
+        18,
+        album.derive_title(&album_id).expose_bytes(),
+        &v.k_title,
+        &v.nonce,
+        &v.plaintext,
+        &v.blob,
+        |b| decrypt_album_title(&album, &album_id, b),
+    );
+}
+
+fn verify_recipient_label(v: &LabelVector) {
+    assert_eq!(v.category, 19);
+    let album: AlbumKey = album_from(&v.k_album);
+    let recipient_id: RecipientId = RecipientId::from_bytes(unhex_array(&v.recipient_id));
+    verify_blob(
+        19,
+        album.derive_label(&recipient_id).expose_bytes(),
+        &v.k_label,
+        &v.nonce,
+        &v.plaintext,
+        &v.blob,
+        |b| decrypt_recipient_label(&album, &recipient_id, b),
+    );
+}
+
 fn verify_protocol(p: &Protocol) {
     let t = &p.token;
     assert_eq!((t.vector, t.expect), (1, Expect::Accept));
@@ -1370,6 +1523,19 @@ fn committed_vectors_verify() {
         verify_owner_wrap(v, &file.album_wrap[0], &file.envelope[0]);
     }
 
+    assert_eq!(file.album_title.len(), 1);
+    verify_album_title(&file.album_title[0]);
+    assert_eq!(
+        file.album_title[0].album_id, file.album_wrap[0].album_id,
+        "category 18's album_id is category 16's"
+    );
+    assert_eq!(file.recipient_label.len(), 1);
+    verify_recipient_label(&file.recipient_label[0]);
+    assert_eq!(
+        file.recipient_label[0].recipient_id, file.protocol.wrap_aad.recipient_id,
+        "category 19's recipient_id is §9.1 vector 5's"
+    );
+
     verify_protocol(&file.protocol);
 }
 
@@ -1433,6 +1599,8 @@ fn envelope_entries(f: &VectorFile) -> Vec<Entry> {
     v.extend(f.wrap.iter().map(|e| (e.category, None)));
     v.extend(f.album_wrap.iter().map(|e| (e.category, None)));
     v.extend(f.owner_wrap.iter().map(|e| (e.category, None)));
+    v.extend(f.album_title.iter().map(|e| (e.category, None)));
+    v.extend(f.recipient_label.iter().map(|e| (e.category, None)));
     v
 }
 

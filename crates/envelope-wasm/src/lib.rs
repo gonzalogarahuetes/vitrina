@@ -4,7 +4,7 @@
 
 mod error;
 
-use error::{Failure, u32_param, wrong_length};
+use error::{Failure, string_param, u32_param, wrong_length};
 use vitrina_envelope as envelope;
 use wasm_bindgen::prelude::*;
 use zeroize::Zeroizing;
@@ -211,35 +211,30 @@ impl WrappedKey {
 #[wasm_bindgen(js_name = wrapAlbumKey)]
 pub fn wrap_album_key(
     album: &AlbumKey,
-    passphrase: &str,
+    #[wasm_bindgen(unchecked_param_type = "string")] passphrase: JsValue,
     params: &WrapParams,
     #[wasm_bindgen(js_name = recipientId)] recipient_id: &[u8],
 ) -> Result<WrappedKey, JsValue> {
-    envelope::wrap_album_key(
-        &album.0,
-        passphrase,
-        params.0,
-        self::recipient_id(recipient_id)?,
-    )
-    .map(WrappedKey)
-    .map_err(|e| Failure::from(e).into())
+    let recipient_id = self::recipient_id(recipient_id)?;
+    // Checked while still UTF-16 (encryption spec §1); wiped after use.
+    let passphrase = Zeroizing::new(string_param(&passphrase, "passphrase")?);
+    envelope::wrap_album_key(&album.0, passphrase.as_str(), params.0, recipient_id)
+        .map(WrappedKey)
+        .map_err(|e| Failure::from(e).into())
 }
 
 #[wasm_bindgen(js_name = unwrapAlbumKey)]
 pub fn unwrap_album_key(
-    passphrase: &str,
+    #[wasm_bindgen(unchecked_param_type = "string")] passphrase: JsValue,
     params: &WrapParams,
     #[wasm_bindgen(js_name = recipientId)] recipient_id: &[u8],
     wrapped: &WrappedKey,
 ) -> Result<AlbumKey, JsValue> {
-    envelope::unwrap_album_key(
-        passphrase,
-        params.0,
-        self::recipient_id(recipient_id)?,
-        &wrapped.0,
-    )
-    .map(AlbumKey)
-    .map_err(|e| Failure::from(e).into())
+    let recipient_id = self::recipient_id(recipient_id)?;
+    let passphrase = Zeroizing::new(string_param(&passphrase, "passphrase")?);
+    envelope::unwrap_album_key(passphrase.as_str(), params.0, recipient_id, &wrapped.0)
+        .map(AlbumKey)
+        .map_err(|e| Failure::from(e).into())
 }
 
 fn album_id(bytes: &[u8]) -> Result<envelope::AlbumId, JsValue> {
@@ -332,6 +327,67 @@ pub fn unwrap_album_key_with_master(
         .map_err(|e| Failure::from(e).into())
 }
 
+// Album titles and recipient labels (§2). Both are short blobs under keys
+// derived from `K_album`; the derived keys never cross the boundary, so these
+// four functions are the whole surface. The relay's 1024-byte ceiling is
+// policy and lives at the relay, not here.
+
+fn blob_result<T>(r: Result<T, envelope::BlobError>) -> Result<T, JsValue> {
+    r.map_err(|e| Failure::from(e).into())
+}
+
+#[wasm_bindgen(js_name = encryptAlbumTitle)]
+pub fn encrypt_album_title(
+    album: &AlbumKey,
+    #[wasm_bindgen(js_name = albumId)] album_id: &[u8],
+    #[wasm_bindgen(unchecked_param_type = "string")] title: JsValue,
+) -> Result<Vec<u8>, JsValue> {
+    let album_id = self::album_id(album_id)?;
+    let title: String = string_param(&title, "title")?;
+    blob_result(envelope::encrypt_album_title(&album.0, &album_id, &title))
+}
+
+#[wasm_bindgen(js_name = decryptAlbumTitle)]
+pub fn decrypt_album_title(
+    album: &AlbumKey,
+    #[wasm_bindgen(js_name = albumId)] album_id: &[u8],
+    blob: &[u8],
+) -> Result<String, JsValue> {
+    blob_result(envelope::decrypt_album_title(
+        &album.0,
+        &self::album_id(album_id)?,
+        blob,
+    ))
+}
+
+#[wasm_bindgen(js_name = encryptRecipientLabel)]
+pub fn encrypt_recipient_label(
+    album: &AlbumKey,
+    #[wasm_bindgen(js_name = recipientId)] recipient_id: &[u8],
+    #[wasm_bindgen(unchecked_param_type = "string")] label: JsValue,
+) -> Result<Vec<u8>, JsValue> {
+    let recipient_id = self::recipient_id(recipient_id)?;
+    let label: String = string_param(&label, "label")?;
+    blob_result(envelope::encrypt_recipient_label(
+        &album.0,
+        &recipient_id,
+        &label,
+    ))
+}
+
+#[wasm_bindgen(js_name = decryptRecipientLabel)]
+pub fn decrypt_recipient_label(
+    album: &AlbumKey,
+    #[wasm_bindgen(js_name = recipientId)] recipient_id: &[u8],
+    blob: &[u8],
+) -> Result<String, JsValue> {
+    blob_result(envelope::decrypt_recipient_label(
+        &album.0,
+        &self::recipient_id(recipient_id)?,
+        blob,
+    ))
+}
+
 /// The owner KEK (§6.6.2) as an opaque handle. It outlives one network round
 /// trip — derived before `POST /login`, used after `GET /owner/key` — which is
 /// why it is a handle and not a value inside one call. No constructor and no
@@ -367,17 +423,19 @@ impl OwnerCredential {
 
 /// §6.6.2: one Argon2id run over the NFC password, two keyed-hash outputs.
 ///
-/// `password` is taken by value so the copy wasm-bindgen makes into linear
-/// memory can be wiped. The JavaScript string it came from cannot be; that is
-/// a property of the platform, not of this binding.
+/// `password` arrives as a JavaScript value and is checked while still UTF-16
+/// (encryption spec §1) — a human types it, so this is the input where an
+/// unpaired surrogate can actually occur. The converted copy is wiped; the
+/// JavaScript string it came from cannot be, which is a property of the
+/// platform, not of this binding.
 #[wasm_bindgen(js_name = deriveOwnerCredential)]
 pub fn derive_owner_credential(
-    password: String,
+    #[wasm_bindgen(unchecked_param_type = "string")] password: JsValue,
     salt: &[u8],
     params: &WrapParams,
 ) -> Result<OwnerCredential, JsValue> {
-    let password = Zeroizing::new(password);
     let salt = envelope::Salt::try_from_slice(salt).map_err(|e| wrong_length("salt", e))?;
+    let password = Zeroizing::new(string_param(&password, "password")?);
     envelope::derive_owner_credential(password.as_str(), params.0, salt)
         .map(|(kek, proof)| OwnerCredential { kek, proof })
         .map_err(|e| Failure::from(e).into())

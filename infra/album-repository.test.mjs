@@ -14,8 +14,8 @@ import { createAlbumRepository } from '../packages/server/dist/adapters/driven/p
  *
  * Expected export:  createAlbumRepository(pool: Pool): AlbumRepository
  *
- * Five properties, and the first is api-sketch §6.2's owed row:
- *   1. every wrapping in the list equals what was posted, byte for byte — the
+ * Seven properties, and the first is api-sketch §6.2's owed row:
+ *   1. every wrapping and title in the list equals what was posted, byte for byte — the
  *      assertion that catches an INSERT missing the columns, or a mapper
  *      reading `wrapped_nonce` for `wrap_nonce`, neither of which any type
  *      can see and the second of which fails silently at unwrap time;
@@ -23,9 +23,14 @@ import { createAlbumRepository } from '../packages/server/dist/adapters/driven/p
  *      bigint, and counts every row regardless of status (§9.2);
  *   3. the list is scoped to one owner, asserted with a second owner's albums
  *      present in the same table;
- *   4. a duplicate id is the PK, raised as DUPLICATE_ALBUM_ID, with the title
- *      nowhere in the error (#15 — a title is plaintext on the relay);
- *   5. findById carries no wrapping, because §9.4 is shared with recipients.
+ *   4. a duplicate id is the PK, raised as DUPLICATE_ALBUM_ID, with the
+ *      submitted title nowhere in the error (api-sketch §7.5: no request body
+ *      reaches a log — ciphertext since 003, and the rule did not depend on it);
+ *   5. findById carries no wrapping, because §9.4 is shared with recipients;
+ *   6. the database refuses a title under the 41-byte floor (003's
+ *      CHK_albums_title_len), the one length a short blob cannot recover from;
+ *   7. the database does NOT cap a title: 1024 is the route's, and a database
+ *      ceiling is the half of the pair 003 says not to complete.
  *
  * Isolation is by two fresh owners per run rather than by truncating, so a
  * failed run leaves the developer's database usable. Both are deleted in
@@ -48,7 +53,8 @@ let ownerA
 let ownerB
 
 /** Client-generated id, and a wrapping distinct per album so a swap shows. */
-const newAlbum = (ownerId, fill, title = 'Álbum de prueba') => ({
+// The title is ciphertext since 003; arbitrary bytes here, as the relay never opens it.
+const newAlbum = (ownerId, fill, title = bytes(0x51, 60)) => ({
 	id: randomUUID(),
 	ownerId,
 	title,
@@ -124,7 +130,7 @@ test('a created album round-trips, wrapping included, byte for byte', async () =
 	 * the album lists fine, and the owner discovers it as an opaque AEAD
 	 * failure on a second device.
 	 */
-	const album = newAlbum(ownerA, 0x42, 'Primer cumpleaños')
+	const album = newAlbum(ownerA, 0x42, bytes(0x52, 60))
 
 	const created = await repository.create(album)
 	assert.equal(created.id, album.id, 'the client id is the created id')
@@ -135,7 +141,8 @@ test('a created album round-trips, wrapping included, byte for byte', async () =
 	// depend on the order tests run in.
 	const listed = (await repository.listForOwner(ownerA)).find((a) => a.id === album.id)
 	assert.ok(listed, 'the created album is not in the list')
-	assert.equal(listed.title, 'Primer cumpleaños')
+	assert.ok(listed.title instanceof Uint8Array, 'bytea should arrive as bytes, not a string')
+	assert.equal(hex(listed.title), hex(album.title))
 	assert.equal(hex(listed.wrappedKey), hex(album.wrappedKey))
 	assert.equal(hex(listed.wrapNonce), hex(album.wrapNonce))
 	assert.equal(listed.wrappedKey.length, 48)
@@ -236,11 +243,13 @@ test('the list is scoped to one owner', async () => {
 test('a duplicate id is DUPLICATE_ALBUM_ID, and the error names no title', async () => {
 	/*
 	 * §9.2's 409 means "already created": a fresh id would orphan the wrapping
-	 * the client computed under the old one. The title is plaintext on the
-	 * relay (§5.3) and must not ride into a log on a pg error's `detail`,
-	 * which is where Postgres quotes the submitted value.
+	 * the client computed under the old one. No submitted value may ride into
+	 * a log on a pg error's `detail`, which is where Postgres quotes it
+	 * (api-sketch §7.5). The title is ciphertext since 003, so this is no
+	 * longer a plaintext leak — the rule never depended on that. Postgres
+	 * quotes bytea as hex, so the hex is what is searched for.
 	 */
-	const TITLE = 'Vacaciones-que-no-deben-aparecer'
+	const TITLE = bytes(0x7a, 60)
 	const album = newAlbum(ownerA, 0x71, TITLE)
 	await repository.create(album)
 
@@ -251,7 +260,7 @@ test('a duplicate id is DUPLICATE_ALBUM_ID, and the error names no title', async
 			assert.equal(error.code, 'DUPLICATE_ALBUM_ID')
 			const strings = stringsIn(error)
 			assert.ok(
-				!strings.some((s) => s.includes(TITLE)),
+				!strings.some((s) => s.includes(hex(TITLE))),
 				`the title reached the error: ${strings.join(' | ')}`,
 			)
 			return true
@@ -271,6 +280,38 @@ test('findById carries ownerId and no wrapping', async () => {
 	const row = await repository.findById(album.id)
 	assert.equal(row.ownerId, ownerA)
 	assert.deepEqual(Object.keys(row).sort(), ['createdAt', 'id', 'ownerId', 'title'])
+	// §9.4 returns the title to recipients too, so it is the same bytes here.
+	assert.equal(hex(row.title), hex(album.title))
+})
+
+test('the database refuses a title under the 41-byte floor', async () => {
+	/*
+	 * 003's CHK_albums_title_len: nonce (24), one byte, tag (16). The route
+	 * refuses first; this is what holds when a route forgets, because a short
+	 * blob is one no client can open (encryption spec §2).
+	 */
+	await assert.rejects(
+		() => repository.create(newAlbum(ownerA, 0x91, bytes(0x51, 40))),
+		(error) => {
+			assert.equal(error.code, '23514')
+			assert.equal(error.constraint, 'CHK_albums_title_len')
+			return true
+		},
+	)
+	const album = newAlbum(ownerA, 0x92, bytes(0x51, 41))
+	await repository.create(album)
+	assert.equal(hex((await repository.findById(album.id)).title), hex(album.title))
+})
+
+test('the database does not cap a title — the ceiling is the route\'s', async () => {
+	/*
+	 * 003: "Do not complete the pair." 1024 is relay policy, enforced at the
+	 * route where it can move without a migration. A database ceiling would
+	 * turn every future raise into one. Fails the day someone adds it.
+	 */
+	const album = newAlbum(ownerA, 0x93, bytes(0x51, 2000))
+	await repository.create(album)
+	assert.equal((await repository.findById(album.id)).title.length, 2000)
 })
 
 test('an unknown album reads as null, not as an error', async () => {

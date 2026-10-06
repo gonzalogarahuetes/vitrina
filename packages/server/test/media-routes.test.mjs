@@ -37,7 +37,7 @@ const mediaBody = (overrides = {}) => ({
 
 const albumBody = () => ({
   id: randomUUID(),
-  title: "Primer cumpleaños",
+  title: b64(0x51, 60), // ciphertext since 003; the bytes are arbitrary here
   wrapped_key: b64(0x42, 48),
   wrap_nonce: b64(0x43, 24),
 });

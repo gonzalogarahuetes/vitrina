@@ -38,13 +38,13 @@
 import { Client } from "pg";
 import { readdir, readFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
+import { findTransactionControl } from "./transaction-control.mjs";
 
 // Relative to the script, never cwd — readdir/readFile accept URL objects.
 const MIGRATIONS_DIR = new URL("../migrations/", import.meta.url);
 
 const DATABASE_URL = process.env.DATABASE_URL;
 const FILE_NAMING_CONVENTION = /^(\d{3})_[a-z0-9_]+\.sql$/;
-const TRANSACTION_CONVENTION = /^\s*(BEGIN|COMMIT|ROLLBACK|END|START TRANSACTION)\b/i;
 const trackingTableQuery = `
     CREATE TABLE IF NOT EXISTS schema_migrations (
     version    integer     PRIMARY KEY,
@@ -125,10 +125,9 @@ try {
         }
 
         firstUnrecorded ??= file;
-        if (file.version >= 3) { 
-            const lines = file.text.split(/\r?\n/);
-            const bad = lines.findIndex((l) => TRANSACTION_CONVENTION.test(l));
-            if (bad !== -1) throw new Error(`${file.name}:${bad + 1}: transaction control belongs to the runner, not the file`);
+        if (file.version >= 3) {
+            const line = findTransactionControl(file.text);
+            if (line !== null) throw new Error(`${file.name}:${line}: transaction control belongs to the runner, not the file`);
         }
         toApply.push(file);
     }

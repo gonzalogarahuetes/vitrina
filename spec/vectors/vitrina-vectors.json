@@ -219,6 +219,30 @@
       "wrapped": "45ae0e8bbf67890dba039c3b730a7a3cc58ba6ede2a1c58446b5ba34532d5e7dbbcfa52bc6e9083d208ade8203c19ec8"
     }
   ],
+  "album_title": [
+    {
+      "category": 18,
+      "name": "album title under K_title(album_id) (§2)",
+      "k_album": "c0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedf",
+      "album_id": "a9397813939b4e919f1e9b054d86fb7f",
+      "nonce": "597a4522c8d1f3c0891a4e6f0ebabb7a6c795e4291183eef",
+      "plaintext": "536f66c3ad612773206669727374206269727468646179",
+      "k_title": "e957188589609f99afc7a3a51b1d876ee6ecdb95528daa981e2f8953d6a791d5",
+      "blob": "597a4522c8d1f3c0891a4e6f0ebabb7a6c795e4291183eefc619c12bb765c224dec12da067a07160d7b71666780c64df91a7e2f4fa6cd5e8e22a88e38c9fb8"
+    }
+  ],
+  "recipient_label": [
+    {
+      "category": 19,
+      "name": "recipient label under K_label(recipient_id) (§2)",
+      "k_album": "c0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedf",
+      "recipient_id": "3f2a91c78b4e4d169f05c2a7d81e6b34",
+      "nonce": "5991aab11c4076017c5378495e958124752ccf5f4ab01a6b",
+      "plaintext": "4d6172c3ad61",
+      "k_label": "1f7f92e904e3e8a2dc1dc2230b796abef6a8e1a7f9777fa7b041468f8e554b98",
+      "blob": "5991aab11c4076017c5378495e958124752ccf5f4ab01a6b22e5af991e895d268867485eaae1a36dd7edc78e19fe"
+    }
+  ],
   "protocol": {
     "token": {
       "vector": 1,

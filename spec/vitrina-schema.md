@@ -2,13 +2,13 @@
 
 **Status:** Draft v0.1 · last updated 14 September 2026 · **provisional**
 **Companion to:** `vitrina-project-brief.md` §9–§9.3, `vitrina-encryption-spec.md` §6
-**Implemented by:** `001_initial_schema.sql` (B.5) and `002` (Phase 1)
+**Implemented by:** `001_initial_schema.sql` (B.5), `002` (Phase 1) and `003` (titles and labels as ciphertext)
 
 ---
 
 ## 0. Status and authority
 
-This document describes the shape the applied migrations implement — `001_initial_schema.sql` from B.5 and `002` from Phase 1. It is **provisional** — Phase 1 will change it, and that is expected rather than a failure.
+This document describes the shape the applied migrations implement — `001_initial_schema.sql` from B.5, `002` from Phase 1, and `003`, which made album titles and recipient labels ciphertext. It is **provisional** — Phase 1 will change it, and that is expected rather than a failure.
 
 If this document and the migration ever disagree, that is a bug in one of them. Fix it deliberately and note which. Do not let them drift.
 
@@ -80,7 +80,7 @@ erDiagram
     albums {
         uuid id PK "CLIENT-generated - in album-wrap AAD"
         uuid owner_id FK
-        text title "PLAINTEXT - spec 10"
+        bytea title "CIPHERTEXT - K_title, 41+ bytes"
         bytea wrapped_key "K_album under K_master - 48 bytes"
         bytea wrap_nonce "24 bytes"
         timestamptz created_at
@@ -101,7 +101,7 @@ erDiagram
         uuid id PK "CLIENT-generated - in wrap AAD"
         uuid album_id FK
         text kind "CHECK qr passphrase"
-        text label "PLAINTEXT - spec 10"
+        bytea label "CIPHERTEXT - K_label, 41+ bytes"
         bytea token_hash UK "SHA-256, 32 bytes"
         timestamptz revoked_at "nullable"
         timestamptz created_at
@@ -216,12 +216,14 @@ Two routes select by that predicate — `/login/params` and `/owner/key` (api-sk
 | ------------- | ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `id`          | `uuid`        | PK, **no default** — client-supplied. It is inside the album-wrap AAD (encryption spec §2), so the client must hold it before wrapping. `002` dropped the default `001` had |
 | `owner_id`    | `uuid`        | NOT NULL, FK → `owners(id)`                                                                                                                                                 |
-| `title`       | `text`        | NOT NULL                                                                                                                                                                    |
+| `title`       | `bytea`       | NOT NULL, ≥ 41 bytes — ciphertext under `K_title(album_id)` (encryption spec §2). Replaced, not converted, by `003`                                                         |
 | `wrapped_key` | `bytea`       | NOT NULL, 48 bytes — `K_album` under `K_master`, added by `002`. Brief §11's wrap-never-derive requires it and `001` had no column for it                                   |
 | `wrap_nonce`  | `bytea`       | NOT NULL, 24 bytes                                                                                                                                                          |
 | `created_at`  | `timestamptz` | NOT NULL, default `now()`                                                                                                                                                   |
 
-No `status` column — brief §9.2. `title` is plaintext on the relay; that is a recorded limitation (encryption spec §10). **It is no longer coupled to the owner-key question** — brief §11 closed that, and closed it in the direction that dissolves the coupling, since an owner who unwraps `K_master` at login can decrypt their own titles. This note said otherwise until 13 September 2026 and contradicted §5.
+No `status` column — brief §9.2.
+
+**`title` is ciphertext, and its bound is in bytes.** Until `003` the route bounded the title to 200 characters. The relay now bounds bytes — 41 to 1024 — and cannot count characters inside ciphertext, so **the 200-character limit belongs to the client**: a recorded limitation changing owner, the same shape as the password floor. A client that does not enforce it can store a 1024-byte title and nothing on the relay will notice. Only the floor is a database constraint, `CHECK (octet_length(title) >= 41)`, by the rule `003`'s comment states: a constraint belongs in the database where getting it wrong is unrecoverable. A short blob is one no client can open; an oversized one still decrypts, so the 1024 ceiling stays at the route (api-sketch §9.2), where it can move without a migration.
 
 `CHECK (octet_length(wrapped_key) = 48 AND octet_length(wrap_nonce) = 24)`, for the same reason as `recipients` and `owner_keys`.
 
@@ -251,7 +253,7 @@ No `status` column — brief §9.2. `title` is plaintext on the relay; that is a
 | `id`              | `uuid`        | PK, **no default** — client-supplied            |
 | `album_id`        | `uuid`        | NOT NULL, FK → `albums(id)`                     |
 | `kind`            | `text`        | NOT NULL, `CHECK (kind IN ('qr','passphrase'))` |
-| `label`           | `text`        | NOT NULL                                        |
+| `label`           | `bytea`       | NOT NULL, ≥ 41 bytes — `albums.title`'s construction under `K_label(recipient_id)` (encryption spec §2), since `003`. Same bounds and the same split between table and route |
 | `token_hash`      | `bytea`       | NOT NULL, UNIQUE                                |
 | `revoked_at`      | `timestamptz` | NULL                                            |
 | `created_at`      | `timestamptz` | NOT NULL, default `now()`                       |
@@ -385,7 +387,7 @@ This is a **B.6 requirement**: the API sketch must state that no endpoint delete
 
 **~~`owners` shape~~ — closed and shipped.** Brief §12 decided email and password; the columns and the `owner_keys` table landed in `002` and are described in §3.
 
-**Whether `albums.title` and `recipients.label` stay plaintext** — still open, but **no longer blocked**. It was parked because it was coupled to owner key retention; brief §11 closed that, and an owner who unwraps `K_master` at login can decrypt their own titles (encryption spec §10). Note deferring is not free: the relay cannot re-encrypt what it cannot read, so shipping plaintext means a client-side lazy migration later.
+**~~Whether `albums.title` and `recipients.label` stay plaintext~~ — closed, 6 October 2026.** Both are ciphertext since `003` (encryption spec §2, §10), decided before any album existed because deferring would have meant a client-side lazy migration. §3 above carries the columns and their bounds.
 
 ## 6. Token hashing — the canonical form
 

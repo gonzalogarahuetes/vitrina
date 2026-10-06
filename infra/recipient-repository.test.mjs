@@ -1,6 +1,6 @@
 import { test, before, after } from 'node:test'
 import assert from 'node:assert/strict'
-import { randomUUID, createHash } from 'node:crypto'
+import { randomUUID, randomBytes, createHash } from 'node:crypto'
 import { Pool } from 'pg'
 
 import { createRecipientRepository } from '../packages/server/dist/adapters/driven/postgres/recipient-repository.js'
@@ -14,7 +14,8 @@ import { createRecipientRepository } from '../packages/server/dist/adapters/driv
  *
  * Expected export:  createRecipientRepository(pool: Pool): RecipientRepository
  *
- * Four properties the port promises and only a real database can show:
+ * Four properties the port promises and only a real database can show, and
+ * a fifth that is the table's rather than the port's:
  *   1. token_hash round-trips as bytea and the lookup matches byte for byte —
  *      a Uint8Array serialised as JSON rather than as bytea fails here;
  *   2. a REVOKED row comes back with revokedAt set rather than being filtered
@@ -23,7 +24,9 @@ import { createRecipientRepository } from '../packages/server/dist/adapters/driv
  *   3. the row carries exactly id, albumId and revokedAt, so a later widening
  *      into §10.1's wrapped/kdf columns is a deliberate change, not drift;
  *   4. UQ_recipients_token_hash makes the lookup unambiguous, asserted by
- *      watching a duplicate insert fail rather than by trusting the schema.
+ *      watching a duplicate insert fail rather than by trusting the schema;
+ *   5. label is ciphertext since 003, and the database refuses one under the
+ *      41-byte floor (CHK_recipients_label_len) while setting no ceiling.
  *
  * There is no create path to test: §7.7's route is PR 2's and unbuilt, so
  * rows are inserted here with SQL, as the port's comment says.
@@ -62,16 +65,16 @@ async function insertAlbum(id) {
 	await pool.query(
 		`INSERT INTO albums (id, owner_id, title, wrapped_key, wrap_nonce)
 		 VALUES ($1, (SELECT id FROM owners WHERE email = $2), $3, $4, $5)`,
-		[id, OWNER_EMAIL, 'Álbum de prueba', bytes(0x42, 48), bytes(0x43, 24)],
+		[id, OWNER_EMAIL, bytes(0x51, 60), bytes(0x42, 48), bytes(0x43, 24)], // title: ciphertext since 003
 	)
 }
 
 /** A QR recipient: the six passphrase columns stay NULL (§6.2, CK constraint). */
-async function insertRecipient({ id, token, albumId }, revokedAt = null) {
+async function insertRecipient({ id, token, albumId, label = bytes(0x61, 50) }, revokedAt = null) {
 	await pool.query(
 		`INSERT INTO recipients (id, album_id, kind, label, token_hash, revoked_at)
 		 VALUES ($1, $2, 'qr', $3, $4, $5)`,
-		[id, albumId, 'Abuela', tokenHash(token), revokedAt],
+		[id, albumId, label, tokenHash(token), revokedAt], // label: ciphertext since 003
 	)
 }
 
@@ -175,4 +178,25 @@ test('UQ_recipients_token_hash makes the lookup unambiguous', async () => {
 		() => insertRecipient({ id: randomUUID(), token: live.token, albumId: ALBUM_B }),
 		(error) => error.code === '23505',
 	)
+})
+
+test('label is refused under the 41-byte floor, and not capped above', async () => {
+	/*
+	 * 003's CHK_recipients_label_len. No route writes a label yet (§7.7 is
+	 * unbuilt), so the constraint is the only length check that exists today —
+	 * and it is the floor only: 1024 belongs to the route, not the table.
+	 */
+	const fresh = (label) => ({
+		id: randomUUID(),
+		token: randomBytes(32),
+		albumId: ALBUM_B,
+		label,
+	})
+
+	await assert.rejects(
+		() => insertRecipient(fresh(bytes(0x61, 40))),
+		(error) => error.code === '23514' && error.constraint === 'CHK_recipients_label_len',
+	)
+	await insertRecipient(fresh(bytes(0x61, 41)))
+	await insertRecipient(fresh(bytes(0x61, 2000)))
 })

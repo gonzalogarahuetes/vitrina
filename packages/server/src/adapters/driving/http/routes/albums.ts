@@ -9,7 +9,7 @@ import type { UseCases } from "../../../../application/use-cases/index.js";
 import { makeRequireOwner } from "../auth/owner.js";
 import { makeRequireOwnerOrRecipient } from "../auth/either.js";
 import { encodeBase64url } from "../base64url.js";
-import { decodeOr400 } from "../decode-field.js";
+import { decodeOr400, decodeRangeOr400 } from "../decode-field.js";
 import { ApiError } from "../error-envelope.js";
 import { rfc3339 } from "../rfc3339.js";
 import {
@@ -65,7 +65,7 @@ export function albumRoutes(deps: AlbumRoutesDeps) {
         const created = await deps.useCases.createAlbum({
           id: body.id,
           ownerId: caller.ownerId,
-          title: body.title,
+          title: decodeRangeOr400(body.title, 41, 1024),
           wrappedKey: decodeOr400(body.wrapped_key, 48),
           wrapNonce: decodeOr400(body.wrap_nonce, 24),
         });
@@ -95,7 +95,7 @@ export function albumRoutes(deps: AlbumRoutesDeps) {
         return reply.send({
           albums: albums.map((album) => ({
             id: album.id,
-            title: album.title,
+            title: encodeBase64url(album.title),
             created_at: rfc3339(album.createdAt),
             wrapped_key: encodeBase64url(album.wrappedKey),
             wrap_nonce: encodeBase64url(album.wrapNonce),
@@ -127,7 +127,7 @@ export function albumRoutes(deps: AlbumRoutesDeps) {
         // and nothing in the body saying which kind asked (§9.4).
         return reply.send({
           id: details.album.id,
-          title: details.album.title,
+          title: encodeBase64url(details.album.title),
           created_at: rfc3339(details.album.createdAt),
           media: details.media.map((row) => ({
             id: row.id,

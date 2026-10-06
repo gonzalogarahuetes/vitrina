@@ -12,9 +12,10 @@ export const b64url = (chars: number) =>
   ({ type: "string", minLength: chars, maxLength: chars, ...B64URL }) as const;
 
 /**
- * A bounded one, for §9.6's metadata envelope — the only variable-length
- * binary field in v1. Character bounds here, byte bounds in the decoder;
- * a character count does not pin a byte count on its own.
+ * A bounded one, for v1's variable-length binary fields: §9.6's metadata
+ * envelope and §9.2's album title. Character bounds here, byte bounds in the
+ * decoder; a character count does not pin a byte count on its own, so pick
+ * the characters from the bytes and let the decoder be the check.
  */
 export const b64urlRange = (minChars: number, maxChars: number) =>
   ({

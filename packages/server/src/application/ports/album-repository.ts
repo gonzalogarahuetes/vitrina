@@ -8,8 +8,12 @@ export type NewAlbum = {
   /** Client-generated, no server default — it is inside the wrap AAD (§9.1). */
   readonly id: string;
   readonly ownerId: string;
-  /** Plaintext on the relay — a recorded limitation (§5.3), not a settled design. */
-  readonly title: string;
+  /**
+   * 41–1024 bytes of ciphertext: nonce ‖ ciphertext ‖ tag under K_title
+   * (encryption spec §2). The relay stores it and cannot read it; the client's
+   * character limit is the client's, since nothing here can count characters.
+   */
+  readonly title: Uint8Array;
   /** 48 bytes. Ciphertext, not key material — §4.1's third accepted wrapping. */
   readonly wrappedKey: Uint8Array;
   /** 24 bytes. The field that gets forgotten (§7.7). */
@@ -23,7 +27,7 @@ export type CreatedAlbum = {
 
 /** §9.2's list. Owner-only by construction, so it needs no branch on caller kind. */
 export type OwnerAlbum = CreatedAlbum & {
-  readonly title: string;
+  readonly title: Uint8Array;
   readonly wrappedKey: Uint8Array;
   readonly wrapNonce: Uint8Array;
   /** `COUNT(*)` over the album's media rows regardless of `status` (§9.2). */
@@ -33,7 +37,7 @@ export type OwnerAlbum = CreatedAlbum & {
 /** §9.4's row — no wrapping, no envelopes, no byte sizes. Either caller kind. */
 export type AlbumRow = CreatedAlbum & {
   readonly ownerId: string;
-  readonly title: string;
+  readonly title: Uint8Array;
 };
 
 export interface AlbumRepository {

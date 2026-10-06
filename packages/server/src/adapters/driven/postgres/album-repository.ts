@@ -23,7 +23,7 @@ class PostgresAlbumRepository implements AlbumRepository {
         [
           album.id,
           album.ownerId,
-          album.title,
+          Buffer.from(album.title),
           Buffer.from(album.wrappedKey),
           Buffer.from(album.wrapNonce),
         ],

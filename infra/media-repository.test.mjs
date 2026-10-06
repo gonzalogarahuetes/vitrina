@@ -106,7 +106,7 @@ before(async () => {
 		await pool.query(
 			`INSERT INTO albums (id, owner_id, title, wrapped_key, wrap_nonce)
 			 VALUES ($1, $2, $3, $4, $5)`,
-			[id, ownerId, 'Álbum de prueba', bytes(0x42, 48), bytes(0x43, 24)],
+			[id, ownerId, bytes(0x51, 60), bytes(0x42, 48), bytes(0x43, 24)], // title: ciphertext since 003
 		)
 	}
 })
