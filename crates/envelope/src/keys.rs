@@ -344,8 +344,14 @@ mod tests {
         let title_msg: Vec<u8> = [b"vitrina-title-v1".as_slice(), &ASSET_ID].concat();
         let label_msg: Vec<u8> = [b"vitrina-label-v1".as_slice(), &ASSET_ID].concat();
 
-        assert_eq!(k_title.expose_bytes(), &keyed_blake2b_256(&K_ALBUM, &title_msg));
-        assert_eq!(k_label.expose_bytes(), &keyed_blake2b_256(&K_ALBUM, &label_msg));
+        assert_eq!(
+            k_title.expose_bytes(),
+            &keyed_blake2b_256(&K_ALBUM, &title_msg)
+        );
+        assert_eq!(
+            k_label.expose_bytes(),
+            &keyed_blake2b_256(&K_ALBUM, &label_msg)
+        );
     }
 
     /// The collision argument as a test: the same 16 id bytes fed to all five

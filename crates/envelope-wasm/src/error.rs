@@ -4,8 +4,8 @@
 
 use js_sys::{Error, JsString, Reflect};
 use vitrina_envelope::{
-    AlbumWrapError, BlobError, EnvelopeError, HeaderError, InvalidParams, LayoutError, OwnerWrapError,
-    WrapError, WrongLength,
+    AlbumWrapError, BlobError, EnvelopeError, HeaderError, InvalidParams, LayoutError,
+    OwnerWrapError, WrapError, WrongLength,
 };
 use wasm_bindgen::{JsCast, JsValue};
 

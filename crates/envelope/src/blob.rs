@@ -211,7 +211,8 @@ mod tests {
     #[test]
     fn round_trips_above_the_relay_ceiling() {
         let long = "a".repeat(2000);
-        let blob = encrypt_album_title(&album_key(), &AlbumId::from_bytes(ALBUM_ID), &long).unwrap();
+        let blob =
+            encrypt_album_title(&album_key(), &AlbumId::from_bytes(ALBUM_ID), &long).unwrap();
         assert!(blob.len() > 1024);
         assert_eq!(decrypt_title(&blob).unwrap(), long);
     }
@@ -262,11 +263,8 @@ mod tests {
     #[test]
     fn title_ciphertext_depends_on_album_id() {
         let a = encrypt_cipher_with_nonce(&title_cipher(ALBUM_ID), &BLOB_NONCE, TITLE.as_bytes());
-        let b = encrypt_cipher_with_nonce(
-            &title_cipher(OTHER_ALBUM_ID),
-            &BLOB_NONCE,
-            TITLE.as_bytes(),
-        );
+        let b =
+            encrypt_cipher_with_nonce(&title_cipher(OTHER_ALBUM_ID), &BLOB_NONCE, TITLE.as_bytes());
         assert_ne!(a.unwrap(), b.unwrap());
     }
 
@@ -361,9 +359,8 @@ mod tests {
     /// Same 16 id bytes on both sides, so only the domain string separates them.
     #[test]
     fn label_blob_does_not_decrypt_as_title() {
-        let blob =
-            encrypt_recipient_label(&album_key(), &RecipientId::from_bytes(ALBUM_ID), LABEL)
-                .unwrap();
+        let blob = encrypt_recipient_label(&album_key(), &RecipientId::from_bytes(ALBUM_ID), LABEL)
+            .unwrap();
         assert_eq!(
             decrypt_title(&blob).err(),
             Some(BlobError::AuthenticationFailed)
@@ -450,8 +447,7 @@ mod tests {
     #[test]
     fn rejects_empty_label() {
         assert_eq!(
-            encrypt_recipient_label(&album_key(), &RecipientId::from_bytes(RECIPIENT_ID), "")
-                .err(),
+            encrypt_recipient_label(&album_key(), &RecipientId::from_bytes(RECIPIENT_ID), "").err(),
             Some(BlobError::EmptyPlaintext)
         );
     }
@@ -460,8 +456,8 @@ mod tests {
     /// reachable through the core, since the public encrypt takes &str.
     #[test]
     fn authenticated_non_utf8_is_invalid_utf8_not_authentication_failed() {
-        let blob = encrypt_cipher_with_nonce(&title_cipher(ALBUM_ID), &BLOB_NONCE, &[0xff])
-            .unwrap();
+        let blob =
+            encrypt_cipher_with_nonce(&title_cipher(ALBUM_ID), &BLOB_NONCE, &[0xff]).unwrap();
         assert_eq!(decrypt_title(&blob).err(), Some(BlobError::InvalidUtf8));
     }
 }
