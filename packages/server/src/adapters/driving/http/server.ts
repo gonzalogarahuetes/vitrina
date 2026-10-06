@@ -76,8 +76,10 @@ export type BuildServerDeps = {
 const UPLOAD_DEADLINE_MS = 120_000;
 
 /*
- * architecture §2 records this as `buildServer(useCases)`; it also needs the
- * allowlisted CORS origin, so deps is an object. §2's line wants updating.
+ * Architecture §2: `{ config, useCases }`, because the CORS origin is
+ * configuration rather than a use case. The three optional fields are test
+ * seams production never passes. No repository reaches this function —
+ * architecture §5 keeps them behind the use cases.
  */
 export async function buildServer(
   deps: BuildServerDeps,
