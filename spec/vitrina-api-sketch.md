@@ -23,6 +23,15 @@ table listing every route.
 | 4   | The passphrase key-material route — the only route that returns key-adjacent material to a _recipient_                                                                                   | **§10**                   |
 | 5   | Ciphertext delivery, `Range` handling, the access log, rate limiting, the recipient's own row, the full route table                                                                      | **§11**                   |
 
+**A "PR" in this table is a reviewable part of this document, not a branch.**
+The two diverged: PR 2b was carved out of PR 2's specification after the fact,
+and implementation then followed PR 2b's four routes — `/signup`,
+`/login/params`, `/login`, `/owner/key` — before PR 2's other four. Those four,
+`/logout`, `/logout/all` and recipient create and revoke, were built on
+6 October 2026, weeks after PR 2b closed, because PR 2b closing read as PR 2
+closing. A row's PR number — here, in §11.8, anywhere — says where a route was
+specified, never when it was built.
+
 **PR 2b was carved out of PR 2 after the fact, 13 September 2026.** The 21
 August amendment had already placed `/signup` and `/login/params` in §7.5, with
 their decoy scheme, the decoy secret's operational rule and the one-transaction
@@ -1138,6 +1147,18 @@ which are only written down. **This table grows with every PR** and is the reaso
 | §3 `methods` is `GET, POST, PUT`                                                                                    | `http.test.mjs`: the preflight's `Access-Control-Allow-Methods` carries `PUT` and not `DELETE`. Asserted on the header rather than the status, because @fastify/cors answers `204` to a `DELETE` preflight either way.                                                                                                                                                                                                                                                                                                                                        |
 | §9.7 `ready` means two objects confirmed in a real store                                                            | Not hermetic, and cannot be. `infra/object-store-adapter.test.mjs` asserts the two answers a fake cannot tell apart — `null` for an absent object, a throw for an unreachable store — and `infra/smoke.test.mjs` heads both objects after a `ready`, which is what shows `byte_size` came from the store rather than from the client's `Content-Length`. The hermetic rows above assert the ladder against a fake; these assert the evidence the ladder rests on. Runs in the `infra` job                                                                     |
 | A body cannot exceed the route's limit (§9.7)                                                                       | Structural, not code. `Content-Length` is compared against the limit before a byte is read — tested. Beyond that, Node delivers at most `Content-Length` bytes to the handler and parses the excess as a pipelined request (measured 29 September 2026), and the only framing that can outrun its declaration is chunked, which this route refuses at `411`. The guarantee is conditional on that `411`: accept chunked uploads and a running-count check becomes required, and §9.7 carries what it must do                                                  |
+| §7.5 `/logout` revokes the presented token only                                                                     | `logout-routes.test.mjs`: one owner, two sessions; logging out the laptop leaves the phone answering `200`. A token named in a body is ignored and the bearer's is revoked. Fails if the use case calls `revokeAllTokens`, or the handler reads a body. The repository's half — `owner_id` in the `WHERE`, so a wrong owner revokes nothing — is `infra/owner-repository.test.mjs`                                                                                                                                                                            |
+| §7.5 `/logout/all` revokes the calling session too                                                                  | `logout-routes.test.mjs`: three sessions, all `401` afterwards, the caller's included; another owner's still `200`. Fails if the bearer's row is exempted. `infra/pr2-routes.test.mjs` asserts zero unrevoked `owner_tokens` rows afterwards                                                                                                                                                                                                                                                                                                                  |
+| §7.5, §7.8 a body-less POST sent as empty JSON is `400`, before auth                                                | **A framework measurement, pinned.** No body and no parser, so `Content-Type: application/json` with an empty body is Fastify's JSON parser's `400 VALIDATION_FAILED` — with or without a token, byte-identical, and the session survives. Tested on all three routes hermetically and on `/logout` over a real socket (`infra/pr2-routes.test.mjs`). This row exists so a Fastify upgrade that changes it goes red rather than silently changing §7.9's error column                                                                                         |
+| §7.7 the wrap fields are required for passphrase and refused for qr                                                 | `recipient-routes.test.mjs`, one case per field each way, `400` with nothing stored. **Refused, not stripped**: `removeAdditional` turns `additionalProperties: false` into silent deletion, so the qr half rests on the schema's `not` — remove it and six cases go red                                                                                                                                                                                                                                                                                      |
+| §7.7 every binary field decodes by schema §6's rules, `label` by range                                              | `recipient-routes.test.mjs`: `label` at 40/41/1024/1025 bytes; a non-canonical spelling of `token_hash`, `kdf_salt` and a 61-byte `label`; padding, `+`/`/`, hex and the wrong length on the fields with no spare bits                                                                                                                                                                                                                                                                                                                                        |
+| §7.7 KDF integers floored at `002`'s values and capped at int4                                                      | `recipient-routes.test.mjs`: 16384/2/1 accepted, one below each refused; `2147483647` accepted, one more refused on all three. Fails if the floors are copied from `001`, or if the ceiling goes and Postgres `22003` reaches the client as a `500`                                                                                                                                                                                                                                                                                                           |
+| §7.7 `409` names neither column                                                                                     | `recipient-routes.test.mjs`: a duplicate `id` and a duplicate `token_hash` answer byte-identical bare `409`s. `infra/recipient-repository.test.mjs` asserts both constraints map to one code with distinct authored causes, and that no pg `detail` reaches the error (#15); `infra/pr2-routes.test.mjs` asserts the hash case over the real constraint                                                                                                                                                                                                       |
+| §7.3 step 3 on create and revoke — `404`, never `403`                                                               | `recipient-routes.test.mjs`: another owner's album, and another owner's recipient, each answer a `404` byte-identical to an absent one, with nothing stored or revoked. Fails if either use case drops its scope check                                                                                                                                                                                                                                                                                                                                        |
+| §7.1 no fallback between schemes on the recipient routes                                                            | `recipient-routes.test.mjs`: a valid recipient token on create and on revoke — including revoking itself — answers `401`. Fails if `requireOwner` is swapped for the either-scheme preHandler                                                                                                                                                                                                                                                                                                                                                                 |
+| §7.8 revoke deletes nothing and keeps the first timestamp                                                           | `recipient-routes.test.mjs` and `infra/pr2-routes.test.mjs`: a retry returns the original `revoked_at`; the row and its `access_log` rows survive. `infra/recipient-repository.test.mjs` adds two concurrent revokes returning one timestamp — the `COALESCE` inside the `UPDATE`, which no fake can show                                                                                                                                                                                                                                                     |
+| §7.7 a recipient created through the API is a working credential                                                    | `recipient-routes.test.mjs` and `infra/pr2-routes.test.mjs`: create, read the album as that recipient with a body identical to the owner's (§9.4), revoke, then `403 ACCESS_REVOKED`. No row written by hand — the property PR 4 was blocked on                                                                                                                                                                                                                                                                                                               |
+| §4.1 create-recipient accepts wrap material and no key material                                                     | `route-table.test.mjs`: the walk covers `schemas/recipients.ts`, and asserts the converse — `wrapped`, `wrap_nonce`, `kdf_salt` and the three integers are declared at the body's top level, where `removeAdditional` cannot strip them. Also: `album_id` only in the path, and no body on `/logout`, `/logout/all` or revoke                                                                                                                                                                                                                                 |
 
 The suite is hermetic — `app.inject()`, no Docker, no network — so it belongs in
 CI's `checks` job, which the workflow keeps free of infrastructure on purpose.
@@ -1785,7 +1806,13 @@ the route.
 - Sets `revoked_at`; deletes nothing. Calling it twice returns `401` the second
   time, because step 2 of §7.3 rejects the now-revoked token before the handler
   runs. That is correct rather than merely acceptable.
-- **Errors:** `401 UNAUTHENTICATED`.
+- **Send no `Content-Type`.** These routes take no body, and no parser is
+  registered for them — a request carrying `Content-Type: application/json`
+  with an empty body is rejected by the JSON parser with `400
+  VALIDATION_FAILED`, before authentication runs. That is the framework's
+  behaviour rather than this route's, and it is why `400` can appear on a route
+  whose error list is `401`.
+- **Errors:** `400 VALIDATION_FAILED` (the case above only) · `401 UNAUTHENTICATED`.
 
 **`POST /v1/logout/all`** — owner scheme. No body, `204`.
 
@@ -1798,7 +1825,8 @@ the route.
   rather than surprising someone who clicked it on a laptop to kill a phone.
 - **A per-device session list is the better product** and needs device labels
   nothing in the schema captures. Not v1.
-- **Errors:** `401 UNAUTHENTICATED`.
+- **Send no `Content-Type`**, for `/logout`'s reason above.
+- **Errors:** `400 VALIDATION_FAILED` (as `/logout`) · `401 UNAUTHENTICATED`.
 
 ### 7.6 `POST /login` is the one route with no token to key on
 
@@ -2060,7 +2088,14 @@ key the recipient holds (encryption spec §6.4, brief §8). Because v1 proxies e
 byte (§6, brief §10.1), revocation is checked per request and is genuinely
 immediate — the UI may say so without hedging.
 
-**Errors:** `401 UNAUTHENTICATED` · `404 NOT_FOUND`.
+**Send no `Content-Type`.** This route takes no body, and no parser is
+registered for it — a request carrying `Content-Type: application/json` with an
+empty body is rejected by the JSON parser with `400 VALIDATION_FAILED`, before
+authentication runs. That is the framework's behaviour rather than this
+route's, and it is why `400` can appear on a route whose error list is `401`
+and `404`. A malformed `recipient_id` is also `400`, from the path schema.
+
+**Errors:** `400 VALIDATION_FAILED` · `401 UNAUTHENTICATED` · `404 NOT_FOUND`.
 
 ### 7.9 The owner-auth routes, in one table
 
@@ -2072,10 +2107,10 @@ immediate — the UI may say so without hedging.
 | `POST /v1/signup`                           | none   | address as typed · proof · `kdf_salt` + params · `wrapped_master` · `wrap_nonce` (§7.5) — never the password, never `K_master` | `201` `{id, created_at, token, expires_at}`, `no-store`                   | 400 · 409 `CONFLICT` · 413 · 415 · 429            |
 | `POST /v1/login/params`                     | none   | address as typed (§7.5)                                                                                                        | `200` — `{kdf_salt, params}` only, **always**, decoys on miss, `no-store` | 400 · 413 · 415 · 429                             |
 | `POST /v1/login`                            | none   | address as typed · proof (§7.5)                                                                                                | `200` `{token, expires_at}`, `no-store`                                   | 400 · 401 `INVALID_CREDENTIALS` · 413 · 415 · 429 |
-| `POST /v1/logout`                           | owner  | none                                                                                                                           | `204`                                                                     | 401                                               |
-| `POST /v1/logout/all`                       | owner  | none                                                                                                                           | `204`                                                                     | 401                                               |
+| `POST /v1/logout`                           | owner  | none                                                                                                                           | `204`                                                                     | 400 · 401                                         |
+| `POST /v1/logout/all`                       | owner  | none                                                                                                                           | `204`                                                                     | 400 · 401                                         |
 | `POST /v1/albums/{album_id}/recipients`     | owner  | §7.7                                                                                                                           | `201` `{id, created_at}`                                                  | 400 · 401 · 404 · 409 · 413 · 415                 |
-| `POST /v1/recipients/{recipient_id}/revoke` | owner  | none                                                                                                                           | `200` `{revoked_at}`                                                      | 401 · 404                                         |
+| `POST /v1/recipients/{recipient_id}/revoke` | owner  | none                                                                                                                           | `200` `{revoked_at}`                                                      | 400 · 401 · 404                                   |
 | `GET /v1/owner/key` _(PR 2b, §8.3)_         | owner  | none                                                                                                                           | `200` `{kdf_salt, params, wrapped_master, wrap_nonce}`, `no-store`        | 401                                               |
 
 **Seven became eight on 13 September 2026**, with PR 2b's owner-key fetch — listed
