@@ -11,7 +11,11 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U admin -d vitrina"]
+      test:
+        [
+          "CMD-SHELL",
+          'out=$$(wget -q -S -O /dev/null http://127.0.0.1:8333/ 2>&1); echo "$$out" | grep -q ''HTTP/1'' || { echo "$$out"; exit 1; }',
+        ]
       interval: 2s
       timeout: 3s
       retries: 30
