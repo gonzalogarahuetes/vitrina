@@ -23,10 +23,23 @@ const SECRET = Buffer.alloc(32, 0x11);
 
 const b64 = (fill, bytes) => Buffer.alloc(bytes, fill).toString("base64url");
 
-/** A well-formed §9.2 body; the wrapping distinct per album so a swap shows. */
+const ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+
+/**
+ * The same bytes, spelled with the final character's spare bits set — a
+ * string the schema's pattern and length accept and only the decoder refuses.
+ */
+const nonCanonical = (encoded) =>
+  encoded.slice(0, -1) + ALPHABET[ALPHABET.indexOf(encoded.at(-1)) + 1];
+
+/**
+ * A well-formed §9.2 body; the wrapping distinct per album so a swap shows.
+ * The title is ciphertext since 003 — arbitrary bytes here, because the relay
+ * never opens it (encryption spec §2).
+ */
 const albumBody = (overrides = {}) => ({
   id: randomUUID(),
-  title: "Primer cumpleaños",
+  title: b64(0x51, 60),
   wrapped_key: b64(0x42, 48),
   wrap_nonce: b64(0x43, 24),
   ...overrides,
@@ -277,7 +290,17 @@ describe("POST /v1/albums — §9.2", () => {
   const invalid = [
     ["an id that is not a uuid", { id: "not-a-uuid" }],
     ["an empty title", { title: "" }],
-    ["a title over 200 characters", { title: "a".repeat(201) }],
+    // §2's floor and the relay's ceiling. 40 and 1025 bytes are 54 and 1367
+    // characters, one outside b64urlRange(55, 1366) on each side.
+    ["a 40-byte title, below the 41-byte floor", { title: b64(0x51, 40) }],
+    ["a 1025-byte title, above the 1024-byte ceiling", { title: b64(0x51, 1025) }],
+    // What a client that has not caught up with 003 would post. Refused, not
+    // stored: the column's every reader assumes ciphertext.
+    ["a plaintext title", { title: "Primer cumpleaños" }],
+    ["a title that is not base64url", { title: "+".repeat(60) }],
+    // In the pattern and the length, so only decodeRangeOr400 can refuse it —
+    // the one case that fails if the route stops decoding.
+    ["a non-canonical title spelling", { title: nonCanonical(b64(0x51, 41)) }],
     ["a wrapped_key of the wrong length", { wrapped_key: b64(0x42, 47) }],
     ["a wrap_nonce of the wrong length", { wrap_nonce: b64(0x43, 23) }],
     ["a wrapped_key that is not base64url", { wrapped_key: "+".repeat(64) }],
@@ -291,6 +314,28 @@ describe("POST /v1/albums — §9.2", () => {
       assert.equal(response.json().code, "VALIDATION_FAILED");
     });
   }
+
+  it("accepts a title at exactly the floor and exactly the ceiling", async () => {
+    // The 400 rows above prove the bounds exist; these prove they are not one
+    // byte too tight. 41 and 1024 bytes are 55 and 1366 characters.
+    const { app, auth } = await buildTestServer();
+    for (const bytes of [41, 1024]) {
+      const response = await createAlbum(app, auth, albumBody({ title: b64(0x51, bytes) }));
+      assert.equal(response.statusCode, 201, `${bytes} bytes: ${response.body}`);
+    }
+  });
+
+  it("hands the use case the title's bytes, not its spelling", async () => {
+    // base64url is transport and belongs to the adapter (schema §6): what
+    // reaches the repository is the 60 bytes the client encrypted.
+    const { app, auth, albums } = await buildTestServer();
+    const body = albumBody({ title: b64(0x5a, 60) });
+    await createAlbum(app, auth, body);
+
+    const stored = albums.rows.get(body.id).title;
+    assert.ok(stored instanceof Uint8Array, "decoded, not the string");
+    assert.deepEqual(Buffer.from(stored), Buffer.alloc(60, 0x5a));
+  });
 
   it("rejects a body with no wrapping at all", async () => {
     /*
@@ -356,6 +401,21 @@ describe("GET /v1/albums — §9.2", () => {
     ]);
     assert.equal(album.title, body.title);
     assert.strictEqual(album.media_count, 0);
+  });
+
+  it("returns each title as the bytes that were posted", async () => {
+    // Two albums with different titles, so a list returning one title for both
+    // fails. The relay neither opens nor re-encodes them.
+    const { app, auth } = await buildTestServer();
+    const first = albumBody({ title: b64(0x61, 41) });
+    const second = albumBody({ title: b64(0x62, 1024) });
+    await createAlbum(app, auth, first);
+    await createAlbum(app, auth, second);
+
+    const byId = new Map((await listAlbums(app, auth)).json().albums.map((a) => [a.id, a]));
+
+    assert.equal(byId.get(first.id).title, first.title);
+    assert.equal(byId.get(second.id).title, second.title);
   });
 
   it("is scoped to the caller", async () => {
@@ -448,6 +508,17 @@ describe("GET /v1/albums/{album_id} — §9.4", () => {
       "kind",
       "status",
     ]);
+  });
+
+  it("returns the title as the bytes that were posted", async () => {
+    // §9.4 gives recipients the title too, which is why it is under K_album
+    // rather than K_master (encryption spec §2). The byte-identical test below
+    // shows both caller kinds get the same value; this shows it is the right one.
+    const { app, auth, album } = await withAlbum();
+
+    const body = (await getAlbum(app, auth, album.id)).json();
+
+    assert.equal(body.title, album.title);
   });
 
   it("answers a recipient with a byte-identical body", async () => {

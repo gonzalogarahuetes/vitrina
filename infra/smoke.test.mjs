@@ -66,7 +66,8 @@ const b64 = (bytes) => randomBytes(bytes).toString('base64url')
 const OWNER_EMAIL = `smoke-${randomUUID()}@x.es`
 const ALBUM_ID = randomUUID()
 const MEDIA_ID = randomUUID()
-const ALBUM_TITLE = 'Álbum de prueba'
+/** Ciphertext since 003 (encryption spec §2); random bytes, as the relay never opens it. */
+const ALBUM_TITLE = b64(60)
 
 /** The wrapping the client posts and the list must give back byte for byte. */
 const WRAPPED_KEY = b64(48)
@@ -181,7 +182,7 @@ test('1. signup returns a session token', async () => {
 	token = response.body.token
 })
 
-test('2. an album is created and its wrapping round-trips through the list', async () => {
+test('2. an album is created and its wrapping and title round-trip through the list', async () => {
 	const created = await call('POST', '/albums', {
 		body: { id: ALBUM_ID, title: ALBUM_TITLE, wrapped_key: WRAPPED_KEY, wrap_nonce: WRAP_NONCE },
 	})

@@ -1016,10 +1016,19 @@ different problems with different answers.
 
 ### 5.3 Do `albums.title` and `recipients.label` become encrypted? (encryption spec §10)
 
-They are plaintext on the relay today, and §10 calls this "the sharpest
-inconsistency in the product": _"Sofía's first birthday"_ and _"María"_ are a
-child's name and a family member's name sitting readable in a database whose
-entire pitch is that it cannot read anything.
+**Closed, 6 October 2026: both are ciphertext.** `albums.title` is encrypted
+under `K_title(album_id)` and `recipients.label` under `K_label(recipient_id)`,
+both derived from `K_album` (encryption spec §2); migration `003` made both
+columns `bytea` with a 41-byte floor (schema §3). On the wire both are
+base64url — §7.7, §9.2, §9.4, §11.4, §11.7. **The 200-character limit moved
+from the relay to the client**: the relay bounds bytes, 41–1024, and cannot
+count characters inside ciphertext. The reasoning that decided it follows,
+kept because each step looks arbitrary without it.
+
+They were plaintext on the relay until then, and encryption spec §10 called
+this "the sharpest inconsistency in the product": _"Sofía's first birthday"_
+and _"María"_ are a child's name and a family member's name sitting readable
+in a database whose entire pitch is that it cannot read anything.
 
 **No longer blocked — newly decidable, 21 August 2026.** This section used to say
 "the two are coupled and must be decided together", the two being this and §5.1:
@@ -1048,13 +1057,15 @@ page load on 25 September 2026, which was the objection to encrypting titles.
 What remains is a format decision rather than a product one: both fields must be
 readable by **recipients** as well as owners — §9.4 returns the title to both,
 and §11.4 returns the label to the recipient it names — so both are encrypted
-under a key derived from `K_album`, and encryption spec §2 has no per-album
-derivation today. That is one or two new derived keys with their domain strings,
-**permanent once an album exists**. Worth doing before Phase 1 ships an album, on
+under a key derived from `K_album`, and encryption spec §2 had no per-album
+derivation. It became two new derived keys with their domain strings,
+**permanent once an album exists**, done before Phase 1 shipped an album on
 this section's own lazy-migration argument.
 
-**Both fields are blobs, not envelopes** — `nonce ‖ ciphertext ‖ tag`, the shape
-`wrapped_key` and `recipients.wrapped` already have. The envelope format exists
+**Both fields are blobs, not envelopes** — `nonce ‖ ciphertext ‖ tag` in one
+field, nonce first. That is _not_ the shape of `wrapped_key` and
+`recipients.wrapped`, which keep their nonce in a separate column because both
+halves are fixed length (encryption spec §2). The envelope format exists
 for random access to chunks so video seeking works in Phase 3; a 200-character
 string has one chunk by definition and would carry a 64-byte header describing a
 structure nobody traverses. A blob's minimum is 41 bytes — 24 nonce, one byte of
@@ -1894,7 +1905,7 @@ Owner scheme. `201` on success. The album must belong to the caller, or `404`
 | ----------------------------------------------------- | ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `id`                                                  | uuid                                      | **Client-generated, required, no server default.** It is inside the wrap AAD — `"vitrina-wrap-v1" ‖ recipient_id`, 16 raw bytes (encryption spec §6.2) — so the client needs it before it can compute `wrapped`. A server-assigned id breaks unwrapping, works fine for QR recipients, and fails as an opaque AEAD error (brief §9.3; schema §3) |
 | `kind`                                                | `"qr"` \| `"passphrase"`                  | Enum, mirroring the `CHECK`                                                                                                                                                                                                                                                                                                                      |
-| `label`                                               | string                                    | Plaintext on the relay today; whether it becomes encrypted is §5.3                                                                                                                                                                                                                                                                               |
+| `label`                                               | 55–1366 chars → **41–1024 bytes**         | Ciphertext under `K_label(recipient_id)` (encryption spec §2); the relay stores it and cannot read it. Bytes are the real check (§5.3); any character limit is the client's                                                                                                                                                                                                                                                                               |
 | `token_hash`                                          | 43 chars base64url → **exactly 32 bytes** | SHA-256 of the 32 raw token bytes, computed by the client (§7.4)                                                                                                                                                                                                                                                                                 |
 | `wrapped`                                             | 64 chars → 48 bytes                       | **passphrase only**, forbidden for `qr`                                                                                                                                                                                                                                                                                                          |
 | `wrap_nonce`                                          | 32 chars → 24 bytes                       | **passphrase only.** The field that gets forgotten, and without it the blob is undecryptable                                                                                                                                                                                                                                                     |
@@ -2441,8 +2452,8 @@ memory after §8.4's step 4; every `K_album` is 32 random bytes **wrapped under
 envelope is encrypted under a key derived from `K_album` (encryption spec §2).
 So the relay stores, per album, one wrapped blob it cannot open, and per media
 row, one metadata envelope it cannot open and two objects in the bucket it cannot
-open. **That is the whole of what PR 3 accepts**: titles in plaintext (§5.3, a
-recorded limitation), identifiers, and ciphertext.
+open. **That is the whole of what PR 3 accepts**: identifiers and ciphertext —
+titles included since migration `003`, before which they were plaintext (§5.3).
 
 ```
 POST /v1/albums                          create — carries the wrapped K_album
@@ -2496,7 +2507,7 @@ oversight.
 | Field         | Type                    | Notes                                                                                                                                                                                                                                                              |
 | ------------- | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `id`          | uuid                    | **Client-generated, required, no server default.** It is inside the wrap AAD (encryption spec §2), so the client needs it before it can compute `wrapped_key` — the same shape as `media.id` (§9.6) and `recipients.id` (§7.7), and schema §1's rule for all three |
-| `title`       | string, 1–200 chars     | Plaintext on the relay (§5.3). Owner-authored free text; no normalisation, no localisation (brief §15.1). 200 is a column bound, not a product rule                                                                                                                |
+| `title`       | 55–1366 chars → **41–1024 bytes** | Ciphertext under `K_title(album_id)` (encryption spec §2) — the relay stores it and cannot read it. The schema bounds characters and `decodeRangeOr400` bounds bytes, and the byte check is the one that means anything. 41 is the format's floor, 1024 relay policy; the 200-character limit is the client's (§5.3)                                                                                                                |
 | `wrapped_key` | 64 chars → **48 bytes** | `K_album` (32) plus tag (16), under `K_master`. Ciphertext, not key material — §4.1's third accepted wrapping, after §7.7's and §7.5's                                                                                                                             |
 | `wrap_nonce`  | 32 chars → 24 bytes     | The field that gets forgotten (§7.7)                                                                                                                                                                                                                               |
 
@@ -2520,7 +2531,7 @@ oversight.
   "albums": [
     {
       "id": "…",
-      "title": "…",
+      "title": "<55–1366 chars>",
       "created_at": "…",
       "wrapped_key": "<64 chars>",
       "wrap_nonce": "<32 chars>",
@@ -2582,7 +2593,7 @@ Owner **or** recipient scheme, declared explicitly (§7.1's tagged `Caller`).
 ```jsonc
 {
   "id": "…",
-  "title": "…",
+  "title": "<55–1366 chars>",
   "created_at": "…",
   "media": [
     { "id": "…", "kind": "photo", "status": "ready", "created_at": "…" },
@@ -2978,9 +2989,10 @@ application/octet-stream` is not a CORS-safelisted value, so the upload
   unreclaimed, since v1 has no erasure worker (§4.2). The object-key derivation
   in §9.7 is what such a worker would enumerate, and a re-upload to the same row
   replaces rather than adds.
-- **Whether `albums.title` becomes ciphertext** — §5.3. If it does, §9.2's
-  `title` becomes a base64url envelope field and §9.4 returns it as such; the
-  routes do not otherwise change.
+- ~~Whether `albums.title` becomes ciphertext~~ — **closed** 6 October 2026
+  (§5.3). §9.2's `title` became a base64url ciphertext field — a blob, not an
+  envelope (encryption spec §2) — and §9.4 returns it as such; the routes did
+  not otherwise change.
 - ~~The `K_album` wrap construction and the `albums` columns that hold it~~ —
   **closed** the same day, in encryption spec §2 and schema §3 respectively; §9.1
   records the outcome and §9.2 carries it.
@@ -3299,10 +3311,16 @@ route does not do ranges and should not advertise them.
 #### `Cache-Control: no-store` on every ciphertext response — the rule
 
 Brief §10 requires it and §10.1 explains the mechanism: in v1 the proxying relay
-sets the header directly, on every response carrying ciphertext — §11.2, §11.3,
-and §9.5's metadata envelopes. Set by a shared response hook on the three routes,
-not by each handler, so that a fourth ciphertext route added later inherits it by
-registering in the same place rather than by remembering. It is one of the two
+sets the header directly. **Every response carrying ciphertext sets
+`Cache-Control: no-store`, whatever route it comes from.** Registered as a hook
+per plugin rather than per route, so a new route serving ciphertext inherits it
+by living there — and a ciphertext route added to a plugin without the hook
+(today, the media plugin) does not, which is the one way to break this rule by
+adding code. The set grew from three to six when `albums.title` and
+`recipients.label` became ciphertext (§5.3), which is the argument for stating
+the rule rather than enumerating the routes: the enumeration was wrong the
+moment the fields changed, while the rule was not. §11.8's last column is the
+current set. It is one of the two
 `no-store` rules in this document; §8.3's (every response carrying a _wrapped
 blob_) is the other, and the two are stated separately because their subjects
 differ — ciphertext of a photograph, ciphertext of a key — even though the
@@ -3323,22 +3341,25 @@ Recipient scheme only. `200`:
 {
   "id": "…",
   "album_id": "…",
-  "label": "María",
+  "label": "<55–1366 chars>",
   "kind": "qr",
   "created_at": "…",
 }
 ```
 
 - **`label` is what brief §5's watermark renders**, and this is the only place a
-  recipient's client can get it. Plaintext on the relay (§5.3); whatever the
-  owner typed (brief §15.1); returned verbatim.
+  recipient's client can get it. Ciphertext under `K_label(recipient_id)`
+  (encryption spec §2), which the recipient's client opens with the `K_album`
+  it already holds; the relay returns the stored bytes verbatim (§5.3).
 - **Flat, no id, scoped by the token** — the same shape as §8.3 and §10.1, for
   the same reason: the caller's own row has nothing to enumerate.
 - **Revoked → `403 ACCESS_REVOKED`.** The client's first call on opening an
   invite, so this is where a revoked recipient learns it — a `403` here renders
   "this album is no longer shared with you" before any grid is attempted.
-- **Not `no-store`** — nothing here is ciphertext or a wrapping. Not logged —
-  §11.6's events are about the album and its assets.
+- **`no-store`**, under the rule that every response carrying ciphertext does
+  (§11.3). `label` became ciphertext with the title-and-label change (§5.3);
+  until then it was plaintext and this bullet said the header was not needed.
+  Not logged — §11.6's events are about the album and its assets.
 - **Errors:** `401` · `403 ACCESS_REVOKED` · `429`.
 
 **Why the route and not `label` in the invite payload.** The payload option is
@@ -3514,7 +3535,7 @@ indexes were built for (schema §4) are different shapes:
   "recipients": [
     {
       "recipient_id": "…",
-      "label": "María",
+      "label": "<55–1366 chars>",
       "revoked_at": null,
       "album_opens": 3,
       "media_opened": 12, // COUNT(DISTINCT media_id) over asset_viewed
@@ -3574,7 +3595,7 @@ routes plus `/health`.
 | `GET /v1/owner/key`                            | owner             | 2b  | §8.3    | —                                                    | yes (wrapping)   |
 | `POST /v1/albums`                              | owner             | 3   | §9.2    | —                                                    | —                |
 | `GET /v1/albums`                               | owner             | 3   | §9.2    | —                                                    | yes (wrappings)  |
-| `GET /v1/albums/{album_id}`                    | owner · recipient | 3   | §9.4    | **no** (§11.6)                                       | —                |
+| `GET /v1/albums/{album_id}`                    | owner · recipient | 3   | §9.4    | **no** (§11.6)                                       | yes (ciphertext) |
 | `GET /v1/albums/{album_id}/metadata`           | owner · recipient | 3   | §9.5    | **`album_opened`**, recipients (§11.6)               | yes (ciphertext) |
 | `POST /v1/albums/{album_id}/media`             | owner             | 3   | §9.6    | —                                                    | —                |
 | `GET /v1/media/{media_id}`                     | owner             | 3   | §9.8    | —                                                    | —                |
@@ -3582,11 +3603,11 @@ routes plus `/health`.
 | `PUT /v1/media/{media_id}/thumbnail`           | owner             | 3   | §9.7    | —                                                    | —                |
 | `POST /v1/albums/{album_id}/recipients`        | owner             | 2   | §7.7    | —                                                    | —                |
 | `POST /v1/recipients/{recipient_id}/revoke`    | owner             | 2   | §7.8    | —                                                    | —                |
-| `GET /v1/recipient`                            | recipient         | 5   | §11.4   | —                                                    | —                |
+| `GET /v1/recipient`                            | recipient         | 5   | §11.4   | —                                                    | yes (ciphertext) |
 | `GET /v1/recipient/key`                        | recipient         | 4   | §10.1   | open (§10.5)                                         | yes (wrapping)   |
 | `GET /v1/media/{media_id}/asset`               | owner · recipient | 5   | §11.2   | **`asset_viewed`**, recipients, range from 0 (§11.6) | yes (ciphertext) |
 | `GET /v1/media/{media_id}/thumbnail`           | owner · recipient | 5   | §11.3   | **never**                                            | yes (ciphertext) |
-| `GET /v1/albums/{album_id}/access-log`         | owner             | 5   | §11.7   | —                                                    | —                |
+| `GET /v1/albums/{album_id}/access-log`         | owner             | 5   | §11.7   | —                                                    | yes (ciphertext) |
 | `GET /v1/albums/{album_id}/access-log/entries` | owner             | 5   | §11.7   | —                                                    | —                |
 
 Every authenticated row is behind §11.5's token-hash limiter; the three

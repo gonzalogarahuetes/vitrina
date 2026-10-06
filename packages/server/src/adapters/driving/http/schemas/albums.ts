@@ -4,10 +4,17 @@
  * schema into test/route-table.test.mjs, or the walk stops covering it.
  */
 
-import { B64URL, b64url, timestamp, uuid } from "./fragments.js";
+import { B64URL, b64url, b64urlRange, timestamp, uuid } from "./fragments.js";
 
-/** Plaintext on the relay (§5.3). 200 is a column bound, not a product rule. */
-const title = { type: "string", minLength: 1, maxLength: 200 } as const;
+/**
+ * Ciphertext since 003 — nonce ‖ ciphertext ‖ tag under K_title (encryption
+ * spec §2). 55 and 1366 characters are exactly 41 and 1024 bytes, so this and
+ * the route's `decodeRangeOr400(…, 41, 1024)` reject the same inputs; the byte
+ * check is the one that means anything. The 200-character limit is the
+ * client's now: the relay bounds bytes and cannot count characters inside
+ * ciphertext. 41 is the format's floor, 1024 relay policy (schema §3).
+ */
+const title = b64urlRange(55, 1366);
 
 /**
  * §4.1's third accepted wrapping, after §7.7's and §7.5's. Ciphertext, and so
@@ -133,7 +140,10 @@ export const getAlbumMetadataSchema = {
             type: "object",
             // The complete envelope bytes, returned verbatim — the relay does
             // not parse the header (§9.1's format-blindness).
-            properties: { media_id: uuid, envelope: { type: "string", ...B64URL } },
+            properties: {
+              media_id: uuid,
+              envelope: { type: "string", ...B64URL },
+            },
             required: ["media_id", "envelope"],
             additionalProperties: false,
           },

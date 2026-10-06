@@ -36,7 +36,7 @@ export function decodeOr400(value: string, bytes: number): Uint8Array {
   return or400(() => decodeBase64url(value, bytes));
 }
 
-/** §9.6's `metadata`, 81–4096 bytes. Bounds inclusive. */
+/** Variable-length fields — §9.6's `metadata` (81–4096 bytes), §9.2's `title` (41–1024). Bounds inclusive. */
 export function decodeRangeOr400(
   value: string,
   minBytes: number,

@@ -56,7 +56,7 @@ const albumsReturning = (album) => ({
 const ownedAlbum = {
   id: ALBUM,
   ownerId: OWNER,
-  title: "Primer cumpleaños",
+  title: new Uint8Array(60).fill(0x51), // ciphertext since 003 (encryption spec §2)
   createdAt: new Date("2026-09-21T09:00:00.000Z"),
 };
 
