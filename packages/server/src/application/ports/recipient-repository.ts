@@ -1,12 +1,17 @@
 /*
- * The recipient credential — api-sketch §7.1, §7.3, §7.7, schema §3.
- * PR 2's scope completed, not PR 3's grown: PR 2b shipped four of §7.9's eight
- * routes and this scheme was never built. PR 3 is the first thing to need it.
+ * The recipient credential — api-sketch §7.1, §7.3, §7.7, §7.8, schema §3.
+ * The invite IS the credential — no expiry, no session, no refresh (§7.7,
+ * brief §3).
  *
- * No create and no revoke: §7.7's route stays PR 2's and unbuilt, and the
- * tests insert rows directly. The invite IS the credential — no expiry, no
- * session, no refresh (§7.7, brief §3).
+ * NO `delete`, and none should be added. `access_log.recipient_id` is
+ * `ON DELETE CASCADE` (schema §5), so deleting a recipient row destroys that
+ * recipient's entire view history — "María viewed this" — as a side effect of
+ * revoking access. Revocation is `revoke` below: it sets `revoked_at` and
+ * removes nothing (§7.8). §4.2's delete-objects-first rule covers albums and
+ * owners and would not catch this, which is why it is stated here.
  */
+
+import type { Argon2idParameters } from "./kdf.js";
 
 /**
  * Narrower than the row, as `OwnerKdfRow` is. The six passphrase columns are
@@ -25,6 +30,51 @@ export type RecipientGrant = {
   readonly revokedAt: Date | null;
 };
 
+/** Passphrase mode's wrapping (encryption spec §6.2). Ciphertext, never key material (#16). */
+export type RecipientWrap = {
+  /** 48 bytes: K_album (32) + Poly1305 tag (16), under a KEK the relay never sees. */
+  readonly wrapped: Uint8Array;
+  /** 24 bytes. The field that gets forgotten (§7.7). */
+  readonly wrapNonce: Uint8Array;
+  /** 16 bytes. */
+  readonly kdfSalt: Uint8Array;
+  readonly params: Argon2idParameters;
+};
+
+/**
+ * A union, not six optional fields: it mirrors `CK_recipients_passphrase_columns`
+ * rather than trusting it. With optionals, `{ kind: "qr", wrapped }` compiles
+ * and the database is the first thing to catch it — as a 500.
+ */
+export type NewRecipient = {
+  /** Client-generated, no server default — it is inside the wrap AAD (§7.7). */
+  readonly id: string;
+  readonly albumId: string;
+  /**
+   * 41–1024 bytes of ciphertext: nonce ‖ ciphertext ‖ tag under
+   * K_label(recipient_id) (encryption spec §2). The relay cannot read it;
+   * any character limit is the client's.
+   */
+  readonly label: Uint8Array;
+  /** 32 bytes: SHA-256 of the raw token, computed by the client (§7.4). */
+  readonly tokenHash: Uint8Array;
+} & (
+  | { readonly kind: "qr" }
+  | { readonly kind: "passphrase"; readonly wrap: RecipientWrap }
+);
+
+export type CreatedRecipient = {
+  readonly id: string;
+  readonly createdAt: Date;
+};
+
+/** §7.8's scope input. `ownerId` comes from the `albums` join. */
+export type RecipientScope = {
+  readonly id: string;
+  readonly albumId: string;
+  readonly ownerId: string;
+};
+
 export interface RecipientRepository {
   /**
    * §7.3 step 1. SHA-256 over the 32 raw token bytes (schema §6), looked up
@@ -32,4 +82,37 @@ export interface RecipientRepository {
    * carry only revocation. `null` for no match; the caller maps it to `401`.
    */
   findGrantByTokenHash(tokenHash: Uint8Array): Promise<RecipientGrant | null>;
+
+  /**
+   * §7.7. Duplicates come from the constraints, never a prior `SELECT`. BOTH
+   * `UNIQUE`s — the primary key and `token_hash` — surface as ONE code,
+   * `ApplicationError("DUPLICATE_RECIPIENT")`: a `409` naming the column is an
+   * oracle for "is this hash already in use".
+   *
+   * Any cause chained for the log is a message the adapter writes. Never the
+   * pg error: its `detail` carries the colliding key, which here is the
+   * submitted `token_hash` (#15).
+   */
+  create(recipient: NewRecipient): Promise<CreatedRecipient>;
+
+  /**
+   * §7.8's scope lookup. Returns `ownerId` rather than taking it, as
+   * `AlbumRepository.findById` does, so §7.3 step 3 is decided in the use case
+   * on every route alike. `null` for absent; the use case maps absent and
+   * not-the-caller's to the same `404`.
+   */
+  findScopeById(recipientId: string): Promise<RecipientScope | null>;
+
+  /**
+   * §7.8. `SET revoked_at = COALESCE(revoked_at, now()) … RETURNING revoked_at`:
+   * returns the ORIGINAL timestamp on every call after the first, and under
+   * READ COMMITTED a concurrent second revoke blocks, re-reads, and returns the
+   * first one too — idempotent under a race, not only in sequence. `now()` is
+   * the database's, on the reasoning on `OwnerRepository`'s revocations.
+   *
+   * Called after `findScopeById`, by design. The window between the two is
+   * harmless: no route deletes a recipient or an album, and the `COALESCE`
+   * makes the update idempotent.
+   */
+  revoke(recipientId: string): Promise<Date>;
 }

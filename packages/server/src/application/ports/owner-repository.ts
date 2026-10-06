@@ -7,12 +7,14 @@
  * transport and belongs to the HTTP adapter (schema §6).
  */
 
-/** Argon2id, per `owner_keys` row. Floors are the signup schema's to enforce (§8.1). */
-export type OwnerKdfParameters = {
-  readonly memoryKib: number;
-  readonly iterations: number;
-  readonly parallelism: number;
-};
+import type { Argon2idParameters } from "./kdf.js";
+
+/**
+ * Argon2id, per `owner_keys` row. Floors are the signup schema's to enforce
+ * (§8.1). An alias, not a second declaration — `recipients` shares the shape
+ * (kdf.ts); the name keeps owner call sites reading as owner-specific.
+ */
+export type OwnerKdfParameters = Argon2idParameters;
 
 /** What `/login/params` may return, and nothing else — §7.5. */
 export type OwnerKdfRow = {
@@ -92,4 +94,31 @@ export interface OwnerRepository {
    * status codes live.
    */
   findTokenByHash(tokenHash: Uint8Array): Promise<OwnerToken | null>;
+
+  /*
+   * Revocation stamps `revoked_at` with the DATABASE's `now()`, not `Clock`.
+   * Deliberate, not an inconsistency to unify: `revoked_at` records when
+   * something happened and is only ever tested for null, as `created_at` is;
+   * `expires_at` comes from `Clock` because a session window is arithmetic a
+   * test must control. Two kinds of value, two sources.
+   *
+   * Both set `revoked_at` and delete nothing.
+   */
+
+  /**
+   * `/logout` (§7.5): the presented token's row ONLY — one row per device is
+   * normal, and revoking them all signs a parent out of their phone.
+   * `ownerId` is redundant with the hash and is there anyway, in the `WHERE`,
+   * so a use-case bug cannot revoke another owner's session. Zero rows is a
+   * concurrent logout arriving first, and still `204` — hence `void`.
+   */
+  revokeToken(ownerId: string, tokenHash: Uint8Array): Promise<void>;
+
+  /**
+   * `/logout/all` (§7.5): every unrevoked row for the owner, the CALLING
+   * session included — exempting it lets an attacker holding your session
+   * survive your own sign-out-everywhere. Expired-but-unrevoked rows are
+   * stamped too; harmless, and it keeps the predicate to two terms.
+   */
+  revokeAllTokens(ownerId: string): Promise<void>;
 }

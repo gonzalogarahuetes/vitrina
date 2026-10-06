@@ -151,6 +151,20 @@ class PostgresOwnerRepository implements OwnerRepository {
       revokedAt: ownerTokenRow.revoked_at,
     };
   }
+
+  async revokeToken(ownerId: string, tokenHash: Uint8Array): Promise<void> {
+    await this.pool.query(
+      `UPDATE owner_tokens SET revoked_at = COALESCE(revoked_at, now()) WHERE owner_id = $1 AND token_hash = $2 AND revoked_at IS NULL`,
+      [ownerId, Buffer.from(tokenHash)],
+    );
+  }
+
+  async revokeAllTokens(ownerId: string): Promise<void> {
+    await this.pool.query(
+      `UPDATE owner_tokens SET revoked_at = now() WHERE owner_id = $1 AND revoked_at IS NULL`,
+      [ownerId],
+    );
+  }
 }
 
 export function createOwnerRepository(pool: Pool): OwnerRepository {

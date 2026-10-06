@@ -260,6 +260,114 @@ test('an expired token is returned, not filtered out', async () => {
 	assert.equal(row.expiresAt.toISOString(), expiresAt.toISOString())
 })
 
+/*
+ * Revocation — api-sketch §7.5's /logout and /logout/all. Every assertion
+ * below reads owner_tokens directly rather than through findTokenByHash, so a
+ * revoke that silently matched no row cannot hide behind the read it pairs with.
+ */
+
+/** An owner with `n` fresh tokens, each expiring well in the future. */
+async function ownerWithTokens(tag, n) {
+	const { id } = await repository.createWithPasswordKey(newOwner(address(tag)))
+	const hashes = []
+	for (let i = 0; i < n; i++) {
+		const tokenHash = createHash('sha256').update(randomUUID()).digest()
+		await repository.insertToken({
+			ownerId: id,
+			tokenHash,
+			expiresAt: new Date('2099-01-01T00:00:00.000Z'),
+		})
+		hashes.push(tokenHash)
+	}
+	return { id, hashes }
+}
+
+async function revokedAtOf(tokenHash) {
+	const { rows } = await pool.query(
+		'SELECT revoked_at FROM owner_tokens WHERE token_hash = $1',
+		[tokenHash],
+	)
+	assert.equal(rows.length, 1, 'the token row is gone — revocation must delete nothing')
+	return rows[0].revoked_at
+}
+
+test('revokeToken revokes the presented token and no other', async () => {
+	// One row per device is normal (schema §3). Revoking all of them signs a
+	// parent out of their phone because they logged out on a laptop.
+	const { id, hashes: [laptop, phone] } = await ownerWithTokens('logout-one', 2)
+
+	await repository.revokeToken(id, laptop)
+
+	assert.ok((await revokedAtOf(laptop)) instanceof Date, 'the presented token was not revoked')
+	assert.equal(await revokedAtOf(phone), null, 'logout revoked a second device')
+})
+
+test("revokeToken cannot revoke another owner's token", async () => {
+	// The ownerId predicate the hash makes redundant. A use case that passed
+	// the wrong owner must revoke nothing, not the row the hash names.
+	const victim = await ownerWithTokens('logout-victim', 1)
+	const caller = await ownerWithTokens('logout-caller', 1)
+
+	await repository.revokeToken(caller.id, victim.hashes[0])
+
+	assert.equal(await revokedAtOf(victim.hashes[0]), null, "another owner's session was revoked")
+	assert.equal(await revokedAtOf(caller.hashes[0]), null)
+})
+
+test('revokeToken keeps the first timestamp on a second call', async () => {
+	// The route never gets here twice — §7.3 step 2 answers 401 first — but
+	// the repository must not move a recorded revocation if it does.
+	const { id, hashes: [token] } = await ownerWithTokens('logout-twice', 1)
+
+	await repository.revokeToken(id, token)
+	const first = await revokedAtOf(token)
+	await new Promise((resolve) => setTimeout(resolve, 20))
+	await repository.revokeToken(id, token)
+
+	assert.equal((await revokedAtOf(token)).toISOString(), first.toISOString())
+})
+
+test('revokeAllTokens revokes every row for the owner, and only that owner', async () => {
+	// Including the CALLING session: exempting it lets an attacker holding
+	// your session survive your own sign-out-everywhere. The port has no
+	// notion of a calling session, so "all" here is all.
+	const { id, hashes } = await ownerWithTokens('logout-all', 3)
+	const bystander = await ownerWithTokens('logout-all-bystander', 1)
+
+	await repository.revokeAllTokens(id)
+
+	for (const tokenHash of hashes) {
+		assert.ok((await revokedAtOf(tokenHash)) instanceof Date, 'a session survived logout/all')
+	}
+	assert.equal(
+		await revokedAtOf(bystander.hashes[0]),
+		null,
+		"logout/all reached another owner's session",
+	)
+})
+
+test('revokeAllTokens leaves an earlier revocation where it was', async () => {
+	// `WHERE revoked_at IS NULL`: a row revoked by an earlier /logout keeps
+	// its own timestamp, which is the true one.
+	const { id, hashes: [earlier, live] } = await ownerWithTokens('logout-all-earlier', 2)
+	const EARLIER = new Date('2026-09-01T08:00:00.000Z')
+	await pool.query('UPDATE owner_tokens SET revoked_at = $1 WHERE token_hash = $2', [
+		EARLIER,
+		earlier,
+	])
+
+	await repository.revokeAllTokens(id)
+
+	assert.equal((await revokedAtOf(earlier)).toISOString(), EARLIER.toISOString())
+	assert.ok((await revokedAtOf(live)) instanceof Date)
+})
+
+test('revokeAllTokens on an owner with no tokens is not an error', async () => {
+	// Zero rows is a value, not a failure — the route answers 204 regardless.
+	const { id } = await ownerWithTokens('logout-all-none', 0)
+	await repository.revokeAllTokens(id)
+})
+
 before(async () => {
 	// Fail early and clearly if the stack is not up, rather than as ten
 	// identical connection errors.

@@ -28,8 +28,11 @@ import { createRecipientRepository } from '../packages/server/dist/adapters/driv
  *   5. label is ciphertext since 003, and the database refuses one under the
  *      41-byte floor (CHK_recipients_label_len) while setting no ceiling.
  *
- * There is no create path to test: §7.7's route is PR 2's and unbuilt, so
- * rows are inserted here with SQL, as the port's comment says.
+ * The fixtures above are inserted with SQL so the lookup tests stand apart
+ * from create. Create, scope and revoke (§7.7, §7.8) follow at the foot of
+ * the file, and they read the table back directly rather than through the
+ * port, so a write that went to the wrong table or matched no row cannot pass
+ * by agreeing with its own read.
  *
  * Isolation is by a fresh owner per run rather than by truncating, so a failed
  * run leaves the developer's database usable. The owner is deleted in `after`
@@ -182,9 +185,8 @@ test('UQ_recipients_token_hash makes the lookup unambiguous', async () => {
 
 test('label is refused under the 41-byte floor, and not capped above', async () => {
 	/*
-	 * 003's CHK_recipients_label_len. No route writes a label yet (§7.7 is
-	 * unbuilt), so the constraint is the only length check that exists today —
-	 * and it is the floor only: 1024 belongs to the route, not the table.
+	 * 003's CHK_recipients_label_len. The floor only: 1024 belongs to §7.7's
+	 * route, not the table, so a 2000-byte label is the database's to accept.
 	 */
 	const fresh = (label) => ({
 		id: randomUUID(),
@@ -199,4 +201,257 @@ test('label is refused under the 41-byte floor, and not capped above', async () 
 	)
 	await insertRecipient(fresh(bytes(0x61, 41)))
 	await insertRecipient(fresh(bytes(0x61, 2000)))
+})
+
+/*
+ * Create, scope and revoke — api-sketch §7.7 and §7.8.
+ */
+
+/** Every string reachable from an error: messages, causes, own properties. */
+function stringsIn(value, found = [], seen = new Set()) {
+	if (value === null || value === undefined || seen.has(value)) return found
+	if (typeof value === 'string') {
+		found.push(value)
+		return found
+	}
+	if (typeof value !== 'object') return found
+	seen.add(value)
+	if (value instanceof Error) {
+		found.push(value.message)
+		stringsIn(value.cause, found, seen)
+	}
+	for (const v of Object.values(value)) stringsIn(v, found, seen)
+	return found
+}
+
+/** A QR recipient as the port takes it, every binary field distinct. */
+const newQr = (overrides = {}) => ({
+	id: randomUUID(),
+	albumId: ALBUM_A,
+	kind: 'qr',
+	label: Buffer.from([0x00, 0xff, ...bytes(0x6c, 46), 0xff, 0x00]), // 50, NUL at both ends
+	tokenHash: tokenHash(randomBytes(32)),
+	...overrides,
+})
+
+/** A passphrase recipient, at 002's floors so the test pins which migration's. */
+const newPassphrase = (overrides = {}) => ({
+	...newQr(),
+	kind: 'passphrase',
+	wrap: {
+		wrapped: bytes(0x77, 48),
+		wrapNonce: bytes(0x6e, 24),
+		kdfSalt: bytes(0x73, 16),
+		params: { memoryKib: 16384, iterations: 2, parallelism: 1 },
+	},
+	...overrides,
+})
+
+async function rowOf(id) {
+	const { rows } = await pool.query('SELECT * FROM recipients WHERE id = $1', [id])
+	assert.equal(rows.length, 1, `expected exactly one recipients row for ${id}`)
+	return rows[0]
+}
+
+const PASSPHRASE_COLUMNS = [
+	'wrapped',
+	'wrap_nonce',
+	'kdf_salt',
+	'kdf_memory_kib',
+	'kdf_iterations',
+	'kdf_parallelism',
+]
+
+test('create: a QR recipient lands in recipients, with no wrap columns', async () => {
+	const recipient = newQr()
+	const created = await repository.create(recipient)
+
+	assert.equal(created.id, recipient.id, 'the id is the client\'s, never the server\'s (§7.7)')
+	assert.ok(created.createdAt instanceof Date)
+	assert.deepEqual(Object.keys(created).sort(), ['createdAt', 'id'])
+
+	const row = await rowOf(recipient.id)
+	assert.equal(row.album_id, ALBUM_A)
+	assert.equal(row.kind, 'qr')
+	assert.equal(hex(row.label), hex(recipient.label), 'label is bytea, byte for byte')
+	assert.equal(hex(row.token_hash), hex(recipient.tokenHash))
+	assert.equal(row.revoked_at, null)
+	for (const column of PASSPHRASE_COLUMNS) {
+		assert.equal(row[column], null, `${column} is set on a QR row`)
+	}
+	assert.equal(row.created_at.toISOString(), created.createdAt.toISOString())
+})
+
+test('create: a passphrase recipient stores all six wrap columns', async () => {
+	// The eleven-column insert. Its placeholder count is what broke first.
+	const recipient = newPassphrase()
+	await repository.create(recipient)
+
+	const row = await rowOf(recipient.id)
+	assert.equal(row.kind, 'passphrase')
+	assert.equal(hex(row.wrapped), hex(recipient.wrap.wrapped))
+	assert.equal(hex(row.wrap_nonce), hex(recipient.wrap.wrapNonce))
+	assert.equal(hex(row.kdf_salt), hex(recipient.wrap.kdfSalt))
+	assert.equal(row.kdf_memory_kib, 16384)
+	assert.equal(row.kdf_iterations, 2)
+	assert.equal(row.kdf_parallelism, 1)
+})
+
+test('create: a created recipient is a usable credential', async () => {
+	// The point of the route: PR 4 needs rows the tests did not write by hand.
+	const token = randomBytes(32)
+	const recipient = newPassphrase({ tokenHash: tokenHash(token), albumId: ALBUM_B })
+	await repository.create(recipient)
+
+	const grant = await repository.findGrantByTokenHash(tokenHash(token))
+	assert.equal(grant.id, recipient.id)
+	assert.equal(grant.albumId, ALBUM_B)
+	assert.equal(grant.revokedAt, null)
+})
+
+test('create: KDF floors are 002\'s, not 001\'s', async () => {
+	// 16384/2/1 is accepted above. One below the memory floor is the
+	// database's to refuse — and must NOT surface as DUPLICATE_RECIPIENT.
+	const below = newPassphrase()
+	below.wrap = { ...below.wrap, params: { ...below.wrap.params, memoryKib: 16383 } }
+
+	await assert.rejects(
+		() => repository.create(below),
+		(error) => error.code === '23514' && error.constraint === 'CHK_recipients_kdf_wrap_kind',
+	)
+})
+
+test('create: a duplicate id is DUPLICATE_RECIPIENT, naming nothing submitted', async () => {
+	const first = newQr()
+	await repository.create(first)
+	const retry = newQr({ id: first.id })
+
+	await assert.rejects(
+		() => repository.create(retry),
+		(error) => {
+			assert.equal(error.code, 'DUPLICATE_RECIPIENT')
+			// #15: pg's `detail` carries the colliding key. A cause chained
+			// verbatim puts the id here, or on the hash case the hash.
+			for (const string of stringsIn(error)) {
+				assert.ok(!string.includes(first.id), `the id reached the error: ${string}`)
+				assert.ok(!string.includes(hex(retry.tokenHash)), `the hash reached the error: ${string}`)
+			}
+			return true
+		},
+	)
+	await rowOf(first.id) // still exactly one
+})
+
+test('create: a duplicate token_hash is DUPLICATE_RECIPIENT too, with its own log cause', async () => {
+	/*
+	 * The case that answered 500 before UQ_recipients_token_hash was matched.
+	 * Same wire code as the id collision (§7.7: naming the column is an
+	 * oracle), but a DIFFERENT authored cause, so the log can still say which
+	 * one collided — the diagnostic the album and media codes keep.
+	 */
+	const first = newQr()
+	await repository.create(first)
+	const squatter = newQr({ tokenHash: first.tokenHash })
+
+	const idCollision = await repository.create(newQr({ id: first.id })).catch((e) => e)
+	const hashCollision = await repository.create(squatter).catch((e) => e)
+
+	assert.equal(hashCollision.code, 'DUPLICATE_RECIPIENT')
+	for (const string of stringsIn(hashCollision)) {
+		assert.ok(!string.includes(hex(first.tokenHash)), `the hash reached the error: ${string}`)
+	}
+	assert.notEqual(
+		hashCollision.cause?.message,
+		idCollision.cause?.message,
+		'the two collisions are indistinguishable in the log',
+	)
+
+	const { rows } = await pool.query('SELECT count(*)::int AS n FROM recipients WHERE id = $1', [
+		squatter.id,
+	])
+	assert.equal(rows[0].n, 0)
+})
+
+test('create: an unknown album is not a duplicate', async () => {
+	// 23503, not 23505. The use case scopes first so the route never sends
+	// this; if it ever does, it must reach the 500 path with its stack.
+	await assert.rejects(
+		() => repository.create(newQr({ albumId: randomUUID() })),
+		(error) => error.code === '23503',
+	)
+})
+
+test('findScopeById: id, album and the album\'s owner — and nothing else', async () => {
+	const scope = await repository.findScopeById(live.id)
+	const { rows: [owner] } = await pool.query('SELECT id FROM owners WHERE email = $1', [OWNER_EMAIL])
+
+	assert.deepEqual(scope, { id: live.id, albumId: ALBUM_A, ownerId: owner.id })
+})
+
+test('findScopeById: a revoked recipient is still in scope; an unknown one is null', async () => {
+	// Revoke is idempotent (§7.8): a second revoke must find the row, so the
+	// scope lookup must not filter on revocation.
+	const scope = await repository.findScopeById(revoked.id)
+	assert.equal(scope.id, revoked.id)
+	assert.equal(await repository.findScopeById(randomUUID()), null)
+})
+
+test('revoke: sets revoked_at, and returns the original on every later call', async () => {
+	const recipient = newQr()
+	await repository.create(recipient)
+
+	const first = await repository.revoke(recipient.id)
+	assert.ok(first instanceof Date)
+	await new Promise((resolve) => setTimeout(resolve, 20))
+	const second = await repository.revoke(recipient.id)
+
+	assert.equal(second.toISOString(), first.toISOString(), 'a second revoke moved the timestamp')
+	assert.equal((await rowOf(recipient.id)).revoked_at.toISOString(), first.toISOString())
+})
+
+test('revoke: a row revoked earlier keeps its timestamp', async () => {
+	const at = await repository.revoke(revoked.id)
+	assert.equal(at.toISOString(), REVOKED_AT.toISOString())
+})
+
+test('revoke: two concurrent revokes return the same timestamp', async () => {
+	// COALESCE inside the UPDATE: the second blocks on the row lock,
+	// re-reads it under READ COMMITTED, and keeps the first value. A
+	// read-then-write implementation can return two different timestamps.
+	const recipient = newQr()
+	await repository.create(recipient)
+
+	const [a, b] = await Promise.all([
+		repository.revoke(recipient.id),
+		repository.revoke(recipient.id),
+	])
+	assert.equal(a.toISOString(), b.toISOString())
+})
+
+test('revoke: deletes nothing — the access log survives', async () => {
+	/*
+	 * §7.8's whole argument. access_log.recipient_id is ON DELETE CASCADE, so a
+	 * revoke implemented as DELETE takes "María viewed this" with it.
+	 */
+	const recipient = newQr()
+	await repository.create(recipient)
+	await pool.query(
+		`INSERT INTO access_log (recipient_id, event) VALUES ($1, 'album_opened'), ($1, 'album_opened')`,
+		[recipient.id],
+	)
+
+	await repository.revoke(recipient.id)
+
+	await rowOf(recipient.id)
+	const { rows } = await pool.query(
+		'SELECT count(*)::int AS n FROM access_log WHERE recipient_id = $1',
+		[recipient.id],
+	)
+	assert.equal(rows[0].n, 2, 'revoke destroyed the view history')
+})
+
+test('revoke: an unknown id throws rather than returning undefined', async () => {
+	// The use case scopes first, so this is unreachable from the route. If it
+	// is ever reached it must be a 500, never a 200 with no revoked_at.
+	await assert.rejects(() => repository.revoke(randomUUID()))
 })

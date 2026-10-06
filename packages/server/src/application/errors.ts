@@ -41,7 +41,15 @@ export type ApplicationErrorCode =
    * album. Reachable only after step 3 has put the album in scope — probing
    * any other album is `ALBUM_NOT_FOUND`, identically to an unrevoked one.
    */
-  | "ALBUM_ACCESS_REVOKED";
+  | "ALBUM_ACCESS_REVOKED"
+  /**
+   * §7.7's `409`: the primary key OR `token_hash` collided — ONE code for
+   * both, unlike the album and media ids. Naming the column is an oracle for
+   * "is this hash in use"; the client's remedy is the same either way.
+   */
+  | "DUPLICATE_RECIPIENT"
+  /** §7.8's `404`: absent or not the caller's, indistinguishably — as albums. */
+  | "RECIPIENT_NOT_FOUND";
 
 /**
  * `message` is the code itself: a constant, never interpolated with request
