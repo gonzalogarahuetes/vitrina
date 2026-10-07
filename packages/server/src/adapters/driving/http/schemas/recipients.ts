@@ -1,4 +1,10 @@
-import { timestamp, uuid, b64urlRange, b64url } from "./fragments.js";
+import {
+  timestamp,
+  uuid,
+  b64urlRange,
+  b64url,
+  kdfParameters,
+} from "./fragments.js";
 
 const label = b64urlRange(55, 1366);
 
@@ -72,6 +78,31 @@ export const revokeRecipientSchema = {
       type: "object",
       properties: { revoked_at: timestamp },
       required: ["revoked_at"],
+      additionalProperties: false,
+    },
+  },
+} as const;
+
+export const retrieveRecipientKeySchema = {
+  response: {
+    200: {
+      type: "object",
+      properties: {
+        id: uuid,
+        kdf_salt: b64url(22),
+        ...kdfParameters,
+        wrapped: b64url(64),
+        wrap_nonce: b64url(32),
+      },
+      required: [
+        "id",
+        "kdf_salt",
+        "kdf_memory_kib",
+        "kdf_iterations",
+        "kdf_parallelism",
+        "wrapped",
+        "wrap_nonce",
+      ],
       additionalProperties: false,
     },
   },

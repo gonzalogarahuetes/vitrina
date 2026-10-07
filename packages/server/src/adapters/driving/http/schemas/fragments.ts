@@ -34,3 +34,15 @@ export const uuid = { type: "string", format: "uuid" } as const;
 
 /** RFC 3339 UTC with a trailing Z, built by the route — see rfc3339.ts. */
 export const timestamp = { type: "string" } as const;
+
+/**
+ * FLOORS, never the v1 chosen values — §8.1. A client may post HIGHER
+ * parameters; that is the entire reason they are stored per row. A schema
+ * pinned to 65536/3/1 works today and rejects every account created after
+ * Phase 2 raises the default.
+ */
+export const kdfParameters = {
+  kdf_memory_kib: { type: "integer", minimum: 16384 },
+  kdf_iterations: { type: "integer", minimum: 2 },
+  kdf_parallelism: { type: "integer", minimum: 1 },
+} as const;

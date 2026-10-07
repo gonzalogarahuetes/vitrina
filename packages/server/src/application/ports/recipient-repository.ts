@@ -15,7 +15,7 @@ import type { Argon2idParameters } from "./kdf.js";
 
 /**
  * Narrower than the row, as `OwnerKdfRow` is. The six passphrase columns are
- * §10.1's and PR 4's; `kind` and `label` are PR 4's and §11.4's. Each gets its
+ * §10.1's and PR 5's; `kind` and `label` are PR 4's and §11.4's. Each gets its
  * own method rather than widening what every request loads.
  */
 export type RecipientGrant = {
@@ -115,4 +115,23 @@ export interface RecipientRepository {
    * makes the update idempotent.
    */
   revoke(recipientId: string): Promise<Date>;
+
+  /**
+   * §10.1. A passphrase row's wrapping, exactly as `create` stored it.
+   * Ciphertext and its public parameters only — the relay holds no passphrase,
+   * KEK or `K_album` to return alongside it (§4.1's outbound half, #16).
+   *
+   * `recipientId` comes from the grant §7.3 step 1 resolved, NEVER from the
+   * request: there is no id in §10.1's path, and that absence is the scope
+   * check. A caller passing a path or body value here rebuilds the
+   * enumeration the flat route exists to remove.
+   *
+   * `null` for a qr row AND for an absent one. The caller maps both to the same
+   * `404` — a qr row has no key material, so the resource does not exist.
+   *
+   * Does NOT filter on `revoked_at`, as `findGrantByTokenHash` does not:
+   * revocation is §7.3 step 4 and the use case's. The wrapping must not reach
+   * a response before that check runs, which this method cannot enforce.
+   */
+  findWrapById(recipientId: string): Promise<RecipientWrap | null>;
 }

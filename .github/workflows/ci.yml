@@ -11,8 +11,15 @@
 # of a hermetic suite is that a red `checks` means the code is wrong, never
 # that a container was slow.
 #
-# The two jobs do NOT depend on each other. They run in parallel so that a
-# failure in one still reports the other's real result.
+# The two jobs do not TEST each other: a red `infra` never means the code
+# failed a hermetic check, and a red `checks` never means a container was slow.
+# Since PR 4 `infra` does depend on `checks` for one input — the envelope WASM
+# build, uploaded as an artifact — because infra/pr4-routes.test.mjs plays the
+# client and unwraps with the real crate. Built once, in the job that already
+# has the pinned toolchain, rather than twice with the pin copied into a job
+# whose failures are meant to mean infrastructure. The cost, chosen: a red
+# `checks` now SKIPS `infra` rather than running it beside, so the
+# independent-failure-reporting this paragraph used to promise no longer holds.
 #
 # Action versions are pinned to commit SHAs, not tags — a tag can be moved to
 # point at different code, a SHA cannot.
@@ -164,6 +171,17 @@ jobs:
       - name: TypeScript smoke harness
         run: pnpm test:wasm
 
+      # The module the harness above just ran every vector through, handed to
+      # `infra` so it tests these bytes and not a second build of them.
+      # packages/envelope/wasm/ is gitignored; this is its only route there.
+      - name: Upload the envelope WASM build
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: envelope-wasm
+          path: packages/envelope/wasm/
+          if-no-files-found: error
+          retention-days: 1
+
       # Slots for later phases. Do not implement these ahead of their step:
       #   Phase 1  — assert no outbound request carries key material
       #              (invite spec §7 #3)
@@ -182,6 +200,9 @@ jobs:
   infra:
     name: infra (docker)
     runs-on: ubuntu-24.04
+    # For the envelope-wasm artifact only — see the header. No Rust toolchain
+    # here, deliberately.
+    needs: checks
 
     steps:
       - name: Check out
@@ -211,6 +232,14 @@ jobs:
       # with its logs, instead of as a missing table in the first test to need one.
       - name: Wait for the one-shots (bucket seeder, migrator)
         run: pnpm infra:wait
+
+      # infra/pr4-routes.test.mjs unwraps K_album with the real crate (§10.1's
+      # done-when). Same bytes `checks` tested, never a rebuild.
+      - name: Download the envelope WASM build
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: envelope-wasm
+          path: packages/envelope/wasm/
 
       - name: pnpm test:infra
         run: pnpm test:infra

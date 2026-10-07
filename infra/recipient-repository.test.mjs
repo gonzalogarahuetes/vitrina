@@ -455,3 +455,86 @@ test('revoke: an unknown id throws rather than returning undefined', async () =>
 	// is ever reached it must be a 500, never a 200 with no revoked_at.
 	await assert.rejects(() => repository.revoke(randomUUID()))
 })
+
+/*
+ * findWrapById — api-sketch §10.1. The hermetic route tests run against a
+ * fake, so this is the only place the SELECT and its column mapping are
+ * checked. Rows are made through `create`, which is what §10.1's infra test
+ * does through the API.
+ */
+
+/**
+ * Three distinct integers, all above 002's floors. With v1's defaults or the
+ * floors, iterations and parallelism mapped the wrong way round can still
+ * pass; here every swap fails.
+ */
+const UNUSUAL_PARAMS = { memoryKib: 20480, iterations: 5, parallelism: 3 }
+
+/** Byte-for-byte, as hex: pg returns Buffer and the port says Uint8Array. */
+const wrapAsHex = (wrap) => ({
+	wrapped: hex(wrap.wrapped),
+	wrapNonce: hex(wrap.wrapNonce),
+	kdfSalt: hex(wrap.kdfSalt),
+	params: { ...wrap.params },
+})
+
+test('findWrapById: returns what create stored, every column in its place', async () => {
+	const recipient = newPassphrase()
+	recipient.wrap = { ...recipient.wrap, params: UNUSUAL_PARAMS }
+	await repository.create(recipient)
+
+	const wrap = await repository.findWrapById(recipient.id)
+
+	assert.ok(wrap, 'no wrapping for a passphrase row that was created')
+	assert.deepEqual(wrapAsHex(wrap), wrapAsHex(recipient.wrap))
+	// Exactly the wrapping: a widened SELECT (`label`, `token_hash`) is a
+	// decision made here, not drift — the same guard as the grant's shape.
+	assert.deepEqual(Object.keys(wrap).sort(), ['kdfSalt', 'params', 'wrapNonce', 'wrapped'])
+	assert.deepEqual(Object.keys(wrap.params).sort(), ['iterations', 'memoryKib', 'parallelism'])
+})
+
+test('findWrapById: each id gets its own row, not the album\'s first', async () => {
+	// Two passphrase recipients on one album with different wrappings. A
+	// query keyed on album or kind alone answers both with the same bytes.
+	const a = newPassphrase()
+	const b = newPassphrase()
+	b.wrap = {
+		wrapped: bytes(0x57, 48),
+		wrapNonce: bytes(0x4e, 24),
+		kdfSalt: bytes(0x53, 16),
+		params: UNUSUAL_PARAMS,
+	}
+	await repository.create(a)
+	await repository.create(b)
+
+	assert.deepEqual(wrapAsHex(await repository.findWrapById(a.id)), wrapAsHex(a.wrap))
+	assert.deepEqual(wrapAsHex(await repository.findWrapById(b.id)), wrapAsHex(b.wrap))
+})
+
+test('findWrapById: a qr row is null, not an object of nulls', async () => {
+	// §10.1's 404. Without `kind = 'passphrase'` the row matches and the
+	// adapter returns { wrapped: null, … }, which the route would encode.
+	const recipient = newQr()
+	await repository.create(recipient)
+
+	assert.equal(await repository.findWrapById(recipient.id), null)
+	assert.equal(await repository.findWrapById(live.id), null, 'the SQL-inserted qr fixture')
+})
+
+test('findWrapById: an unknown id is null, not an error', async () => {
+	assert.equal(await repository.findWrapById(randomUUID()), null)
+})
+
+test('findWrapById: a revoked row still returns its wrapping', async () => {
+	/*
+	 * Not filtered, by the same reasoning as the grant: revocation is §7.3
+	 * step 4 and the use case's. This pins where the 403 must come from — a
+	 * route test that a revoked caller gets no `wrapped` cannot rely on the
+	 * repository to have withheld it.
+	 */
+	const recipient = newPassphrase()
+	await repository.create(recipient)
+	await repository.revoke(recipient.id)
+
+	assert.deepEqual(wrapAsHex(await repository.findWrapById(recipient.id)), wrapAsHex(recipient.wrap))
+})

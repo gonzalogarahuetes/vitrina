@@ -11,7 +11,8 @@ import health from "./routes/health.js";
 import { credentialRoutes } from "./routes/credentials.js";
 import { albumRoutes } from "./routes/albums.js";
 import { mediaRoutes } from "./routes/media.js";
-import { recipientRoutes } from "./routes/recipients.js";
+import { recipientsRoutes } from "./routes/recipients.js";
+import { ownRecipientRoutes } from "./routes/recipient.js";
 
 /*
  * What the log may carry — the adapter's, never the caller's (see below).
@@ -143,7 +144,8 @@ export async function buildServer(
           uploadDeadlineMs: deps.uploadDeadlineMs ?? UPLOAD_DEADLINE_MS,
         }),
       );
-      await v1.register(recipientRoutes({ useCases: deps.useCases }));
+      await v1.register(recipientsRoutes({ useCases: deps.useCases }));
+      await v1.register(ownRecipientRoutes({ useCases: deps.useCases }));
       for (const plugin of deps.v1Plugins ?? []) {
         await v1.register(plugin);
       }

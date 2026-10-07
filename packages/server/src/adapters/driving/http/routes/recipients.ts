@@ -10,7 +10,7 @@ import { rfc3339 } from "../rfc3339.js";
 import { decodeOr400, decodeRangeOr400 } from "../decode-field.js";
 import type { NewRecipient } from "../../../../application/ports/recipient-repository.js";
 
-export type RecipientRoutesDeps = {
+export type RecipientsRoutesDeps = {
   readonly useCases: UseCases;
 };
 
@@ -27,7 +27,7 @@ type CreateRecipientBody = {
   kdf_parallelism: number;
 };
 
-export function recipientRoutes(deps: RecipientRoutesDeps) {
+export function recipientsRoutes(deps: RecipientsRoutesDeps) {
   return async function register(app: FastifyInstance): Promise<void> {
     const requireOwner = makeRequireOwner(deps.useCases);
 

@@ -50,6 +50,14 @@ const FORBIDDEN = [
 ];
 
 /**
+ * Forbidden in a RESPONSE only — §4.1's outbound half (PR 4). Matched EXACTLY,
+ * not by suffix like the list above: `key` by suffix would flag §9.2's
+ * `wrapped_key`, which is the wrapping that route exists to return. `proof` is
+ * outbound-only because /signup and /login must accept it.
+ */
+const FORBIDDEN_IN_RESPONSE = ["key", "proof"];
+
+/**
  * Forbidden in a REQUEST BODY only — §9.7: "no route accepts a `status` field,
  * on any body, ever". Scoped to `body` because §9.4 and §9.8 declare `status`
  * in their responses, where it is the route's purpose.
@@ -70,6 +78,20 @@ function propertyNames(node, found = new Set()) {
     for (const name of Object.keys(node.properties)) found.add(name);
   }
   for (const value of Object.values(node)) propertyNames(value, found);
+  return found;
+}
+
+/**
+ * Every node declaring both `properties` and `required`. A `then` or `else`
+ * carrying `required` alone is skipped: it constrains properties its parent
+ * declares, which is §7.7's create body by design.
+ */
+function objectNodes(node, found = []) {
+  if (node === null || typeof node !== "object") return found;
+  if (Array.isArray(node.required) && node.properties && typeof node.properties === "object") {
+    found.push(node);
+  }
+  for (const value of Object.values(node)) objectNodes(value, found);
   return found;
 }
 
@@ -114,6 +136,33 @@ describe("the route table", () => {
             PATH_PARAMETERS.includes(declared),
             `${name} declares the path parameter ${declared}, which is not allowlisted`,
           );
+        }
+      });
+
+      it("returns no field named for a key (§4.1's outbound half)", () => {
+        if (schema.response === undefined) return;
+
+        const outbound = [...propertyNames(schema.response)].map((n) => n.toLowerCase());
+        const offenders = outbound.filter((n) => FORBIDDEN_IN_RESPONSE.includes(n));
+        assert.deepEqual(offenders, [], `${name} returns ${offenders.join(", ")}`);
+      });
+
+      it("requires only properties it declares", () => {
+        /*
+         * Structural, at every depth. A `required` name missing from
+         * `properties` is a 500 on every success, not a validation detail:
+         * with `additionalProperties: false` the serialiser drops the field the
+         * handler sent, then throws because it is required. PR 4's key route
+         * shipped exactly this — `kdfSalt` declared, `kdf_salt` required — and
+         * nothing else in this file could see it.
+         */
+        for (const node of objectNodes(schema)) {
+          for (const required of node.required) {
+            assert.ok(
+              Object.hasOwn(node.properties, required),
+              `${name} requires ${required} but declares only ${Object.keys(node.properties).join(", ")}`,
+            );
+          }
         }
       });
 
@@ -163,6 +212,37 @@ describe("the route table", () => {
       "label",
     ]) {
       assert.ok(declared.includes(field), `createRecipientSchema does not declare ${field}`);
+    }
+  });
+
+  it("permits §10.1's wrapping in a response — the outbound converse", () => {
+    /*
+     * §4.1's outbound half allows a wrapped blob and its public parameters,
+     * and this proves the forbidden lists above have not grown to cover them.
+     * All seven, required: the client cannot unwrap with any one missing, and
+     * `id` is in the wrap AAD with no other source (invite spec §4).
+     */
+    const ok = recipients.retrieveRecipientKeySchema.response[200];
+    const fields = [
+      "id",
+      "wrapped",
+      "wrap_nonce",
+      "kdf_salt",
+      "kdf_memory_kib",
+      "kdf_iterations",
+      "kdf_parallelism",
+    ];
+    assert.deepEqual(Object.keys(ok.properties).sort(), [...fields].sort());
+    assert.deepEqual([...ok.required].sort(), [...fields].sort());
+    assert.equal(ok.additionalProperties, false, "the allowlist is what keeps `label` out");
+  });
+
+  it("§10.1 takes nothing from the request but the token", () => {
+    // No path id is the scope check; a body, a query string or a path
+    // parameter would each be a second, disagreeable source of identity.
+    const schema = recipients.retrieveRecipientKeySchema;
+    for (const section of ["body", "params", "querystring", "headers"]) {
+      assert.equal(schema[section], undefined, `retrieveRecipientKeySchema declares ${section}`);
     }
   });
 
