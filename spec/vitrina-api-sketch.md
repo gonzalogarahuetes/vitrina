@@ -1161,8 +1161,9 @@ which are only written down. **This table grows with every PR** and is the reaso
 | §4.1 create-recipient accepts wrap material and no key material                                                     | `route-table.test.mjs`: the walk covers `schemas/recipients.ts`, and asserts the converse — `wrapped`, `wrap_nonce`, `kdf_salt` and the three integers are declared at the body's top level, where `removeAdditional` cannot strip them. Also: `album_id` only in the path, and no body on `/logout`, `/logout/all` or revoke                                                                                                                                                                                                                                 |
 | §4.1 no response schema declares a key-named field                                                                  | `route-table.test.mjs`: every `response` section is walked for `key` and `proof`, matched **exactly** — by suffix, as the inbound walk matches, `key` would forbid §9.2's `wrapped_key`, the wrapping that route exists to return. The other five names the owed row listed were already in the inbound walk, which has always covered responses. The converse: `retrieveRecipientKeySchema` declares and requires exactly `id`, `wrapped`, `wrap_nonce`, `kdf_salt` and the three integers, with `additionalProperties: false` — the allowlist, not the walk, is what keeps `label` out. Verified by violation — a `key` property in §10.1's response fails it |
 | §10.1 returns the caller's row and only that                                                                        | No id in the path, and `getRecipientKey` takes the **grant** rather than an id, so no request value can reach the lookup by type. `recipient-key-routes.test.mjs`: two passphrase recipients on one album each get their own `id` and `wrapped`, and `?recipient_id=` and `?id=` naming the other are ignored. Verified by violation — threading the query parameter into the lookup fails. `route-table.test.mjs` asserts the schema declares no body, params, query string or headers                                                                       |
-| §10.1 QR → `404`, revoked → `403`, both without `details`                                                           | Same file, one token each: qr `404`; revoked passphrase `403`, with none of `wrapped`, `wrap_nonce` or `kdf_salt` anywhere in the body; unknown `401`; all bare `{code, message}`. **A revoked qr recipient is `404`** — §7.3's order applied, recorded here because §10.1 does not state the case: `get-recipient-key.ts` reads the wrapping (step 3) before it checks revocation (step 4), and reversing them answers `403`. Verified by violation both ways — dropping the revocation check, and moving it first, each fail one case. `infra/pr4-routes.test.mjs` repeats the qr and revoked cases over the real adapter |
+| §10.1 QR → `404`, revoked → `403`, both without `details`                                                           | Same file, one token each: qr `404`; revoked passphrase `403`, with none of `wrapped`, `wrap_nonce` or `kdf_salt` anywhere in the body; unknown `401`; all bare `{code, message}`. **A revoked qr recipient is `404`** — §7.3's order applied, as §10.1 states: `get-recipient-key.ts` reads the wrapping (step 3) before it checks revocation (step 4), and reversing them answers `403`. Verified by violation both ways — dropping the revocation check, and moving it first, each fail one case. `infra/pr4-routes.test.mjs` repeats the qr and revoked cases over the real adapter                                     |
 | §10.1, §9.2 and §8.3 carry `no-store`                                                                               | `recipient-key-routes.test.mjs`: one parametrised test over the three wrapped-blob routes, so a fourth is a one-line addition. Each sets the header from a plugin-wide `onSend` hook rather than per handler. Verified by violation — removing `routes/recipient.ts`'s hook fails it                                                                                                                                                                                                                                                                          |
+| No spec rule — every `required` name is declared                                                                    | `route-table.test.mjs`: at every depth of every schema, a node's `required` names must all be keys of its `properties`. No section states this, and it is recorded anyway because it enforces something real: with `additionalProperties: false` the serialiser drops the undeclared field the handler sent, then throws because it is required — a `500` on every success. It caught §10.1's first draft, `kdfSalt` declared against `kdf_salt` required. Verified by violation — restoring that spelling fails it. A `then`/`else` carrying `required` alone is skipped: it constrains properties its parent declares (§7.7) |
 
 The suite is hermetic — `app.inject()`, no Docker, no network — so it belongs in
 CI's `checks` job, which the workflow keeps free of infrastructure on purpose.
@@ -1172,7 +1173,7 @@ stops holding.
 
 - **Most name a hermetic test.** It fails in `checks` on every PR, and removing
   the enforcement turns it red.
-- **Two name a test that cannot be hermetic.** Signup's transaction needs a real
+- **Several name a test that cannot be hermetic.** Signup's transaction needs a real
   Postgres; §9.7's evidence rule needs a real store, because the property is
   that `ready` rests on the store's own answer rather than on a fake's. Both
   live in `infra/` and run in the `infra` job. Same guarantee, different job; a
@@ -3096,6 +3097,10 @@ spellings.
   calls this route, so the case is a probe or a bug either way, and `404` is
   what a nonexistent row would have answered under an id-bearing design — the
   equivalence the checklist asked for, now moot but preserved.
+- **A revoked QR recipient gets `404`, not `403`** — §7.3's order decides it:
+  there is no key material for a `qr` row at step 3, and step 4 never runs. The
+  ladder gives this for free, and a handler that checks revocation first answers
+  `403` and reveals that the row exists.
 - **A revoked recipient gets `403 ACCESS_REVOKED`**, by §7.3 step 4 — and this is
   the one route where that matters beyond copy. Revocation stops the relay
   serving ciphertext (encryption spec §6.4); the wrapped key is the one piece of
@@ -3145,8 +3150,12 @@ v1: the relay can count fetches of the blob, not unwraps of it.**
 **`id` is in the response because the flow needs it at step 4 and the checklist
 says the recipient arrives without it.** If invite spec §4's payload does carry
 `recipient_id`, the field is redundant and a client may cross-check the two; if
-it does not, this response is the only source. Flagged to the invite spec rather
-than resolved here.
+it does not, this response is the only source. Invite spec §4 settled this on
+13 September 2026: the payload does not carry `recipient_id`. A passphrase
+recipient needs it for the AAD and gets it from this route, which they must call
+anyway; a QR recipient needs it not at all, their key being in the payload rather
+than wrapped. So this response is the only source, and the field is not
+redundant.
 
 **Not returned: `label`, `album_id`, `kind`, `created_at`.** The album is in the
 invite; the kind is implied by a `200`; and `label` is not this route's — a QR
