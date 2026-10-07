@@ -40,6 +40,8 @@ export type ApplicationErrorCode =
    * §7.3 step 4: a recipient whose grant is revoked, asking for THEIR OWN
    * album. Reachable only after step 3 has put the album in scope — probing
    * any other album is `ALBUM_NOT_FOUND`, identically to an unrevoked one.
+   * Also §10.1's `403`: a revoked passphrase recipient fetching their own
+   * wrapping. Named for the album because the grant IS one album.
    */
   | "ALBUM_ACCESS_REVOKED"
   /**
@@ -48,7 +50,11 @@ export type ApplicationErrorCode =
    * "is this hash in use"; the client's remedy is the same either way.
    */
   | "DUPLICATE_RECIPIENT"
-  /** §7.8's `404`: absent or not the caller's, indistinguishably — as albums. */
+  /**
+   * §7.8's `404`: absent or not the caller's, indistinguishably — as albums.
+   * Also §10.1's: the caller's own row has no wrapping (a qr recipient), so
+   * the resource does not exist.
+   */
   | "RECIPIENT_NOT_FOUND";
 
 /**

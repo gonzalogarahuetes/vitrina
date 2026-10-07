@@ -52,6 +52,7 @@ import { logout } from "./application/use-cases/logout.js";
 import { logoutAll } from "./application/use-cases/logout-all.js";
 import { createRecipient } from "./application/use-cases/create-recipient.js";
 import { revokeRecipient } from "./application/use-cases/revoke-recipient.js";
+import { getRecipientKey } from "./application/use-cases/get-recipient-key.js";
 
 /**
  * The v1 Argon2id parameters, declared in `@vitrina/shared` because the client
@@ -146,6 +147,7 @@ export function buildUseCases(
     getAlbumMetadata: getAlbumMetadata({ albums, media }),
     createRecipient: createRecipient({ recipients, albums }),
     revokeRecipient: revokeRecipient({ recipients }),
+    getRecipientKey: getRecipientKey({ recipients }),
   };
 }
 

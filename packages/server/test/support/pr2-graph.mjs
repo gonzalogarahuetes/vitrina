@@ -161,6 +161,16 @@ function inMemoryRecipients(albums) {
       row.revokedAt ??= new Date(NOW.getTime() + rows.size); // the first one sticks
       return row.revokedAt;
     },
+    /**
+     * §10.1. The adapter's `kind = 'passphrase'`: a qr row and an absent one
+     * are both null. Unfiltered on revocation, as the adapter is — step 4 is
+     * the use case's, and a fake that withheld revoked rows would let a use
+     * case that skipped it pass.
+     */
+    async findWrapById(recipientId) {
+      const row = rows.get(recipientId);
+      return row?.kind === "passphrase" ? row.wrap : null;
+    },
   };
 }
 

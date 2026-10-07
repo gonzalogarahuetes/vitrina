@@ -40,6 +40,10 @@ import type { CreateRecipientInput } from "./create-recipient.js";
 import type { LogoutInput } from "./logout.js";
 import type { LogoutAllInput } from "./logout-all.js";
 import type { RevokeRecipientInput } from "./revoke-recipient.js";
+import type {
+  GetRecipientKeyInput,
+  RecipientKey,
+} from "./get-recipient-key.js";
 
 export type UseCases = {
   // PR 2b — the owner credential lifecycle (api-sketch §7.5, §8.3).
@@ -79,4 +83,7 @@ export type UseCases = {
     input: CreateRecipientInput,
   ) => Promise<CreatedRecipient>;
   readonly revokeRecipient: (input: RevokeRecipientInput) => Promise<Date>;
+  readonly getRecipientKey: (
+    input: GetRecipientKeyInput,
+  ) => Promise<RecipientKey>;
 };

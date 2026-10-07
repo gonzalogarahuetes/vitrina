@@ -1,4 +1,10 @@
-import { timestamp, uuid, b64urlRange, b64url } from "./fragments.js";
+import {
+  timestamp,
+  uuid,
+  b64urlRange,
+  b64url,
+  kdfParameters,
+} from "./fragments.js";
 
 const label = b64urlRange(55, 1366);
 
@@ -83,17 +89,21 @@ export const retrieveRecipientKeySchema = {
       type: "object",
       properties: {
         id: uuid,
-        kdfSalt: "",
-        memoryKib: {
-          type: "integer",
-          minimum: 16384,
-          maximum: 2147483647,
-        },
-        iterations: { type: "integer", minimum: 2, maximum: 2147483647 },
-        parallelism: { type: "integer", minimum: 1, maximum: 2147483647 },
-        wrapped: "",
-        wrapNonce: "",
+        kdf_salt: b64url(22),
+        ...kdfParameters,
+        wrapped: b64url(64),
+        wrap_nonce: b64url(32),
       },
+      required: [
+        "id",
+        "kdf_salt",
+        "kdf_memory_kib",
+        "kdf_iterations",
+        "kdf_parallelism",
+        "wrapped",
+        "wrap_nonce",
+      ],
+      additionalProperties: false,
     },
   },
 } as const;
