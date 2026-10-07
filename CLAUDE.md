@@ -71,6 +71,7 @@ cargo clippy --all-targets -- -D warnings   # --all-targets matters: the narrow 
 pnpm test && pnpm lint
 pnpm check:citations                        # if spec/ was touched
 pnpm test:infra                             # if anything under adapters/driven/ moved; needs `pnpm infra:up`
+                                            # and `pnpm --filter @vitrina/envelope build:wasm` (gitignored; CI ships it as an artifact)
 ```
 
 `test:infra` builds first, deliberately: it imports `packages/server/dist/`, so without

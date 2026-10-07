@@ -154,7 +154,12 @@ pnpm test:infra         # object store, migrations, repository — requires the 
 `pnpm test:infra` is deliberately **not** part of `pnpm test`. It talks to a live
 SeaweedFS and Postgres over the network, so it needs `pnpm infra:up` and
 `pnpm infra:wait` first and would otherwise make the ordinary suite fail on a
-machine without Docker running. It builds `packages/server` first, because it
+machine without Docker running. It also needs the envelope WASM build —
+`pnpm --filter @vitrina/envelope build:wasm`, which needs the wasm32 target and
+`wasm-bindgen-cli` — because `pr4-routes.test.mjs` unwraps a key with the real
+crate. `packages/envelope/wasm/` is gitignored, so a stale or missing build is
+a fact about one machine; CI builds it once in `checks` and hands it to
+`infra`. It builds `packages/server` first, because it
 imports `dist/`: without that it tests the previous compile and reports a green
 that verified nothing. It runs every `infra/*.test.mjs`:
 
@@ -187,8 +192,10 @@ independent jobs that mirror the split above:
 - **`infra`** — brings up the compose stack, waits for the `createbucket` and
   `migrate` one-shots to exit 0, runs `pnpm test:infra`, tears down.
 
-They do not depend on each other, so a failure in one still reports the other's
-real result.
+They do not test each other, but `infra` waits for `checks` (`needs: checks`):
+`checks` uploads the envelope WASM build it tested, and `infra` downloads it
+rather than compiling Rust itself. So a red `checks` skips `infra` — the price
+of building those bytes once, with the toolchain pinned in one place.
 
 Two of the steps are runnable locally:
 
