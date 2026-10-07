@@ -5,6 +5,7 @@ import type {
   RecipientGrant,
   RecipientRepository,
   RecipientScope,
+  RecipientWrap,
 } from "../../../application/ports/recipient-repository.js";
 import { ApplicationError } from "../../../application/errors.js";
 
@@ -106,6 +107,28 @@ class PostgresRecipientRepository implements RecipientRepository {
     );
     if (!updatedRow) throw new Error("revoked_at missing from row");
     return updatedRow.revoked_at;
+  }
+
+  async findWrapById(recipientId: string): Promise<RecipientWrap | null> {
+    const {
+      rows: [recipientRow],
+    } = await this.pool.query(
+      `SELECT wrapped, wrap_nonce, kdf_salt, kdf_memory_kib, kdf_iterations, kdf_parallelism
+        FROM recipients
+        WHERE id = $1 AND kind = 'passphrase'`,
+      [recipientId],
+    );
+    if (!recipientRow) return null;
+    return {
+      wrapped: recipientRow.wrapped,
+      wrapNonce: recipientRow.wrap_nonce,
+      kdfSalt: recipientRow.kdf_salt,
+      params: {
+        memoryKib: recipientRow.kdf_memory_kib,
+        iterations: recipientRow.kdf_iterations,
+        parallelism: recipientRow.kdf_parallelism,
+      },
+    };
   }
 }
 

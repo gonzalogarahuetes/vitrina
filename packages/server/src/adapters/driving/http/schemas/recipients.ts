@@ -76,3 +76,24 @@ export const revokeRecipientSchema = {
     },
   },
 } as const;
+
+export const retrieveRecipientKeySchema = {
+  response: {
+    200: {
+      type: "object",
+      properties: {
+        id: uuid,
+        kdfSalt: "",
+        memoryKib: {
+          type: "integer",
+          minimum: 16384,
+          maximum: 2147483647,
+        },
+        iterations: { type: "integer", minimum: 2, maximum: 2147483647 },
+        parallelism: { type: "integer", minimum: 1, maximum: 2147483647 },
+        wrapped: "",
+        wrapNonce: "",
+      },
+    },
+  },
+} as const;
