@@ -239,3 +239,103 @@ test('a StorageError carries no SDK metadata into the log', async () => {
 	assert.equal(error.$metadata, undefined)
 	assert.equal(error.cause?.$metadata, undefined)
 })
+
+// get — api-sketch §11.2, §11.3. The route tests run against a fake store, so
+// only this file shows what SeaweedFS answers and how the adapter maps it.
+
+/** 1000 bytes, each its own offset mod 251: any slice is checkable by value. */
+const PATTERN = Buffer.from(Array.from({ length: 1000 }, (_, i) => i % 251))
+
+const drain = async (readable) => {
+	const parts = []
+	for await (const part of readable) parts.push(part)
+	return Buffer.concat(parts)
+}
+
+const hexOf = (bytes) => Buffer.from(bytes).toString('hex')
+
+const rejectionOf = (promise) => promise.then(() => null, (caught) => caught)
+
+test('get without a range: the whole object, a Readable, no contentRange', async () => {
+	const k = await put(PATTERN)
+
+	const found = await store.get(k)
+
+	assert.ok(found.body instanceof Readable, 'the body must stream, not arrive buffered')
+	assert.equal(found.contentLength, PATTERN.length)
+	assert.equal(hexOf(await drain(found.body)), hexOf(PATTERN))
+	// Absent, not undefined — and no ETag or x-amz-* slot: §11.2's whitelist.
+	assert.deepEqual(Object.keys(found).sort(), ['body', 'contentLength'])
+})
+
+test('get bytes=0-63: the header-sized slice, and its range as numbers', async () => {
+	const k = await put(PATTERN)
+
+	const found = await store.get(k, { start: 0, end: 63 })
+
+	assert.deepEqual(found.contentRange, { start: 0, end: 63, size: 1000 })
+	assert.equal(found.contentLength, 64)
+	assert.equal(hexOf(await drain(found.body)), hexOf(PATTERN.subarray(0, 64)))
+})
+
+test('get bytes=900-: open-ended runs to the last byte', async () => {
+	const k = await put(PATTERN)
+
+	const found = await store.get(k, { start: 900 })
+
+	assert.deepEqual(found.contentRange, { start: 900, end: 999, size: 1000 })
+	assert.equal(hexOf(await drain(found.body)), hexOf(PATTERN.subarray(900)))
+})
+
+test('get past the end is clamped by the store, and the clamp is reported', async () => {
+	// §11.2's clamp row: the relay forwards the store's range, so it must parse it.
+	const k = await put(PATTERN)
+
+	const found = await store.get(k, { start: 990, end: 5000 })
+
+	assert.deepEqual(found.contentRange, { start: 990, end: 999, size: 1000 })
+	assert.equal(found.contentLength, 10)
+	assert.equal(hexOf(await drain(found.body)), hexOf(PATTERN.subarray(990)))
+})
+
+test('get bytes=0-0 is one byte — an end of 0 is not "no end"', async () => {
+	const k = await put(PATTERN)
+
+	const found = await store.get(k, { start: 0, end: 0 })
+
+	assert.deepEqual(found.contentRange, { start: 0, end: 0, size: 1000 })
+	assert.equal((await drain(found.body)).length, 1)
+})
+
+test('get starting at or past the end is INVALID_RANGE, carrying the size', async () => {
+	// §11.2's 416 needs `bytes */size`, and only the store knows the size.
+	const k = await put(PATTERN)
+
+	for (const start of [1000, 5000]) {
+		const error = await rejectionOf(store.get(k, { start }))
+		assert.equal(error?.name, 'StorageError', `start ${start}`)
+		assert.equal(error.code, 'INVALID_RANGE', `start ${start}`)
+		assert.equal(error.objectSize, 1000, `start ${start}`)
+	}
+})
+
+test('get on a missing key is NOT_FOUND, with or without a range', async () => {
+	for (const range of [undefined, { start: 0, end: 63 }]) {
+		const error = await rejectionOf(store.get(key(), range))
+		assert.equal(error?.code, 'NOT_FOUND', JSON.stringify(range))
+		assert.equal(error.objectSize, undefined)
+	}
+})
+
+test('get THROWS UNAVAILABLE when the store cannot be reached, leaking no SDK metadata', async () => {
+	const unreachable = createObjectStore(
+		clientFor({ endpoint: 'http://localhost:9', maxAttempts: 1 }),
+		BUCKET,
+	)
+
+	const error = await rejectionOf(unreachable.get(key()))
+
+	assert.equal(error?.code, 'UNAVAILABLE')
+	assert.equal(error.$metadata, undefined)
+	assert.equal(error.cause?.$metadata, undefined)
+})

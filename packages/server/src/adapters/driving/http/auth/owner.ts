@@ -13,6 +13,7 @@ import {
   MalformedEncodingError,
 } from "../base64url.js";
 import { ApiError } from "../error-envelope.js";
+import { type AuthenticatedOwner } from "../../../../application/use-cases/authenticate-owner.js";
 
 const TOKEN_BYTES = 32;
 const TOKEN_CHARS = encodedLength(TOKEN_BYTES); // 43
@@ -40,11 +41,11 @@ export function makeRequireOwner(useCases: UseCases) {
     const presented = header.slice("Bearer ".length);
     if (presented.length !== TOKEN_CHARS) throw new ApiError("UNAUTHENTICATED");
 
-    let ownerId: string | null;
+    let authenticatedOwner: AuthenticatedOwner | null;
     try {
       // A value that is not a well-formed token cannot be one, so it is
       // rejected at the boundary rather than hashed and looked up (§7.2).
-      ownerId = await useCases.authenticateOwner({
+      authenticatedOwner = await useCases.authenticateOwner({
         token: decodeBase64url(presented, TOKEN_BYTES),
       });
     } catch (error) {
@@ -54,10 +55,12 @@ export function makeRequireOwner(useCases: UseCases) {
       throw error;
     }
 
-    if (ownerId === null) throw new ApiError("UNAUTHENTICATED");
+    if (authenticatedOwner === null) throw new ApiError("UNAUTHENTICATED");
+    // §11.5: after step 1, so an unknown token is a 401 and never a 429.
+    request.server.tokenLimiter.admit(request, reply, authenticatedOwner.tokenHash);
     request.caller = {
       kind: "owner",
-      ownerId,
+      ownerId: authenticatedOwner.ownerId,
     };
   };
 }

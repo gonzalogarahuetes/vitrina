@@ -15,7 +15,7 @@ import type { AlbumRow } from "./ports/album-repository.js";
 export function resolveAlbumScope(
   principal: AuthenticatedPrincipal,
   albumId: string,
-  album: AlbumRow | null,
+  album: Pick<AlbumRow, "ownerId"> | null,
 ): Caller {
   if (principal.kind === "owner") {
     if (album === null || album.ownerId !== principal.ownerId) {

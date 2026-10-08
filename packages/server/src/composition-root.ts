@@ -53,6 +53,13 @@ import { logoutAll } from "./application/use-cases/logout-all.js";
 import { createRecipient } from "./application/use-cases/create-recipient.js";
 import { revokeRecipient } from "./application/use-cases/revoke-recipient.js";
 import { getRecipientKey } from "./application/use-cases/get-recipient-key.js";
+import { getOwnRecipient } from "./application/use-cases/get-own-recipient.js";
+import { getMediaThumbnail } from "./application/use-cases/get-media-thumbnail.js";
+import { getMediaAsset } from "./application/use-cases/get-media-asset.js";
+import type { AccessLogRepository } from "./application/ports/access-log-repository.js";
+import { createAccessLogRepository } from "./adapters/driven/postgres/access-log-repository.js";
+import { getAccessLogEntries } from "./application/use-cases/get-access-log-entries.js";
+import { getAccessLogSummary } from "./application/use-cases/get-access-log-summary.js";
 
 /**
  * The v1 Argon2id parameters, declared in `@vitrina/shared` because the client
@@ -81,6 +88,7 @@ export type UseCaseAdapters = {
   readonly media: MediaRepository;
   readonly albums: AlbumRepository;
   readonly recipients: RecipientRepository;
+  readonly accessLogs: AccessLogRepository;
   readonly credentialHasher: CredentialHasher;
   readonly tokenHasher: TokenHasher;
   readonly clock: Clock;
@@ -117,6 +125,7 @@ export function buildUseCases(
     albums,
     media,
     objectStore,
+    accessLogs,
   } = adapters;
   const mintSession = makeMintSession(owners, tokenHasher, clock);
 
@@ -144,10 +153,15 @@ export function buildUseCases(
     findMediaById: findMediaById({ media }),
     uploadMediaObject: uploadMediaObject({ media, objectStore }),
     findAlbumById: findAlbumById({ albums, media }),
-    getAlbumMetadata: getAlbumMetadata({ albums, media }),
+    getAlbumMetadata: getAlbumMetadata({ albums, media, accessLogs }),
     createRecipient: createRecipient({ recipients, albums }),
     revokeRecipient: revokeRecipient({ recipients }),
     getRecipientKey: getRecipientKey({ recipients }),
+    getOwnRecipient: getOwnRecipient({ recipients }),
+    getMediaThumbnail: getMediaThumbnail({ media, objectStore }),
+    getMediaAsset: getMediaAsset({ media, objectStore, accessLogs }),
+    getAccessLogEntries: getAccessLogEntries({ accessLogs, albums }),
+    getAccessLogSummary: getAccessLogSummary({ accessLogs, albums }),
   };
 }
 
@@ -180,6 +194,7 @@ export function buildComposition(config: CompositionConfig): {
     albums: createAlbumRepository(pool),
     recipients: createRecipientRepository(pool),
     media: createMediaRepository(pool),
+    accessLogs: createAccessLogRepository(pool),
     credentialHasher: createCredentialHasher(config.serverSecret),
     tokenHasher: createTokenHasher(),
     clock: createSystemClock(),

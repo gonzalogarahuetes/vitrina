@@ -229,6 +229,42 @@ describe("details carries field names and no values", () => {
 });
 
 
+// `satisfies` proves STATUS is total, not that its numbers are right — a 419
+// compiled here once. Through v1Plugins, for the reason given above.
+describe("RANGE_NOT_SATISFIABLE reaches the wire as 416 (§11.9)", () => {
+  let app3;
+
+  before(async () => {
+    app3 = await buildServer({
+      config: { clientOrigin: CLIENT_ORIGIN },
+      useCases: {},
+      logger: false,
+      v1Plugins: [
+        async (scope) => {
+          scope.get("/unsatisfiable", async () => {
+            throw new ApiError("RANGE_NOT_SATISFIABLE");
+          });
+        },
+      ],
+    });
+    await app3.ready();
+  });
+
+  after(async () => {
+    await app3.close();
+  });
+
+  it("answers 416 with the envelope and nothing else", async () => {
+    const res = await app3.inject({ method: "GET", url: "/v1/unsatisfiable" });
+
+    assert.equal(res.statusCode, 416);
+    assert.deepEqual(res.json(), {
+      code: "RANGE_NOT_SATISFIABLE",
+      message: "Range not satisfiable.",
+    });
+  });
+});
+
 describe("CORS", () => {
   it("echoes exactly the allowlisted origin, never a wildcard", async () => {
     const res = await app.inject({

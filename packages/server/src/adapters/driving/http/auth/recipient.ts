@@ -12,7 +12,7 @@ import {
   MalformedEncodingError,
 } from "../base64url.js";
 import { ApiError } from "../error-envelope.js";
-import type { RecipientGrant } from "../../../../application/ports/recipient-repository.js";
+import type { AuthenticatedRecipient } from "../../../../application/use-cases/authenticate-recipient.js";
 
 const TOKEN_BYTES = 32;
 const TOKEN_CHARS = encodedLength(TOKEN_BYTES); // 43
@@ -40,11 +40,11 @@ export function makeRequireRecipient(useCases: UseCases) {
     const presented = header.slice("Bearer ".length);
     if (presented.length !== TOKEN_CHARS) throw new ApiError("UNAUTHENTICATED");
 
-    let recipientGrant: RecipientGrant | null;
+    let authenticatedRecipient: AuthenticatedRecipient | null;
     try {
       // A value that is not a well-formed token cannot be one, so it is
       // rejected at the boundary rather than hashed and looked up (§7.2).
-      recipientGrant = await useCases.authenticateRecipient({
+      authenticatedRecipient = await useCases.authenticateRecipient({
         token: decodeBase64url(presented, TOKEN_BYTES),
       });
     } catch (error) {
@@ -54,10 +54,12 @@ export function makeRequireRecipient(useCases: UseCases) {
       throw error;
     }
 
-    if (recipientGrant === null) throw new ApiError("UNAUTHENTICATED");
+    if (authenticatedRecipient === null) throw new ApiError("UNAUTHENTICATED");
+    // §11.5: after step 1, and before revocation — a revoked grant still pays.
+    request.server.tokenLimiter.admit(request, reply, authenticatedRecipient.tokenHash);
     request.caller = {
       kind: "recipient",
-      grant: recipientGrant,
+      grant: authenticatedRecipient.grant,
     };
   };
 }

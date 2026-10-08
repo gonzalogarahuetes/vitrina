@@ -6,7 +6,11 @@
 
 import type { FastifyReply, FastifyRequest } from "fastify";
 import type { UseCases } from "../../../../application/use-cases/index.js";
-import { decodeBase64url, encodedLength, MalformedEncodingError } from "../base64url.js";
+import {
+  decodeBase64url,
+  encodedLength,
+  MalformedEncodingError,
+} from "../base64url.js";
 import { ApiError } from "../error-envelope.js";
 
 const TOKEN_BYTES = 32;
@@ -33,28 +37,35 @@ export function makeRequireOwnerOrRecipient(useCases: UseCases) {
       token = decodeBase64url(presented, TOKEN_BYTES);
     } catch (error) {
       // Only a malformed spelling is a 401; anything else is a fault.
-      if (error instanceof MalformedEncodingError) throw new ApiError("UNAUTHENTICATED");
+      if (error instanceof MalformedEncodingError)
+        throw new ApiError("UNAUTHENTICATED");
       throw error;
     }
 
-    const [ownerId, grant] = await Promise.all([
+    const [authenticatedOwner, authenticatedRecipient] = await Promise.all([
       useCases.authenticateOwner({ token }),
       useCases.authenticateRecipient({ token }),
     ]);
 
-    if (ownerId !== null && grant !== null) {
+    if (authenticatedOwner !== null && authenticatedRecipient !== null) {
       // A 32-byte collision across the two tables will not happen; resolving
       // to either kind would be a caller acting with the wrong scope.
       throw new Error("one token matched both an owner and a recipient");
     }
 
-    if (ownerId !== null) {
-      request.caller = { kind: "owner", ownerId };
+    if (authenticatedOwner !== null) {
+      request.server.tokenLimiter.admit(request, reply, authenticatedOwner.tokenHash);
+      request.caller = { kind: "owner", ownerId: authenticatedOwner.ownerId };
       return;
     }
-    if (grant !== null) {
+    if (authenticatedRecipient !== null) {
+      // §11.5 keys on whichever hash step 1 resolved; a revoked grant still pays.
+      request.server.tokenLimiter.admit(request, reply, authenticatedRecipient.tokenHash);
       // The grant keeps `revokedAt` — step 4 is the use case's, after step 3.
-      request.caller = { kind: "recipient", grant };
+      request.caller = {
+        kind: "recipient",
+        grant: authenticatedRecipient.grant,
+      };
       return;
     }
 

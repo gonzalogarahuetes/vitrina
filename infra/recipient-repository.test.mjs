@@ -538,3 +538,42 @@ test('findWrapById: a revoked row still returns its wrapping', async () => {
 
 	assert.deepEqual(wrapAsHex(await repository.findWrapById(recipient.id)), wrapAsHex(recipient.wrap))
 })
+
+// findDetailsById — api-sketch §11.4. The route tests run against a fake, so
+// only this file checks the SELECT, its column mapping and its null.
+
+test('findDetailsById: returns what create stored, label byte for byte', async () => {
+	// newQr's label has NUL at both ends: a text round-trip cannot survive it.
+	const recipient = newQr()
+	const created = await repository.create(recipient)
+
+	const details = await repository.findDetailsById(recipient.id)
+
+	assert.ok(details, 'no details for a row that was created')
+	assert.equal(details.id, recipient.id)
+	assert.equal(details.albumId, ALBUM_A)
+	assert.equal(details.kind, 'qr')
+	assert.equal(hex(details.label), hex(recipient.label))
+	assert.equal(details.createdAt.getTime(), created.createdAt.getTime())
+	assert.deepEqual(Object.keys(details).sort(), ['albumId', 'createdAt', 'id', 'kind', 'label'])
+})
+
+test('findDetailsById: a passphrase row reads as passphrase', async () => {
+	const recipient = newPassphrase()
+	await repository.create(recipient)
+
+	assert.equal((await repository.findDetailsById(recipient.id)).kind, 'passphrase')
+})
+
+test('findDetailsById: a revoked row still comes back', async () => {
+	// Revocation is the use case's, from the grant — same as findWrapById.
+	const recipient = newQr()
+	await repository.create(recipient)
+	await repository.revoke(recipient.id)
+
+	assert.equal((await repository.findDetailsById(recipient.id)).id, recipient.id)
+})
+
+test('findDetailsById: an unknown id is null, not an error', async () => {
+	assert.equal(await repository.findDetailsById(randomUUID()), null)
+})

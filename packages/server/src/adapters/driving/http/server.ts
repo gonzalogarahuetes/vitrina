@@ -4,15 +4,18 @@ import fastify, {
   type FastifyServerOptions,
 } from "fastify";
 import cors from "@fastify/cors";
+import { Readable } from "node:stream";
 import { stdSerializers } from "pino";
 import type { UseCases } from "../../../application/use-cases/index.js";
 import { errorEnvelope, notFoundEnvelope } from "./error-envelope.js";
+import { makeTokenLimiter, type TokenLimits } from "./token-limiter.js";
 import health from "./routes/health.js";
 import { credentialRoutes } from "./routes/credentials.js";
 import { albumRoutes } from "./routes/albums.js";
 import { mediaRoutes } from "./routes/media.js";
 import { recipientsRoutes } from "./routes/recipients.js";
 import { ownRecipientRoutes } from "./routes/recipient.js";
+import { deliveryRoutes } from "./routes/delivery.js";
 
 /*
  * What the log may carry — the adapter's, never the caller's (see below).
@@ -26,6 +29,12 @@ import { ownRecipientRoutes } from "./routes/recipient.js";
 const LOG_POLICY = {
   redact: ["req.headers.authorization", "req.headers.cookie"],
   serializers: { err: stdSerializers.errWithCause },
+};
+
+export type ObservedRoute = {
+  readonly method: string | readonly string[];
+  readonly url: string;
+  readonly config: Readonly<Record<string, unknown>>;
 };
 
 /**
@@ -71,6 +80,9 @@ export type BuildServerDeps = {
    * stalling-client case is a test rather than a two-minute wait.
    */
   readonly uploadDeadlineMs?: number;
+  readonly routeObserver?: (route: ObservedRoute) => void;
+  /** §11.5's budgets and clock; a test sets them small. Production omits it. */
+  readonly limits?: TokenLimits;
 };
 
 /** §9.7, provisional: generous for 16 MiB, short enough not to be a leak. */
@@ -90,7 +102,21 @@ export async function buildServer(
     // bodyLimit stays at Fastify's 1 MiB default, which covers the JSON routes.
     // §9.7's uploads enforce their own: measured, `bodyLimit` reaches only the
     // parsers that accumulate a body, and theirs hands the stream through.
+    exposeHeadRoutes: false,
   });
+
+  if (deps.routeObserver) {
+    const observe = deps.routeObserver;
+    app.addHook("onRoute", (route) => {
+      observe(
+        Object.freeze({
+          method: route.method,
+          url: route.url,
+          config: Object.freeze({ ...route.config }),
+        }),
+      );
+    });
+  }
 
   // Before any route: @fastify/cors installs an onRequest hook, and hooks only
   // apply to routes registered after them. The `await` does not do that.
@@ -128,6 +154,22 @@ export async function buildServer(
   app.setErrorHandler(errorEnvelope);
   app.setNotFoundHandler(notFoundEnvelope);
 
+  // ONE limiter for the process, on the root so every plugin sees the same
+  // counters; a per-plugin instance is the two-instance failure in miniature.
+  const limiter = makeTokenLimiter(deps.limits);
+  app.decorate("tokenLimiter", limiter);
+
+  // A byte-budget route that answers 2xx without charging fails loudly rather
+  // than escaping the budget. 2xx only: a 403 or 404 paid the floor in the hook.
+  app.addHook("onSend", async (request, reply, payload) => {
+    const ok = reply.statusCode >= 200 && reply.statusCode < 300;
+    if (request.routeOptions.config?.chargesByteBudget === true && ok && !limiter.isCharged(request)) {
+      if (payload instanceof Readable) payload.destroy(); // release the store's socket
+      throw new Error("a byte-budget route answered 2xx without calling chargeBytes");
+    }
+    return payload;
+  });
+
   // The /v1 mount point, registered once.
   await app.register(
     async (v1) => {
@@ -146,6 +188,7 @@ export async function buildServer(
       );
       await v1.register(recipientsRoutes({ useCases: deps.useCases }));
       await v1.register(ownRecipientRoutes({ useCases: deps.useCases }));
+      await v1.register(deliveryRoutes({ useCases: deps.useCases }));
       for (const plugin of deps.v1Plugins ?? []) {
         await v1.register(plugin);
       }

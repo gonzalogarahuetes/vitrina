@@ -58,6 +58,9 @@ const STATUS = {
   LENGTH_REQUIRED: 411,
   PAYLOAD_TOO_LARGE: 413,
   UNSUPPORTED_MEDIA_TYPE: 415,
+  // §11.2 maps it from the store's INVALID_RANGE; no FRAMEWORK_4XX row,
+  // because Fastify core raises no 416 and that row would be inert.
+  RANGE_NOT_SATISFIABLE: 416,
   RATE_LIMITED: 429,
   INTERNAL: 500,
 } as const satisfies Record<ErrorCode, number>;
@@ -79,6 +82,7 @@ const MESSAGES = {
   LENGTH_REQUIRED: "Content-Length is required.",
   PAYLOAD_TOO_LARGE: "Body limit of the request exceeded.",
   UNSUPPORTED_MEDIA_TYPE: "Content type not supported.",
+  RANGE_NOT_SATISFIABLE: "Range not satisfiable.",
   RATE_LIMITED: "Rate limited.",
   INTERNAL: "An unexpected error occurred.",
 } as const satisfies Record<ErrorCode, string>;

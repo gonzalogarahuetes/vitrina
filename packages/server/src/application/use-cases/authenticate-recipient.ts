@@ -19,16 +19,22 @@ export type AuthenticateRecipientDeps = {
 /** The 32 RAW bytes. The adapter decodes base64url strictly (§7.2). */
 export type AuthenticateRecipientInput = { readonly token: Uint8Array };
 
+export type AuthenticatedRecipient = {
+  grant: RecipientGrant;
+  tokenHash: Uint8Array<ArrayBufferLike>;
+};
+
 export function authenticateRecipient(deps: AuthenticateRecipientDeps) {
   return async (
     input: AuthenticateRecipientInput,
-  ): Promise<RecipientGrant | null> => {
+  ): Promise<AuthenticatedRecipient | null> => {
     // Lookup BY HASH, never comparison — no code path compares two tokens or
     // two hashes, so there is nothing here to time (§7.2, schema §6).
-    const grant = await deps.recipients.findGrantByTokenHash(
-      deps.tokenHasher.hash(input.token),
-    );
+    const tokenHash = deps.tokenHasher.hash(input.token);
+    const grant = await deps.recipients.findGrantByTokenHash(tokenHash);
 
-    return grant;
+    if (!grant) return null;
+
+    return { grant, tokenHash };
   };
 }
