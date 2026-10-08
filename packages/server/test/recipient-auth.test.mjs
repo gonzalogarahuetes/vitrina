@@ -64,8 +64,10 @@ const grant = (revokedAt = null) => ({
  * falling back from one table to the other, and a stub that answered politely
  * would let that happen while every assertion still passed.
  */
-const useCasesReturning = (result) => ({
-  authenticateRecipient: async () => result,
+const useCasesReturning = (grant) => ({
+  // The use case's shape since PR 5: the grant, and the hash the limiter keys on.
+  authenticateRecipient: async () =>
+    grant === null ? null : { grant, tokenHash: new Uint8Array(32) },
   authenticateOwner: async () => {
     throw new Error("the recipient scheme consulted owner_tokens (§7.1)");
   },

@@ -4,6 +4,7 @@
  */
 
 import type { AuthenticatedPrincipal, Caller } from "../caller.js";
+import type { AccessLogRepository } from "../ports/access-log-repository.js";
 import type { AlbumRepository } from "../ports/album-repository.js";
 import type {
   MediaEnvelope,
@@ -14,6 +15,7 @@ import { resolveAlbumScope } from "../resolve-album-scope.js";
 export type GetAlbumMetadataDeps = {
   readonly albums: AlbumRepository;
   readonly media: MediaRepository;
+  readonly accessLogs: AccessLogRepository;
 };
 
 export type GetAlbumMetadataInput = {
@@ -27,8 +29,10 @@ export type AlbumMetadata = {
    * for owners; a `pending` row describes an asset that does not exist yet.
    */
   readonly metadata: readonly MediaEnvelope[];
-  /** As §9.4's: PR 5's access log, and nothing here branches on it. */
+  /** As §9.4's. The log write is the only branch on its `kind` (§11.6). */
   readonly caller: Caller;
+  /** §11.6: the fetch is served anyway; the route logs this at `error`. */
+  readonly logFailure?: unknown;
 };
 
 export function getAlbumMetadata(deps: GetAlbumMetadataDeps) {
@@ -36,9 +40,23 @@ export function getAlbumMetadata(deps: GetAlbumMetadataDeps) {
     const album = await deps.albums.findById(input.albumId);
     const caller = resolveAlbumScope(input.principal, input.albumId, album);
 
-    return {
-      metadata: await deps.media.listReadyEnvelopes(input.albumId),
-      caller,
-    };
+    const metadata = await deps.media.listReadyEnvelopes(input.albumId);
+
+    let logFailure: unknown;
+    if (caller.kind === "recipient") {
+      try {
+        await deps.accessLogs.record({
+          event: "album_opened",
+          recipientId: caller.recipientId,
+        });
+      } catch (error) {
+        // A failed write does not fail the fetch; the route logs it.
+        logFailure = error;
+      }
+    }
+
+    return logFailure === undefined
+      ? { metadata, caller }
+      : { metadata, caller, logFailure };
   };
 }

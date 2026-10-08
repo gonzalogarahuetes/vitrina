@@ -171,6 +171,14 @@ function inMemoryRecipients(albums) {
       const row = rows.get(recipientId);
       return row?.kind === "passphrase" ? row.wrap : null;
     },
+    // §11.4. Unfiltered on revocation, as the adapter must be; the projection
+    // is the port's five fields, so a use case cannot lean on a sixth.
+    async findDetailsById(recipientId) {
+      const row = rows.get(recipientId);
+      if (!row) return null;
+      const { id, albumId, label, kind, createdAt } = row;
+      return { id, albumId, label, kind, createdAt };
+    },
   };
 }
 
@@ -190,7 +198,7 @@ export const signupBody = (email) => ({
  * care about: owners with one or more sessions, albums, and the ability to
  * read the stores back directly.
  */
-export async function buildPr2Server() {
+export async function buildPr2Server({ media = emptyMedia, objectStore, accessLogs, logger = false } = {}) {
   const owners = inMemoryOwners();
   const albums = inMemoryAlbums();
   const recipients = inMemoryRecipients(albums);
@@ -199,9 +207,10 @@ export async function buildPr2Server() {
     {
       owners,
       albums,
-      media: emptyMedia,
+      media,
       recipients,
-      objectStore: {
+      // Overridable, so §11's delivery tests can hand in a store that serves.
+      objectStore: objectStore ?? {
         async put() {},
         async head() {
           return null;
@@ -210,6 +219,8 @@ export async function buildPr2Server() {
       credentialHasher: createCredentialHasher(Buffer.alloc(32, 0x11)),
       tokenHasher: createTokenHasher(),
       clock: { now: () => NOW },
+      // §11.6's writes; a test that never logs leaves it absent.
+      ...(accessLogs === undefined ? {} : { accessLogs }),
     },
     { kdfV1: OWNER_KDF_V1, dummyAuthHash: Buffer.alloc(32, 0x7f) },
   );
@@ -217,7 +228,7 @@ export async function buildPr2Server() {
   const app = await buildServer({
     config: { clientOrigin: "http://localhost:5173" },
     useCases,
-    logger: false,
+    logger,
   });
   await app.ready();
 

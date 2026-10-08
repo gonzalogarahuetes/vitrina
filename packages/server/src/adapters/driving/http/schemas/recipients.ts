@@ -107,3 +107,20 @@ export const retrieveRecipientKeySchema = {
     },
   },
 } as const;
+
+export const retrieveRecipientSchema = {
+  response: {
+    200: {
+      type: "object",
+      properties: {
+        id: uuid,
+        album_id: uuid,
+        label,
+        kind: { type: "string", enum: ["qr", "passphrase"] },
+        created_at: timestamp,
+      },
+      required: ["id", "album_id", "label", "kind", "created_at"],
+      additionalProperties: false,
+    },
+  },
+} as const;

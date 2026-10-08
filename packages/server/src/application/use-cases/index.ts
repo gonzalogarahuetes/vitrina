@@ -11,15 +11,21 @@ import type { LoginInput } from "./login.js";
 import type { LoginParamsInput } from "./login-params.js";
 import type { SignupInput, SignupResult } from "./signup.js";
 import type { OwnerKeyInput } from "./owner-key.js";
-import type { AuthenticateOwnerInput } from "./authenticate-owner.js";
+import type {
+  AuthenticatedOwner,
+  AuthenticateOwnerInput,
+} from "./authenticate-owner.js";
 import type {
   OwnerKdfRow,
   OwnerPasswordKey,
 } from "../ports/owner-repository.js";
-import type { AuthenticateRecipientInput } from "./authenticate-recipient.js";
+import type {
+  AuthenticatedRecipient,
+  AuthenticateRecipientInput,
+} from "./authenticate-recipient.js";
 import type {
   CreatedRecipient,
-  RecipientGrant,
+  RecipientDetails,
 } from "../ports/recipient-repository.js";
 import type { ListAlbumsInput } from "./list-albums.js";
 import type { CreatedAlbum, OwnerAlbum } from "../ports/album-repository.js";
@@ -44,6 +50,16 @@ import type {
   GetRecipientKeyInput,
   RecipientKey,
 } from "./get-recipient-key.js";
+import type { GetOwnRecipientInput } from "./get-own-recipient.js";
+import type { GetMediaThumbnailInput } from "./get-media-thumbnail.js";
+import type { ObjectBody } from "../ports/object-store.js";
+import type { GetMediaAssetInput, MediaAsset } from "./get-media-asset.js";
+import type { GetAccessLogEntriesInput } from "./get-access-log-entries.js";
+import type {
+  AccessLogPage,
+  RecipientAccessSummary,
+} from "../ports/access-log-repository.js";
+import type { GetAccessLogSummaryInput } from "./get-access-log-summary.js";
 
 export type UseCases = {
   // PR 2b — the owner credential lifecycle (api-sketch §7.5, §8.3).
@@ -70,7 +86,7 @@ export type UseCases = {
   /** §7.3 steps 1-2. Null for unknown, revoked or expired — the adapter maps. */
   readonly authenticateOwner: (
     input: AuthenticateOwnerInput,
-  ) => Promise<string | null>;
+  ) => Promise<AuthenticatedOwner | null>;
   /**
    * §7.3 step 1. Null for an unknown token ONLY — a revoked grant comes back
    * with `revokedAt` set, because step 4 runs after the route has resolved
@@ -78,7 +94,7 @@ export type UseCases = {
    */
   readonly authenticateRecipient: (
     input: AuthenticateRecipientInput,
-  ) => Promise<RecipientGrant | null>;
+  ) => Promise<AuthenticatedRecipient | null>;
   readonly createRecipient: (
     input: CreateRecipientInput,
   ) => Promise<CreatedRecipient>;
@@ -86,4 +102,17 @@ export type UseCases = {
   readonly getRecipientKey: (
     input: GetRecipientKeyInput,
   ) => Promise<RecipientKey>;
+  readonly getOwnRecipient: (
+    input: GetOwnRecipientInput,
+  ) => Promise<RecipientDetails>;
+  readonly getMediaThumbnail: (
+    input: GetMediaThumbnailInput,
+  ) => Promise<ObjectBody>;
+  readonly getMediaAsset: (input: GetMediaAssetInput) => Promise<MediaAsset>;
+  readonly getAccessLogEntries: (
+    input: GetAccessLogEntriesInput,
+  ) => Promise<AccessLogPage>;
+  readonly getAccessLogSummary: (
+    input: GetAccessLogSummaryInput,
+  ) => Promise<readonly RecipientAccessSummary[]>;
 };

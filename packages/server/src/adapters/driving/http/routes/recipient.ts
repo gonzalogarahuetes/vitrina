@@ -9,10 +9,14 @@
 
 import type { FastifyInstance } from "fastify";
 import type { UseCases } from "../../../../application/use-cases/index.js";
-import { retrieveRecipientKeySchema } from "../schemas/recipients.js";
+import {
+  retrieveRecipientKeySchema,
+  retrieveRecipientSchema,
+} from "../schemas/recipients.js";
 import { ApiError } from "../error-envelope.js";
 import { makeRequireRecipient } from "../auth/recipient.js";
 import { encodeBase64url } from "../base64url.js";
+import { rfc3339 } from "../rfc3339.js";
 
 export type RecipientRoutesDeps = {
   readonly useCases: UseCases;
@@ -52,6 +56,31 @@ export function ownRecipientRoutes(deps: RecipientRoutesDeps) {
           kdf_parallelism: wrap.params.parallelism,
           wrapped: encodeBase64url(wrap.wrapped),
           wrap_nonce: encodeBase64url(wrap.wrapNonce),
+        });
+      },
+    );
+
+    app.get(
+      "/recipient",
+      {
+        schema: retrieveRecipientSchema,
+        // Recipient scheme ONLY — never the either-scheme preHandler (§7.1).
+        preHandler: makeRequireRecipient(deps.useCases),
+      },
+      async (request, reply) => {
+        const caller = request.caller;
+        if (caller?.kind !== "recipient") throw new ApiError("UNAUTHENTICATED");
+
+        const recipientDetails = await deps.useCases.getOwnRecipient({
+          grant: caller.grant,
+        });
+
+        return reply.code(200).send({
+          id: recipientDetails.id,
+          label: encodeBase64url(recipientDetails.label),
+          kind: recipientDetails.kind,
+          album_id: recipientDetails.albumId,
+          created_at: rfc3339(recipientDetails.createdAt),
         });
       },
     );

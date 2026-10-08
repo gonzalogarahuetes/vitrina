@@ -17,6 +17,7 @@ import { describe, it } from "node:test";
 
 import * as albums from "../dist/adapters/driving/http/schemas/albums.js";
 import * as credentials from "../dist/adapters/driving/http/schemas/credentials.js";
+import * as delivery from "../dist/adapters/driving/http/schemas/delivery.js";
 import * as health from "../dist/adapters/driving/http/schemas/health.js";
 import * as media from "../dist/adapters/driving/http/schemas/media.js";
 import * as recipients from "../dist/adapters/driving/http/schemas/recipients.js";
@@ -26,6 +27,7 @@ import * as recipients from "../dist/adapters/driving/http/schemas/recipients.js
 const SCHEMAS = Object.entries({
   ...albums,
   ...credentials,
+  ...delivery,
   ...health,
   ...media,
   ...recipients,
@@ -71,6 +73,12 @@ const FORBIDDEN_IN_BODY = ["status"];
  */
 const PATH_PARAMETERS = ["album_id", "media_id", "recipient_id"];
 
+/** §11.7's filters and cursor, and nothing else. Added one at a time, argued here. */
+const QUERY_PARAMETERS = ["recipient_id", "media_id", "limit", "before"];
+
+/** Never a query parameter, whatever the allowlist grows to (§7.2). */
+const NEVER_IN_A_QUERY = ["token", "access_token", "key", "secret", "password"];
+
 /** Every property name anywhere in a schema, at any depth. */
 function propertyNames(node, found = new Set()) {
   if (node === null || typeof node !== "object") return found;
@@ -102,6 +110,14 @@ describe("the route table", () => {
     assert.ok(SCHEMAS.length >= 5, `only ${SCHEMAS.length} schemas found`);
   });
 
+  it("the query allowlist admits nothing credential-shaped", () => {
+    // The allowlist is the rule now, so it is the thing that must not grow a token.
+    for (const name of QUERY_PARAMETERS) {
+      const hit = NEVER_IN_A_QUERY.find((f) => name === f || name.endsWith(`_${f}`) || name.startsWith(`${f}_`));
+      assert.equal(hit, undefined, `${name} is on the query allowlist`);
+    }
+  });
+
   for (const [name, schema] of SCHEMAS) {
     describe(name, () => {
       const names = [...propertyNames(schema)].map((n) => n.toLowerCase());
@@ -113,16 +129,31 @@ describe("the route table", () => {
         }
       });
 
-      it("declares no query string and no header schema (§7.2)", () => {
+      it("declares no header schema (§7.2)", () => {
         // A token in a query string lands in access logs, in Referer headers
         // and in browser history — the same class as invite spec §2.1's `?`
         // where a `#` belongs. Scoped to querystring and headers deliberately:
         // `token` in /login's RESPONSE is the session being returned, which is
         // the route's whole purpose, and an earlier version of this walk
         // flagged it.
-        for (const section of ["querystring", "headers"]) {
-          assert.equal(schema[section], undefined, `${name} declares a ${section}`);
+        assert.equal(schema.headers, undefined, `${name} declares a headers schema`);
+      });
+
+      it("declares only allowlisted query parameters, closed (§7.2, §11.7)", () => {
+        // Narrowed 8 October 2026 from "no querystring at all": §11.7's filters
+        // are identifiers, not credentials. An ALLOWLIST, and closed — stronger
+        // than the blanket rule for every name not on it.
+        if (schema.querystring === undefined) return;
+
+        for (const declared of Object.keys(schema.querystring.properties ?? {})) {
+          assert.ok(
+            QUERY_PARAMETERS.includes(declared),
+            `${name} declares the query parameter ${declared}, which is not allowlisted`,
+          );
         }
+        // Without this, any other parameter reaches the handler. With it, Fastify's
+        // removeAdditional strips it — measured, not rejected (access-log-routes).
+        assert.equal(schema.querystring.additionalProperties, false, `${name}'s querystring is open`);
       });
 
       it("declares only allowlisted path parameters (§7.2, §9.3)", () => {

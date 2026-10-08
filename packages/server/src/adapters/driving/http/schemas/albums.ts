@@ -154,3 +154,87 @@ export const getAlbumMetadataSchema = {
     },
   },
 } as const;
+
+const nullableTimestamp = { type: ["string", "null"] } as const;
+
+export const accessLogSummarySchema = {
+  params: albumIdParams,
+  response: {
+    200: {
+      type: "object",
+      properties: {
+        recipients: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              recipient_id: uuid,
+              label: b64urlRange(55, 1366),
+              revoked_at: nullableTimestamp,
+              album_opens: { type: "integer" },
+              media_opened: { type: "integer" },
+              last_opened_at: nullableTimestamp,
+            },
+            required: [
+              "recipient_id",
+              "label",
+              "revoked_at",
+              "album_opens",
+              "media_opened",
+              "last_opened_at",
+            ],
+            additionalProperties: false,
+          },
+        },
+      },
+      required: ["recipients"],
+      additionalProperties: false,
+    },
+  },
+} as const;
+
+export const accessLogEntriesSchema = {
+  params: albumIdParams,
+  querystring: {
+    type: "object",
+    properties: {
+      recipient_id: uuid,
+      media_id: uuid,
+      limit: { type: "integer", minimum: 1, maximum: 500, default: 100 },
+      before: { type: "integer", minimum: 1, maximum: Number.MAX_SAFE_INTEGER },
+    },
+    required: [],
+    additionalProperties: false,
+  },
+  response: {
+    200: {
+      type: "object",
+      properties: {
+        entries: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              id: { type: "integer" },
+              recipient_id: uuid,
+              media_id: { type: ["string", "null"] },
+              event: { type: "string", enum: ["album_opened", "asset_viewed"] },
+              occurred_at: timestamp,
+            },
+            required: [
+              "id",
+              "recipient_id",
+              "media_id",
+              "event",
+              "occurred_at",
+            ],
+            additionalProperties: false,
+          },
+        },
+        next_before: { type: ["integer", "null"] },
+      },
+      required: ["entries", "next_before"],
+      additionalProperties: false,
+    },
+  },
+} as const;

@@ -13,11 +13,14 @@ import { decodeOr400, decodeRangeOr400 } from "../decode-field.js";
 import { ApiError } from "../error-envelope.js";
 import { rfc3339 } from "../rfc3339.js";
 import {
+  accessLogEntriesSchema,
+  accessLogSummarySchema,
   createAlbumSchema,
   findAlbumByIdSchema,
   getAlbumMetadataSchema,
   listAlbumsSchema,
 } from "../schemas/albums.js";
+import { chargeBytes } from "../token-limiter.js";
 
 export type AlbumRoutesDeps = {
   readonly useCases: UseCases;
@@ -28,6 +31,13 @@ type CreateAlbumBody = {
   title: string;
   wrapped_key: string;
   wrap_nonce: string;
+};
+
+type AccessLogEntriesQuery = {
+  limit: number;
+  before?: number;
+  media_id?: string;
+  recipient_id?: string;
 };
 
 export function albumRoutes(deps: AlbumRoutesDeps) {
@@ -141,23 +151,107 @@ export function albumRoutes(deps: AlbumRoutesDeps) {
 
     app.get<{ Params: { album_id: string } }>(
       "/albums/:album_id/metadata",
-      { schema: getAlbumMetadataSchema, preHandler: requireCaller },
+      {
+        schema: getAlbumMetadataSchema,
+        preHandler: requireCaller,
+        config: { chargesByteBudget: true },
+      },
       async (request, reply) => {
         const principal = request.caller;
         if (principal === undefined) throw new ApiError("UNAUTHENTICATED");
 
-        const { metadata } = await deps.useCases.getAlbumMetadata({
+        const { metadata, logFailure } = await deps.useCases.getAlbumMetadata({
           albumId: request.params.album_id,
           principal,
         });
 
+        if (logFailure !== undefined) {
+          request.log.error({ err: logFailure }, "access_log write failed");
+        }
+
         // The column verbatim — header and chunks — and `no-store` from the
         // plugin hook, which this route needs as ciphertext (§11.3).
-        return reply.send({
+        // Serialised here so §11.5 charges the exact bytes sent; a string is
+        // sent as is, and the route's schema still shapes it.
+        const body = reply.serialize({
           metadata: metadata.map((row) => ({
             media_id: row.mediaId,
             envelope: encodeBase64url(row.envelope),
           })),
+        });
+        chargeBytes(request, Buffer.byteLength(body));
+        return reply.type("application/json; charset=utf-8").send(body);
+      },
+    );
+
+    app.get<{ Params: { album_id: string } }>(
+      "/albums/:album_id/access-log",
+      {
+        schema: accessLogSummarySchema,
+        preHandler: requireOwner,
+      },
+      async (request, reply) => {
+        const caller = request.caller;
+        if (caller?.kind !== "owner") throw new ApiError("UNAUTHENTICATED");
+
+        const summary = await deps.useCases.getAccessLogSummary({
+          albumId: request.params.album_id,
+          principal: caller,
+        });
+
+        return reply.code(200).send({
+          recipients: summary.map((r) => ({
+            recipient_id: r.recipientId,
+            label: encodeBase64url(r.label),
+            revoked_at: r.revokedAt && rfc3339(r.revokedAt),
+            album_opens: r.albumOpens,
+            media_opened: r.mediaOpened,
+            last_opened_at: r.lastOpenedAt && rfc3339(r.lastOpenedAt),
+          })),
+        });
+      },
+    );
+
+    app.get<{
+      Params: { album_id: string };
+      Querystring: AccessLogEntriesQuery;
+    }>(
+      "/albums/:album_id/access-log/entries",
+      {
+        schema: accessLogEntriesSchema,
+        preHandler: requireOwner,
+      },
+      async (request, reply) => {
+        const caller = request.caller;
+        const query = request.query;
+        if (caller?.kind !== "owner") throw new ApiError("UNAUTHENTICATED");
+
+        const { entries, nextBefore } = await deps.useCases.getAccessLogEntries(
+          {
+            query: {
+              albumId: request.params.album_id,
+              ...(query.before === undefined ? {} : { before: query.before }),
+              ...(query.recipient_id === undefined
+                ? {}
+                : { recipientId: query.recipient_id }),
+              ...(query.media_id === undefined
+                ? {}
+                : { mediaId: query.media_id }),
+              limit: request.query.limit,
+            },
+            principal: caller,
+          },
+        );
+
+        return reply.code(200).send({
+          entries: entries.map((e) => ({
+            id: e.id,
+            recipient_id: e.recipientId,
+            media_id: e.mediaId,
+            occurred_at: rfc3339(e.occurredAt),
+            event: e.event,
+          })),
+          next_before: nextBefore,
         });
       },
     );

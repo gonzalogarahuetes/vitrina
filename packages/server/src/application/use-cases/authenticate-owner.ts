@@ -18,17 +18,25 @@ export type AuthenticateOwnerDeps = {
 /** The 32 RAW bytes. The adapter decodes base64url strictly (§7.2). */
 export type AuthenticateOwnerInput = { readonly token: Uint8Array };
 
+export type AuthenticatedOwner = {
+  readonly ownerId: string;
+  readonly tokenHash: Uint8Array<ArrayBufferLike>;
+};
+
 export function authenticateOwner(deps: AuthenticateOwnerDeps) {
-  return async (input: AuthenticateOwnerInput): Promise<string | null> => {
+  return async (
+    input: AuthenticateOwnerInput,
+  ): Promise<AuthenticatedOwner | null> => {
     // Lookup BY HASH, never comparison — no code path compares two tokens or
     // two hashes, so there is nothing here to time (§7.2, schema §6).
-    const token = await deps.owners.findTokenByHash(deps.tokenHasher.hash(input.token));
+    const tokenHash = deps.tokenHasher.hash(input.token);
+    const token = await deps.owners.findTokenByHash(tokenHash);
     if (token === null) return null;
 
     // Unknown, revoked and expired are one answer: an owner logs in again.
     if (token.revokedAt !== null) return null;
     if (token.expiresAt.getTime() <= deps.clock.now().getTime()) return null;
 
-    return token.ownerId;
+    return { ownerId: token.ownerId, tokenHash };
   };
 }

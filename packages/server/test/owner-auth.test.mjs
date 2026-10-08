@@ -48,8 +48,10 @@ async function buildTestServer(useCases) {
  * the recipient file's stub. §7.1 forbids a route falling back from one table
  * to the other, and a stub that answered politely would allow it silently.
  */
-const useCasesReturning = (result) => ({
-  authenticateOwner: async () => result,
+const useCasesReturning = (ownerId) => ({
+  // The use case's shape since PR 5: the owner, and the hash the limiter keys on.
+  authenticateOwner: async () =>
+    ownerId === null ? null : { ownerId, tokenHash: new Uint8Array(32) },
   authenticateRecipient: async () => {
     throw new Error("the owner scheme consulted recipients (§7.1)");
   },
