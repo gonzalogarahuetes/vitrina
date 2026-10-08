@@ -210,9 +210,9 @@ again the moment PRs 3–5 add a row.
 
 **The first ten rows exist in the union as of 20 August 2026**, in
 `packages/shared/src/index.ts` (§1.4), each with a `code → status` and a
-`code → message` entry. **`LENGTH_REQUIRED` (PR 3) and `RANGE_NOT_SATISFIABLE`
-(PR 5) are owed** — registered by prose on 13 September 2026, not yet in the
-union; §6.2 carries the row. An earlier version of this paragraph said six of the ten
+`code → message` entry. `LENGTH_REQUIRED` (PR 3) and `RANGE_NOT_SATISFIABLE`
+(PR 5), registered by prose on 13 September 2026, have since joined them — the
+second on 8 October 2026; §6.1 carries the row. An earlier version of this paragraph said six of the ten
 were absent from the code and that §6.2 was the only place recording which codes
 actually exist; both statements were true when written and are now false. §6.1
 records the enforcement, §6.2 what remains owed.
@@ -1128,7 +1128,7 @@ which are only written down. **This table grows with every PR** and is the reaso
 | §7.5 no request body reaches a log, on any route                                                                    | `error-envelope.ts`'s projection, plus a route test that posts a distinctive proof and wrapping to `/signup` across the success, `409` and validation paths and asserts neither, nor the address, appears in any captured line. It asserts the log is non-empty first, so it cannot pass vacuously                                                                                                                                                                                                                                                            |
 | §8.3 `/owner/key` returns only the caller's row                                                                     | No id in the path; the owner comes from the bearer token. Two owners with distinguishable wrappings, two sessions, each `GET` returns its own. This is the test that fails the day someone adds `?owner_id` "for admin"                                                                                                                                                                                                                                                                                                                                       |
 | §4.1 no key material in any parameter                                                                               | `test/route-table.test.mjs` walks every exported schema and asserts no property named `password`, `passphrase`, `kek`, `k_master`, `k_album`, `master_key`, `album_key`, `secret`, `pepper` or `root`, inbound or outbound — and asserts the converse, that `/signup` does declare `wrapped_master`, `wrap_nonce` and `proof`, so the list cannot be widened into forbidding what signup exists to carry. Verified by violation — adding a `password` field to the signup body fails it                                                                       |
-| §7.2 no token in a query string                                                                                     | Same walk: no schema declares a `querystring`, `params` or `headers` section at all. Scoped that way deliberately — `token` in `/login`'s _response_ is the session the route exists to return, and an earlier version of the walk flagged it                                                                                                                                                                                                                                                                                                                 |
+| §7.2 no token in a query string | `route-table.test.mjs`. No schema declares `headers`; `params` and `querystring` are each an **allowlist** — `album_id`, `media_id`, `recipient_id` for paths (narrowed 22 September 2026), `recipient_id`, `media_id`, `limit`, `before` for §11.7's filters (narrowed 8 October 2026) — and a declared querystring must be closed. A guard on the allowlist itself fails if a credential-shaped name (`token`, `access_token`, `key`, `secret`, `password`) is ever added to it. An unknown query parameter is stripped by `removeAdditional`, not rejected, as an unknown body field is (§1.2); `access-log-routes.test.mjs` asserts `?token=` never reaches the port |
 | §1.2 `429` answers through the envelope                                                                             | `429 → RATE_LIMITED` is registered in the inverse table and `Retry-After` is in `Access-Control-Expose-Headers` (§3), so a cross-origin client can read the interval. `credential-routes.test.mjs` asserts the refused request's body is exactly `{code, message}` and that the header is set. What could make this mapping inert is the trap on the §7.6 row below                                                                                                                                                                                           |
 | The three unauthenticated routes are rate-limited (§7.6)                                                            | `rate-limit.ts`, IP-keyed; `credential-routes.test.mjs` asserts the eleventh request is refused. The `429` reaches the envelope rather than `@fastify/rate-limit`'s own body, which is what §1.2's `429` row asked for and what would otherwise make that row inert while looking live. The caveat the old owed row carried, kept because it is still true: the limiter is in-process state, correct on one instance and silently broken on two, with the effective limit doubling and no error anywhere. Carried in a comment at the limiter as well as here |
 | Credential routes answer identically whether an account exists (§4.3)                                               | `credential-routes.test.mjs`: `/login` returns a byte-identical `401 INVALID_CREDENTIALS` for a wrong proof and an unknown address; `/login/params` returns `200` for both; `login.test.mjs` spies the verifier and asserts it runs once on each path, against `dummyAuthHash` on the miss. §6.2 keeps the timing third, which is not assertable                                                                                                                                                                                                              |
@@ -1164,6 +1164,18 @@ which are only written down. **This table grows with every PR** and is the reaso
 | §10.1 QR → `404`, revoked → `403`, both without `details`                                                           | Same file, one token each: qr `404`; revoked passphrase `403`, with none of `wrapped`, `wrap_nonce` or `kdf_salt` anywhere in the body; unknown `401`; all bare `{code, message}`. **A revoked qr recipient is `404`** — §7.3's order applied, as §10.1 states: `get-recipient-key.ts` reads the wrapping (step 3) before it checks revocation (step 4), and reversing them answers `403`. Verified by violation both ways — dropping the revocation check, and moving it first, each fail one case. `infra/pr4-routes.test.mjs` repeats the qr and revoked cases over the real adapter                                     |
 | §10.1, §9.2 and §8.3 carry `no-store`                                                                               | `recipient-key-routes.test.mjs`: one parametrised test over the three wrapped-blob routes, so a fourth is a one-line addition. Each sets the header from a plugin-wide `onSend` hook rather than per handler. Verified by violation — removing `routes/recipient.ts`'s hook fails it                                                                                                                                                                                                                                                                          |
 | No spec rule — every `required` name is declared                                                                    | `route-table.test.mjs`: at every depth of every schema, a node's `required` names must all be keys of its `properties`. No section states this, and it is recorded anyway because it enforces something real: with `additionalProperties: false` the serialiser drops the undeclared field the handler sent, then throws because it is required — a `500` on every success. It caught §10.1's first draft, `kdfSalt` declared against `kdf_salt` required. Verified by violation — restoring that spelling fails it. A `then`/`else` carrying `required` alone is skipped: it constrains properties its parent declares (§7.7) |
+| §1.1 `RANGE_NOT_SATISFIABLE`/416 in the union | One entry in `packages/shared`, one each in `STATUS` and `MESSAGES`. `http.test.mjs` throws it through `v1Plugins` and asserts `416` with exactly `{code, message}`. Verified by violation — `satisfies` proves the table total, not its numbers, and a `419` compiled; that case fails on it |
+| §11.2 the range table, every row | `asset-routes.test.mjs`, against a fake store that clamps and answers `INVALID_RANGE` as SeaweedFS does (`infra/object-store-adapter.test.mjs` measured both): the `206` rows with the store's `Content-Range` forwarded, `416` with `bytes */size`, and `400` for no header, start after end, suffix, multi-range and another unit — no `details`, nothing echoed, the store never asked. `range.test.mjs` pins `parseRange` row by row, the case-sensitive unit included. The no-header row is the one someone will "fix" |
+| §11.2 forwards a whitelist of headers | `ObjectBody` has no slot for `ETag`, `Last-Modified` or `x-amz-*`, so the type is the enforcement. `asset-routes.test.mjs` and `thumbnail-routes.test.mjs` fake stores return an `etag` field and assert no such header reaches the client |
+| §11.3 ignores `Range` | `thumbnail-routes.test.mjs`: four `Range` values, invalid ones included, each `200`, whole body, no `Content-Range`, and the store never passed a range. `asset-routes.test.mjs` asserts `Accept-Ranges` is the asset route's alone |
+| §11.3 every ciphertext response is `no-store` | Per-plugin `onSend` hooks; header assertions in `thumbnail-routes`, `asset-routes`, `own-recipient-routes` and `access-log-routes`. Structurally, `byte-budget-routes.test.mjs` asserts every route flagged `chargesByteBudget` answers `no-store` — a **subset**, not equality: `no-store` also covers JSON bodies carrying a ciphertext field (§9.4, §11.4, §11.7), which charge requests, not bytes |
+| §11.5 the limiter keys on the hash and answers through the envelope | `byte-budget.test.mjs`: two tokens from one address do not share a budget, one token from two addresses does; the `429` is exactly the envelope with `Retry-After`; the floor is charged on a `403` and a `404`, a sub-floor response is not refunded, an over-floor one pays its size; the two budgets are disjoint. `retry-after.test.mjs` asserts a client that waits `Retry-After` is served, on the shared window and on both limiters — written against the IP limiter, which failed it. `sliding-window.test.mjs` covers the weighted walk, including a top-up past the maximum |
+| §11.6 `album_opened` on §9.5 only, `asset_viewed` on range-from-0 only | `album-opened.test.mjs` and `asset-routes.test.mjs`: an owner writes nothing, §9.4 writes nothing, two opens are two rows, a later range writes nothing, every `4xx` and a store `500` write nothing, thumbnails never write. `infra/pr5-journey.test.mjs` end to end: after six recipient requests, exactly one `album_opened` and one `asset_viewed` |
+| §11.6 a failed log write does not fail the fetch | Both files above: the repository throws, the `200`/`206` is served, and exactly one `error` line is logged. `infra/access-log-repository.test.mjs`: a failed insert rejects with the pg code and neither id, since `detail` would pair them |
+| §11.7 summary counts distinct media and includes zero-row and revoked recipients | `infra/access-log-repository.test.mjs`: two opens of one photo count once; a zero-row recipient appears with zeros and `null`; a revoked one keeps its history; the order is exact and another album's newer rows never appear. Paging walks every row once, a full last page ends with `null`, and each filter scopes through the album. `access-log-routes.test.mjs` pins the wire shape |
+| §11.4 `label` reaches a recipient of either kind | `own-recipient-routes.test.mjs`: a `qr` and a `passphrase` token each get their own row's label byte for byte, and a revoked one `403` with no label in the body. In `infra/pr5-journey.test.mjs` the label decrypts to the name the owner posted — the watermark has an input |
+| A flagged route cannot send a 2xx without charging the byte budget (§11.5) | An `onSend` guard in `buildServer` throws a plain `Error` — not an `ApiError`, so it reaches §1.2's unrecognised branch with a stack — when a route marked `chargesByteBudget` answers 2xx without the mark `chargeBytes` sets. No spec rule names this; it is recorded because the route-table walk reads route options and cannot see what a handler does, so without it "every flagged route charges" would be prose. Fires on the first successful request of any test reaching the route; `byte-budget-routes.test.mjs` asserts both halves. 2xx only: a `403` or `404` has already paid the floor in the auth hook |
+| A revoked recipient gets `403` on a non-`ready` row in their own album (§11.2) | `thumbnail-routes.test.mjs` and `asset-routes.test.mjs`: a revoked recipient, a `pending` row in their own album, expect `403`; the same recipient on another album's `pending` row, `404`. §7.3's ladder runs before the readiness check, so revocation answers first. Verified by violation — hoisting the readiness check for an early return fails exactly that case |
 
 The suite is hermetic — `app.inject()`, no Docker, no network — so it belongs in
 CI's `checks` job, which the workflow keeps free of infrastructure on purpose.
@@ -1203,16 +1215,6 @@ Each row names the assertion, not just the gap, so that writing it is mechanical
 | §2 the `/v1` mount exists                                                        | A test that fails when the mount is removed _and_ is not about error handling: register a probe route through `v1Plugins`, assert it answers at `/v1/<path>` **and** 404s at `/<path>`. The second half is what makes it about the prefix                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | §4.3 no credential route reveals whether an account exists — timing only         | The shape half is enforced and has moved to §6.1: byte-identical `401 INVALID_CREDENTIALS` for a wrong proof and an unknown address, `200` from `/login/params` for both, and the verifier spied on both paths. What remains owed is timing, and it is not assertable: a test that measures it is flaky, and one that does not proves nothing about the property that matters. The structural proxy §4.3 asks for — the dummy runs on the miss path, the lookup precedes any branch — is asserted, so what is left is the gap between "the same instructions run" and "they take the same time", which no test in this suite can close. Kept as a row because deleting it would imply timing was covered                                                                                                                                                                                                                                                                                                                                                                                                                         |
 | §4.2 no delete before storage objects                                            | Prose only, and no v1 route deletes. §4.2 constrains an operation the surface does not contain: album and owner deletion have no route (§9.10), and revoke is a soft delete (§7.8). Owed by whatever first deletes — an erasure worker or a delete route, Phase 2 — and what it will assert is that storage objects are enumerated from §9.7's key derivation and confirmed gone before any row is removed. Kept as a row because the constraint is live the day something deletes, and §9.10's orphaned partial objects are already the first thing that worker will find                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
-| §1.1 `RANGE_NOT_SATISFIABLE`/416 in the union                                    | **PR 5, owed.** `LENGTH_REQUIRED`/411 landed with PR 3. One entry each in `packages/shared`, one in each of `STATUS` and `MESSAGES`; `tsc` enforces the rest. Until they land the handlers cannot throw them, which is the point of §1.1's "registered ≠ reachable"                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
-| §11.2 the range table, every row                                                 | **PR 5, prose only.** Nine cases against a fake store that answers `206`/clamped/`InvalidRange` as a real one does: each row's status, `Content-Range` forwarded verbatim on the clamp, `400` bodies carrying no fragment of the submitted `Range` (#15). The no-header row is the one that matters — it is the RFC-compliant behaviour someone will restore                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
-| §11.2 forwards a whitelist of headers                                            | **PR 5, prose only.** Fake store adds `ETag`, `Last-Modified`, `x-amz-request-id`; assert none reach the client and `Content-Range`/`Content-Length` do                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
-| §11.3 ignores `Range`                                                            | **PR 5, prose only.** Thumbnail with `Range: bytes=0-10` → `200`, whole body, no `Content-Range`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
-| §11.3 every ciphertext response is `no-store`                                    | **PR 5, prose only.** Header assertion on §9.5, §11.2 and §11.3 — and a structural one: the three routes register through one hook, so a route-table walk can assert every route serving `application/octet-stream` or a `metadata` body has it                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| §11.5 the limiter keys on the hash and answers through the envelope              | **PR 5, prose only.** Two tokens from one IP do not share a budget; one token from two IPs does. The `429` body is `{code:"RATE_LIMITED", message}` and nothing else — the assertion that catches `errorResponseBuilder`'s default; §1.2's `429` row is discharged by the same test                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
-| §11.6 `album_opened` on §9.5 only, `asset_viewed` on range-from-0 only           | **PR 5, prose only.** A recipient calls §9.4 → zero rows; §9.5 → one row, twice → two rows (no dedupe); §11.2 `bytes=0-262207` → one row; `bytes=262208-` → zero; §11.3 → zero; the same sequence as an owner → zero rows throughout                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
-| §11.6 a failed log write does not fail the fetch                                 | **PR 5, prose only.** Log repository throws; assert `206` and one `error`-level line                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
-| §11.7 summary counts distinct media and includes zero-row and revoked recipients | **PR 5, prose only.** Two opens of one photo → `media_opened: 1`, `album_opens` unaffected; a recipient with no rows appears with zeros; a revoked one appears with `revoked_at` set                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
-| §11.4 `label` reaches a recipient of either kind                                 | **PR 5, prose only.** A `qr` token and a `passphrase` token both get their row's label; a revoked one gets `403`. This is the test that brief §5's watermark has an input                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 
 **Four rows were deleted here, 20 August 2026**, on the same principle as the
 deletion below — a discharged owed row is errata, and a reader who finds one
@@ -1229,6 +1231,13 @@ enforcement is removed, which is what makes a row checkable later. Note what
 closing §4.1 took: the walk asserts the converse as well, that `/signup` does
 declare `wrapped_master`, because a forbidden-names list nobody bounds
 eventually forbids the material the route exists to carry.
+
+**Ten rows were deleted here, 8 October 2026** — PR 5's, on the same principle;
+all ten sit in §6.1 with their tests, beside two that no rule here names: the
+2xx guard on byte-budget routes and the readiness-after-the-ladder `403`. One
+row moved with a correction: §7.2's query-string walk is an allowlist now, not
+a ban, and §6.1 says so rather than carrying "no schema declares a
+`querystring`", which stopped being true when §11.7 needed filters.
 
 **Four rows were deleted here, 7 October 2026** — PR 4's, on the same
 principle. All four sit in §6.1. One correction rather than a move: the
@@ -3265,6 +3274,12 @@ row must be `ready`, else `404 NOT_FOUND` for either caller — a row that is no
 `ready` has no object a viewer may rely on (§9.7), and a `pending` row's absent
 object is indistinguishable from an absent row on purpose.
 
+The `ready` check runs after §7.3's ladder, not within it. A revoked recipient
+asking for a non-`ready` row in their own album gets `403`, not `404` — otherwise
+the two answers tell them which photographs are ready, which is §7.3's reason for
+checking revocation after scope, one level down. Readiness is a route condition,
+not a step in the ladder.
+
 **The client computes byte offsets; the server validates syntax and forwards.**
 Encryption spec §3.3 makes the byte range of chunk _i_ arithmetic on the 64-byte
 header, and the client does that arithmetic — it fetches header plus chunk 0 in
@@ -3337,7 +3352,9 @@ reason §1.2's log projection is a whitelist.
 
 **Errors:** `400 VALIDATION_FAILED` · `401 UNAUTHENTICATED` · `403 ACCESS_REVOKED`
 · `404 NOT_FOUND` (row absent, out of scope, or not `ready`) ·
-`416 RANGE_NOT_SATISFIABLE` · `429 RATE_LIMITED`.
+`416 RANGE_NOT_SATISFIABLE` · `429 RATE_LIMITED` · `500 INTERNAL` when a `ready`
+row's object is missing — a broken invariant, never a `404`, which would tell the
+client to stop asking for something that must exist.
 
 ### 11.3 `GET /v1/media/{media_id}/thumbnail` — whole object, `Range` ignored
 
@@ -3365,7 +3382,7 @@ or not `Range` is present (§3.1); dropping `Range` here saves nothing.
 store, `Cache-Control: no-store`. No `Content-Range`, no `Accept-Ranges` — the
 route does not do ranges and should not advertise them.
 
-**Errors:** `401` · `403 ACCESS_REVOKED` · `404` · `429`.
+**Errors:** `401` · `403 ACCESS_REVOKED` · `404` · `429` · `500` as §11.2.
 
 #### `Cache-Control: no-store` on every ciphertext response — the rule
 
@@ -3447,19 +3464,48 @@ mobile data changes a device's address mid-session and would reset one. The
 three unauthenticated routes are the exception and are IP-keyed, for the reason
 §7.6 gives: they have no token to key on.
 
-| Limit                  | Value                                | Applies to                                 |
-| ---------------------- | ------------------------------------ | ------------------------------------------ |
-| Requests               | **300 per minute**, burst 60         | every authenticated route                  |
-| Bytes                  | **500 MB per hour** of response body | §11.2, §11.3, §9.5 — the ciphertext routes |
-| Unauthenticated routes | 10 per 15 minutes per IP             | §7.6                                       |
+| Limit           | Value                                  | Applies to                                                                |
+| --------------- | -------------------------------------- | ------------------------------------------------------------------------- |
+| Requests        | **300 per minute**, sliding window     | every authenticated route **except** the ciphertext routes below          |
+| Bytes           | **500 MiB per hour** of response body  | §9.5, §11.2, §11.3 — the ciphertext routes, which are not request-counted |
+| Unauthenticated | 10 per 15 minutes per IP               | §7.6                                                                      |
 
-**Provisional, every number.** A hundred-photo album is roughly a hundred
-thumbnails plus one metadata fetch on open and two to twelve chunk fetches per
-photograph viewed; 300/min with a burst of 60 lets a grid load and a viewer flick
-through without touching the limit, and 500 MB/hour is several full albums.
-**Tune in Phase 2** against real traffic, not now against a guess — but a
-limiter sized against a guess is better than none, since none is what an
-abandoned client loop or a scraped invite gets today.
+**The two budgets are disjoint, and that is the correction.** Earlier revisions
+counted every route in one request budget with a burst allowance — first 60, then
+300 — and both were wrong for the same reason: **a grid opens one thumbnail
+request per photo, so album size sets the request budget, and nothing caps album
+size.** At 300 a three-hundred-photo album cannot open, and a hundred-photo album
+browsed and refreshed exceeds it, which is ordinary behaviour for the person this
+product exists for.
+
+Ciphertext routes are bounded by bytes instead, where a thumbnail costs tens of
+kilobytes and a scraped invite still cannot drain the album. **Request count then
+measures only what it is good at** — a client loop hammering a cheap route — and
+that traffic does not scale with how many photographs someone has. 500 MiB/hour
+is about five hundred-photo albums viewed in full, because no client transmits
+full resolution (non-negotiable #14): a 1600 px JPEG is typically under a
+megabyte (§9.7).
+
+**Every request to a ciphertext route charges at least 16 KiB, whatever it
+served — including errors.** Without a floor the byte budget bounds nothing:
+`bytes=0-0` on the asset route serves one byte, writes an `asset_viewed` row
+(§11.6 forbids deduplicating), and fits inside 500 MiB about five hundred million
+times. Errors are cheaper still — a `404`, a `416` or a revoked recipient's `403`
+serves no body and costs a database lookup, and a `416` a round trip to the store.
+
+The floor's job is to bound request count, and 16 KiB is where it costs a real
+user nothing measurable. Real traffic is dominated by 256 KiB chunks, so anything
+from a few KiB to about 64 KiB is invisible against it; 16 KiB gives roughly
+32,000 requests an hour, which no browsing pattern approaches. Some legitimate
+responses are smaller than the floor and are rounded up — §9.5 returns a few
+hundred bytes for an album with two ready photos, a final chunk is whatever is
+left over, and a simple thumbnail can fall under it. That costs an album open
+one rounded charge and a hundred-photo grid at most 1.6 MiB of rounding, which is
+0.3% of the hourly budget.
+
+_Provisional, like everything here. Phase 2 tunes against real traffic. What is
+no longer provisional is the shape: a budget whose ceiling is set by album size
+is the wrong budget, whatever number it carries._
 
 **`429 RATE_LIMITED` with `Retry-After`, in seconds; the client backs off
 silently.** No user-facing sentence, no retry button — a recipient scrolling a
@@ -3477,7 +3523,7 @@ noticing the property they lost.
 `errorResponseBuilder` produces its own body and bypasses `setErrorHandler`,
 which would make it a second error shape — §1's one-shape rule broken by a
 dependency's default. The limiter must throw an `ApiError("RATE_LIMITED")`, or
-build the envelope by the same function, and §6.2's row asserts it.
+build the envelope by the same function, and §6.1's row asserts it.
 
 **The hash, never the token string**, as the key (schema §6's rule against
 comparing token strings; §7.2). The limiter's map is keyed by the same 32 bytes
@@ -3675,6 +3721,19 @@ in use: `GET`, `POST`, `PUT` (§3). Three routes accept a wrapping (§4.1's inbo
 walk: §7.5, §7.7, §9.2); three return one (§4.1's outbound walk: §8.3, §9.2,
 §10.1). Four are shared between schemes — §9.4, §9.5, §11.2, §11.3 — and each
 resolves to exactly one `Caller` (§7.1).
+
+**No route answers `HEAD`.** Fastify adds a `HEAD` route for every `GET` by
+default; `exposeHeadRoutes: false` turns that off, globally rather than per
+route. The reason is §11.6: a `HEAD` runs the `GET` handler and discards the
+body, so a recipient's `HEAD` on §9.5 writes an `album_opened` row and a `HEAD`
+on §11.2 with a range from byte 0 writes an `asset_viewed` row — an open that
+delivered nothing. The log's permitted copy says _opened_, which names a
+retrieval; a row for a request that returned no body makes that word untrue.
+Omitting `HEAD` from the CORS `methods` list does not prevent this — `HEAD` is
+CORS-safelisted, so a browser sends it regardless. The cost is `HEAD /health`,
+which uptime monitors can replace with a `GET`. An unversioned liveness check
+losing one method is a smaller loss than an access log that counts requests
+nobody read.
 
 ### 11.9 What this section changes elsewhere
 
