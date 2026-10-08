@@ -1175,7 +1175,7 @@ which are only written down. **This table grows with every PR** and is the reaso
 | §11.7 summary counts distinct media and includes zero-row and revoked recipients | `infra/access-log-repository.test.mjs`: two opens of one photo count once; a zero-row recipient appears with zeros and `null`; a revoked one keeps its history; the order is exact and another album's newer rows never appear. Paging walks every row once, a full last page ends with `null`, and each filter scopes through the album. `access-log-routes.test.mjs` pins the wire shape |
 | §11.4 `label` reaches a recipient of either kind | `own-recipient-routes.test.mjs`: a `qr` and a `passphrase` token each get their own row's label byte for byte, and a revoked one `403` with no label in the body. In `infra/pr5-journey.test.mjs` the label decrypts to the name the owner posted — the watermark has an input |
 | A flagged route cannot send a 2xx without charging the byte budget (§11.5) | An `onSend` guard in `buildServer` throws a plain `Error` — not an `ApiError`, so it reaches §1.2's unrecognised branch with a stack — when a route marked `chargesByteBudget` answers 2xx without the mark `chargeBytes` sets. No spec rule names this; it is recorded because the route-table walk reads route options and cannot see what a handler does, so without it "every flagged route charges" would be prose. Fires on the first successful request of any test reaching the route; `byte-budget-routes.test.mjs` asserts both halves. 2xx only: a `403` or `404` has already paid the floor in the auth hook |
-| A revoked recipient gets `403` on a non-`ready` row in their own album (§11.2) | `thumbnail-routes.test.mjs` and `asset-routes.test.mjs`: a revoked recipient, a `pending` row in their own album, expect `403`; the same recipient on another album's `pending` row, `404`. §7.3's ladder runs before the readiness check, so revocation answers first. Verified by violation — hoisting the readiness check for an early return fails exactly that case |
+| A revoked recipient gets `403` on a non-`ready` row in their own album (§11.2) | `thumbnail-routes.test.mjs` and `asset-routes.test.mjs`: a revoked recipient, a `pending` row in their own album, expect `403`; the same recipient on another album's `pending` row, `404`. §7.3's ladder runs before the readiness check, so revocation answers first. Verified by violation on the thumbnail route — hoisting the readiness check for an early return fails exactly that case |
 
 The suite is hermetic — `app.inject()`, no Docker, no network — so it belongs in
 CI's `checks` job, which the workflow keeps free of infrastructure on purpose.
@@ -3756,3 +3756,11 @@ nobody read.
 - **Padding ciphertext to size buckets** — encryption spec §10's accepted
   limitation; `Content-Length` on §11.2 and §11.3 reveals object size, as the
   store would.
+- **An index for §11.7's cursor** — the entries route pages by `access_log.id`,
+  but schema §4's indexes order `(recipient_id, occurred_at DESC)` and
+  `(media_id)`, so a filtered page sorts every matching row to return a hundred,
+  and an unfiltered one has no album-scoped path at all. Its cost grows with the
+  log, not the page. Harmless because v1's logs are small, not because the
+  design avoids it — the condition is an album with a year of rows. The fix is a
+  migration (`(recipient_id, id DESC)`, `(media_id, id DESC)`), not an API
+  change: the cursor stays `id`.
