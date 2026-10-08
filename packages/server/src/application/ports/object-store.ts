@@ -20,8 +20,7 @@ export type ObjectKey = string;
 
 /**
  * Closed. Every rejection from this port is a `StorageError`, so `application/`
- * never sees an SDK type. `NOT_FOUND` and `INVALID_RANGE` are PR 5's (§11.2),
- * registered ahead of use on §1.1's rule and unthrown here.
+ * never sees an SDK type. `NOT_FOUND` and `INVALID_RANGE` are `get`'s (§11.2).
  */
 export type StorageErrorCode = "NOT_FOUND" | "INVALID_RANGE" | "UNAVAILABLE";
 
@@ -32,13 +31,42 @@ export type StorageErrorCode = "NOT_FOUND" | "INVALID_RANGE" | "UNAVAILABLE";
  */
 export class StorageError extends Error {
   readonly code: StorageErrorCode;
+  /**
+   * Set with `INVALID_RANGE` and no other code: the size §11.2's 416 puts in
+   * its `Content-Range`. Absent on other codes does not mean "size unknown".
+   */
+  readonly objectSize?: number;
 
-  constructor(code: StorageErrorCode, options?: { cause?: unknown }) {
-    super(code, options);
+  constructor(
+    code: StorageErrorCode,
+    options?: { cause?: unknown; objectSize?: number },
+  ) {
+    super(code, options?.cause === undefined ? undefined : { cause: options.cause });
     this.name = "StorageError";
     this.code = code;
+    if (options?.objectSize !== undefined) this.objectSize = options.objectSize;
   }
 }
+
+/** Inclusive, already normalised by the caller to `bytes=X-Y` or `bytes=X-`. */
+export type ByteRange = { readonly start: number; readonly end?: number };
+
+/** The store's answer to a range, as values; the route renders the header. */
+export type ContentRange = {
+  readonly start: number;
+  readonly end: number;
+  readonly size: number;
+};
+
+/**
+ * No slot for `ETag`, `Last-Modified` or `x-amz-*`: §11.2's forwarding
+ * whitelist is this type. `contentRange` is present exactly when a range was.
+ */
+export type ObjectBody = {
+  readonly body: Readable;
+  readonly contentLength: number;
+  readonly contentRange?: ContentRange;
+};
 
 export type StoredObject = {
   /** The store's `Content-Length` — what §9.7 compares its own count to. */
@@ -71,4 +99,11 @@ export interface ObjectStore {
    * store; `infra/object-store-adapter.test.mjs` is where.
    */
   head(key: ObjectKey): Promise<StoredObject | null>;
+
+  /**
+   * §11.2, §11.3. Absent THROWS `NOT_FOUND`, unlike `head`: on a `ready` row it
+   * is a broken invariant, not a state. 416 → `INVALID_RANGE` with
+   * `objectSize`; decide both on the status code, as `head` does.
+   */
+  get(key: ObjectKey, range?: ByteRange): Promise<ObjectBody>;
 }
