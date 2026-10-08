@@ -9,6 +9,8 @@ export type ErrorCode =
   | "LENGTH_REQUIRED"
   | "PAYLOAD_TOO_LARGE"
   | "UNSUPPORTED_MEDIA_TYPE"
+  /** api-sketch §11.9 — the asset route's range starts past the object (§11.2). */
+  | "RANGE_NOT_SATISFIABLE"
   | "RATE_LIMITED"
   | "INTERNAL";
 
