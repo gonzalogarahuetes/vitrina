@@ -2,6 +2,7 @@ import type { Pool } from "pg";
 import type {
   CreatedRecipient,
   NewRecipient,
+  RecipientDetails,
   RecipientGrant,
   RecipientRepository,
   RecipientScope,
@@ -128,6 +129,33 @@ class PostgresRecipientRepository implements RecipientRepository {
         iterations: recipientRow.kdf_iterations,
         parallelism: recipientRow.kdf_parallelism,
       },
+    };
+  }
+
+  async findDetailsById(recipientId: string): Promise<RecipientDetails | null> {
+    const {
+      rows: [recipientRow],
+    } = await this.pool.query(
+      `SELECT id, album_id, label, kind, created_at
+        FROM recipients
+        WHERE id = $1`,
+      [recipientId],
+    );
+
+    if (!recipientRow) return null;
+
+    // pg types the row `any`; this makes the port's union true, not assumed.
+    // 001's CHECK on `kind` should make it unreachable — a throw if it is not.
+    if (recipientRow.kind !== "qr" && recipientRow.kind !== "passphrase") {
+      throw new Error("Invalid 'kind' field stored in the database.");
+    }
+
+    return {
+      id: recipientRow.id,
+      albumId: recipientRow.album_id,
+      label: recipientRow.label,
+      kind: recipientRow.kind,
+      createdAt: recipientRow.created_at,
     };
   }
 }

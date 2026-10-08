@@ -68,6 +68,18 @@ export type CreatedRecipient = {
   readonly createdAt: Date;
 };
 
+/**
+ * §11.4's row: the watermark's input. `label` is ciphertext, verbatim. No
+ * `revokedAt` — the grant already carries it, and two copies can disagree.
+ */
+export type RecipientDetails = {
+  readonly id: string;
+  readonly albumId: string;
+  readonly label: Uint8Array;
+  readonly kind: "qr" | "passphrase";
+  readonly createdAt: Date;
+};
+
 /** §7.8's scope input. `ownerId` comes from the `albums` join. */
 export type RecipientScope = {
   readonly id: string;
@@ -134,4 +146,10 @@ export interface RecipientRepository {
    * a response before that check runs, which this method cannot enforce.
    */
   findWrapById(recipientId: string): Promise<RecipientWrap | null>;
+
+  /**
+   * §11.4. `recipientId` from the grant, never the request. Unfiltered on
+   * `revoked_at`: revocation is step 4 and the use case's. `null` if absent.
+   */
+  findDetailsById(recipientId: string): Promise<RecipientDetails | null>;
 }
