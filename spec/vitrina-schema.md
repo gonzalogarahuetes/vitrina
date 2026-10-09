@@ -2,7 +2,7 @@
 
 **Status:** Draft v0.1 · last updated 14 September 2026 · **provisional**
 **Companion to:** `vitrina-project-brief.md` §9–§9.3, `vitrina-encryption-spec.md` §6
-**Implemented by:** `001_initial_schema.sql` (B.5), `002` (Phase 1) and `003` (titles and labels as ciphertext)
+**Implemented by:** `001_initial_schema.sql` (B.5), `002` (Phase 1), `003` (titles and labels as ciphertext) and `004` (media removal)
 
 ---
 
@@ -95,6 +95,8 @@ erDiagram
         bytea metadata "encrypted metadata envelope"
         timestamptz created_at
         timestamptz updated_at
+        timestamptz removed_at "nullable - hidden, erasure pending"
+        smallint uploads_in_flight "default 0"
     }
 
     recipients {
@@ -239,12 +241,16 @@ No `status` column — brief §9.2.
 | `metadata`   | `bytea`       | NOT NULL, as of `002`. The API posts the envelope at media create (api-sketch §9.6), so no row ever exists without one; `001`'s nullability admitted a state no route produces |
 | `created_at` | `timestamptz` | NOT NULL, default `now()`                                                                                                                                                      |
 | `updated_at` | `timestamptz` | NOT NULL, default `now()`                                                                                                                                                      |
+| `removed_at`        | `timestamptz` | NULL, since `004`. Set by api-sketch §9.11's removal and never unset; a set row is served and accepted by no route |
+| `uploads_in_flight` | `smallint`    | NOT NULL, default `0`, `CHECK (uploads_in_flight >= 0)`, since `004`. api-sketch §9.7 uploads admitted and not yet ended |
 
 `id` is the envelope's `asset_id`. Asset and thumbnail object keys derive from it; there is no object-key column (brief §9.2).
 
 `kind` carries `'video'` from day one although Phase 3 is far away — non-negotiable #8. `status` will resolve in about 200 ms for photos and feels like pointless machinery; it exists so video does not require touching every UI surface that assumed uploaded meant viewable.
 
 `byte_size` is nullable because the row is created before the object exists, and is a denormalised cache — object storage is authoritative. `metadata` holds the encrypted metadata envelope as bytes, per encryption spec §7. `updated_at` exists so a row stuck in `processing` is detectable.
+
+**`removed_at` is not a fifth status.** Removal is not a stage of ingest, so non-negotiable #9's ladder is untouched and a row is hidden from any status. The row is deleted only once both objects are confirmed absent and `uploads_in_flight` is zero (api-sketch §9.11), so a late upload cannot land behind a completed removal. A count stuck above zero after a crash is told from a live one by `updated_at`, which `beginUpload` moves; no other column is needed for that.
 
 ### `recipients`
 
@@ -368,7 +374,7 @@ An earlier draft of this document claimed that cascading into `access_log` would
 
 Cascade is also structurally forced. `albums → recipients` cascades, so if `recipients → access_log` did not, log rows would block every recipient delete and albums would become undeletable. Note that revoking a recipient sets `revoked_at` and deletes nothing; a `recipients` row is only ever deleted when its album or owner goes, which is exactly when that history should go too.
 
-`media → access_log` is moot in v1, since Phase 1 has no album editing and individual assets are never deleted. Cascade for consistency; revisit when editing arrives.
+`media → access_log` fires on api-sketch §9.11's removal, the one route that deletes a media row. Kept: the log is personal data about viewing, and "opened 11 of 19" is true of an album that now holds 19. `SET NULL` would make a viewed photograph's row look like an `album_opened`, whose `media_id` is NULL by definition.
 
 ### 5.1 What cascade does not do, and why it is dangerous on its own
 

@@ -101,7 +101,7 @@ https://{relay}/v/#v=1&a={album}&t={token}
 
 The recipient receives the link (or scans a QR of it) **and, separately, a 5-word passphrase**. The client fetches the wrapped key, salt, and Argon2id parameters from the relay, derives the KEK, and unwraps `K_album` per encryption spec §6.2.
 
-Passphrases are system-generated, minimum 5 words, from a Spanish or Catalan wordlist. See encryption spec §6.3 — user-chosen passphrases are forbidden, and the reason is not paternalism.
+Passphrases are system-generated, minimum 5 words, from a vetted wordlist in the recipient’s language, chosen per invite (encryption spec §6.3, brief §15.2). See encryption spec §6.3 — user-chosen passphrases are forbidden, and the reason is not paternalism.
 
 **Security note:** this mode is weaker than direct mode **against database theft**, because the relay stores a wrapped copy of `K_album` and can attack it offline given a weak passphrase. It is _stronger_ against a forwarded invite, because the relay participates in every unwrap and therefore has a lever direct mode does not — see encryption spec §6.5 and §8 below. Direct mode remains the default and the owner-facing UI SHOULD present passphrase mode as the fallback, but not on the grounds that it is weaker in every respect.
 

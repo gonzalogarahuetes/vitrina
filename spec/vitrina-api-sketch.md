@@ -648,7 +648,7 @@ verified against the source".
 | ---------------- | ----------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `origin`         | exactly one allowlisted origin, from config     | Never `*`, never `true`                                                                                                                                        |
 | `credentials`    | `false`                                         | Token in an `Authorization` header, not a cookie — §3.2                                                                                                        |
-| `methods`        | `GET`, `POST`, `PUT`                            | Narrow to what the route table needs. **`DELETE` removed and `PUT` added by PR 3** (§9.9) — the upload routes are `PUT`, and nothing in the v1 surface deletes |
+| `methods`        | `GET`, `POST`, `PUT`, `DELETE`                  | Narrow to what the route table needs. **`PUT` added by PR 3** (§9.9) for the uploads; **`DELETE` removed by PR 3 and restored by §9.11**, whose media removal is the one route in the v1 surface that deletes |
 | `allowedHeaders` | `Authorization`, `Content-Type`, `Range`        | **`Authorization` explicitly** — the Fetch standard makes it a _non-wildcard_ header, so `*` would not cover it (§3.1)                                         |
 | `exposedHeaders` | `Content-Range`, `Accept-Ranges`, `Retry-After` | None is a safelisted _response_ header; the client cannot read them otherwise                                                                                  |
 | `maxAge`         | `7200`                                          | Preflight cache. 7200s is the maximum Chrome honours — not a claim about other browsers (§3.1)                                                                 |
@@ -1144,7 +1144,6 @@ which are only written down. **This table grows with every PR** and is the reaso
 | §9.2 every album's wrapping is in the list, and the list is `no-store`                                              | Route test: two albums created, both `wrapped_key`s equal what was posted, plus the header. A list that returned wrappings for the first page only passes a single-album test.                                                                                                                                                                                                                                                                                                                                                                                |
 | §9.7 the route's own size ceiling, per variant                                                                      | `Content-Length` above the limit is `413` before the body is read. The ceiling is a parameter of one shared handler and the 81-byte floor is not, asserted by the same body passing on the asset and failing on the thumbnail. `bodyLimit` cannot do this: measured, it reaches only the parsers that accumulate a body.                                                                                                                                                                                                                                      |
 | §9.7 an undersized body is rejected                                                                                 | `Content-Length: 0` and `80` each answer `400` with the row untouched. The one check the confirming `HEAD` cannot back up — a zero-length body compares 0 against a count of 0 and would otherwise reach `ready`.                                                                                                                                                                                                                                                                                                                                             |
-| §3 `methods` is `GET, POST, PUT`                                                                                    | `http.test.mjs`: the preflight's `Access-Control-Allow-Methods` carries `PUT` and not `DELETE`. Asserted on the header rather than the status, because @fastify/cors answers `204` to a `DELETE` preflight either way.                                                                                                                                                                                                                                                                                                                                        |
 | §9.7 `ready` means two objects confirmed in a real store                                                            | Not hermetic, and cannot be. `infra/object-store-adapter.test.mjs` asserts the two answers a fake cannot tell apart — `null` for an absent object, a throw for an unreachable store — and `infra/smoke.test.mjs` heads both objects after a `ready`, which is what shows `byte_size` came from the store rather than from the client's `Content-Length`. The hermetic rows above assert the ladder against a fake; these assert the evidence the ladder rests on. Runs in the `infra` job                                                                     |
 | A body cannot exceed the route's limit (§9.7)                                                                       | Structural, not code. `Content-Length` is compared against the limit before a byte is read — tested. Beyond that, Node delivers at most `Content-Length` bytes to the handler and parses the excess as a pipelined request (measured 29 September 2026), and the only framing that can outrun its declaration is chunked, which this route refuses at `411`. The guarantee is conditional on that `411`: accept chunked uploads and a running-count check becomes required, and §9.7 carries what it must do                                                  |
 | §7.5 `/logout` revokes the presented token only                                                                     | `logout-routes.test.mjs`: one owner, two sessions; logging out the laptop leaves the phone answering `200`. A token named in a body is ignored and the bearer's is revoked. Fails if the use case calls `revokeAllTokens`, or the handler reads a body. The repository's half — `owner_id` in the `WHERE`, so a wrong owner revokes nothing — is `infra/owner-repository.test.mjs`                                                                                                                                                                            |
@@ -1214,7 +1213,14 @@ Each row names the assertion, not just the gap, so that writing it is mechanical
 | §1.2 chain a message you wrote, not a driver error verbatim                      | **Prose only, and structurally unenforceable here** — the reason it is worth a row rather than a note. The handler cannot inspect a chained value and tell a submitted one from an authored one, so no assertion in `error-logging.test.mjs` can close this; that file instead asserts the _absence_ of a guarantee, so nobody reads the `ApiError` branch as making one. **The exposure is larger than this row first recorded** (corrected 21 August 2026): `errWithCause` copies a cause's enumerable own properties, so a chained `pg` error carries `detail` — where Postgres puts the submitted value — and not merely a message. A test now asserts that leak exists rather than implying it does not. The nearest thing to enforcement arrives with PR 3's repository adapter, where a real `pg` error is first available to chain: extend §7.5's per-route log test to the `CONFLICT` path and assert the submitted value is absent from every line. Until then this is review discipline, and the rule is written on `ApiError`'s `cause` doc comment because that is where someone chaining a driver error is looking |
 | §2 the `/v1` mount exists                                                        | A test that fails when the mount is removed _and_ is not about error handling: register a probe route through `v1Plugins`, assert it answers at `/v1/<path>` **and** 404s at `/<path>`. The second half is what makes it about the prefix                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | §4.3 no credential route reveals whether an account exists — timing only         | The shape half is enforced and has moved to §6.1: byte-identical `401 INVALID_CREDENTIALS` for a wrong proof and an unknown address, `200` from `/login/params` for both, and the verifier spied on both paths. What remains owed is timing, and it is not assertable: a test that measures it is flaky, and one that does not proves nothing about the property that matters. The structural proxy §4.3 asks for — the dummy runs on the miss path, the lookup precedes any branch — is asserted, so what is left is the gap between "the same instructions run" and "they take the same time", which no test in this suite can close. Kept as a row because deleting it would imply timing was covered                                                                                                                                                                                                                                                                                                                                                                                                                         |
-| §4.2 no delete before storage objects                                            | Prose only, and no v1 route deletes. §4.2 constrains an operation the surface does not contain: album and owner deletion have no route (§9.10), and revoke is a soft delete (§7.8). Owed by whatever first deletes — an erasure worker or a delete route, Phase 2 — and what it will assert is that storage objects are enumerated from §9.7's key derivation and confirmed gone before any row is removed. Kept as a row because the constraint is live the day something deletes, and §9.10's orphaned partial objects are already the first thing that worker will find                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| §4.2 no delete before storage objects                                            | **Narrowed 9 October 2026.** §9.11's media removal is the first route that deletes, and its rows below own the per-media half: hide, objects confirmed absent, then the row. What stays owed is album and owner deletion — Phase 2, no route — and what that will assert is unchanged: storage objects enumerated from §9.7's key derivation and confirmed gone before any row is removed. §9.10's orphaned partial objects are still the first thing that worker will find |
+| §3 `methods` is `GET, POST, PUT, DELETE` — §9.11 | `http.test.mjs`: the preflight's `Access-Control-Allow-Methods` carries `PUT` and `DELETE`. The case asserted `DELETE`'s absence until §9.11 and was flipped deliberately, with the reason in it. Moves to §6.1 when green |
+| §9.11 `204` only after both objects are confirmed absent; `202` otherwise; a repeated `DELETE` is `404` | `remove-media.test.mjs`: hide before any store call; `erase` only after both `HEAD`s answered absent; `pending` — never `erase` — with an upload in flight, an unreachable `remove` or `HEAD`, or an object the store keeps showing; a store lagging its own delete is asked again. `media-removal-routes.test.mjs`: `204` and `202` with empty bodies, the `202` logging the `StorageError` at `error`, a retry finishing it; after a `204`, a repeat is `404` byte-identical to an absent id and to another owner's, which stays unhidden. `route-table.test.mjs`: `removeMediaSchema` declares `media_id` alone, no body, no success body |
+| §9.11 a hidden row is refused or omitted on every read and both uploads | `media-removal-routes.test.mjs`, owner and recipient: §9.4 and §9.5 omit it beside a live row, §11.2 and §11.3 answer `404` without asking the store or writing an open, §9.8 and both §9.7 `PUT`s `404` (not `409`). Against a fake, so it shows no route bypasses the port; `infra/media-repository.test.mjs` holds the SQL to it — `findById`, `listByAlbum`, `listReadyEnvelopes`, `beginUpload` returning null rather than `already_ready`, `markReady` writing nothing — and `infra/media-removal-journey.test.mjs` runs every path over the real composition and asks the bucket directly |
+| §9.11 the in-flight counter: counted on admission, uncounted on every exit, erased only at zero | `upload-removal-race.test.mjs`: one `endUpload` per started upload, after `put` settles, on five ladder outcomes and three injected throws, none for an upload that never started; an upload finishing onto a hidden row removes its own object and answers `404`, also when that removal fails; a hide during the confirming `HEAD` is `404`, not `throwOnNullRow`'s `500`. `infra/media-repository.test.mjs`: `beginUpload` increments, `endUpload` decrements and reports `removed`, `hide` reports the count, `erase` refuses at above zero, `004`'s `CHECK` refuses a negative, and 25 concurrent `hide`/`beginUpload` pairs never yield `started` with a reported zero |
+| §9.11 a fetch racing a removal is `404`; a missing object on a live `ready` row is still `500` | `media-removal-routes.test.mjs`, asset and thumbnail: the row hidden and the objects deleted between the lookup and the store answers `404`; the objects missing with the row live answers `500` |
+| §9.11 erasure takes the row's own `access_log` rows and no others | `infra/media-repository.test.mjs`: after `erase`, the media's `asset_viewed` row is gone and the album-level `album_opened` and another media's row remain (schema §5) |
+| §9.11 the store's defaults — SeaweedFS only | `infra/object-store-adapter.test.mjs`: the bucket's versioning is neither `Enabled` nor `Suspended`; after a `remove`, `ListObjectVersions` shows no version and no delete marker; a raw `DeleteObject` on an absent key succeeds; `remove` is idempotent and THROWS `UNAVAILABLE` for an unreachable store. **Hetzner unverified** |
 
 **Four rows were deleted here, 20 August 2026**, on the same principle as the
 deletion below — a discharged owed row is errata, and a reader who finds one
@@ -3034,9 +3040,10 @@ application/octet-stream` is not a CORS-safelisted value, so the upload
 - **Album and owner deletion.** No route. §4.2 stands as the constraint on the
   operation when it arrives; the object-key derivation in §9.7 is what an erasure
   worker will enumerate.
-- **Album editing** — title change, media removal, re-ordering. None in v1
-  (schema §5). §9.7's `409` after `ready` is where the first of these will have
-  to be argued.
+- **Album editing** — title change and re-ordering. None in v1. §9.7's `409`
+  after `ready` is where the first of these will have to be argued. **Media
+  removal was in this list and is now §9.11**: without it, a wrongly uploaded
+  photograph forced revoking and re-inviting the whole album.
 - **The stall interval** — §9.7. `updated_at` is there; the number is not.
 - **The upload deadline** — §9.7. 120 seconds, provisional, and a different
   number from the stall interval: this one bounds a request the server is
@@ -3056,6 +3063,65 @@ application/octet-stream` is not a CORS-safelisted value, so the upload
 - ~~The `K_album` wrap construction and the `albums` columns that hold it~~ —
   **closed** the same day, in encryption spec §2 and schema §3 respectively; §9.1
   records the outcome and §9.2 carries it.
+
+### 9.11 `DELETE /v1/media/{media_id}` — removal
+
+Owner scheme; §9.3's `{media_id}` scope. No body. Allowed from any `status`, so
+on a `pending` or `processing` row it is also how an owner cancels a stalled
+upload. Writes no `access_log` row: an owner action is not an open (§11.6).
+
+**Hide first, erase second** — §4.2's order, applied to one media row:
+
+1. **Hide.** Set `removed_at` (schema §3) in one statement whose `WHERE`
+   carries the owner. From that commit §9.4 and §9.5 omit the row, and §9.7's
+   uploads, §9.8, §11.2 and §11.3 answer `404`. The filter lives in the media
+   repository's reads, not in §9.3's album scope, which never sees a media row.
+2. **Erase the objects**, only if no upload is in flight: delete both of §9.7's
+   keys, then confirm each absent with a `HEAD`, asking again a bounded number
+   of times while the store still shows one.
+3. **Delete the row**, which takes its `access_log` rows with it (schema §5).
+
+| Response        | Meaning                                                                                                                                    |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `204`, no body  | Erased: both objects confirmed absent, then the row deleted                                                                                |
+| `202`, no body  | Hidden, erasure pending: an upload in flight, a store that could not be reached (logged at `error`), or an object still visible. Repeat it |
+| `404 NOT_FOUND` | Absent, another owner's, or already erased — indistinguishably (§7.3)                                                                      |
+
+**A repeated `DELETE` after the row is gone is `404`.** A `204` for an absent
+id would also have to answer `204` for another owner's row, reporting an
+erasure that did not happen. Because the row goes only after its objects are
+confirmed absent, a `404` on a client's retry of its own `DELETE` means done.
+
+**An upload in flight.** A `PUT` admitted before the hide can finish after it.
+`media.uploads_in_flight` counts each upload in the statement that admits it
+and uncounts it once the store has answered, on every exit path; the row is
+deleted only at zero. An upload that finishes onto a hidden row removes the
+object it wrote and answers `404`. A process that dies mid-upload leaves the
+count above zero, and that row's removal answers `202` until something
+intervenes — a stall that says so, where a time-limited lease would eventually
+answer `204` while a late write can still land (brief §6 #17).
+
+**A `202` nobody retries** leaves the row hidden and its objects stored until
+Phase 2's sweep. The client retries with backoff and shows the pending state.
+
+**What "at once" covers.** Every request after the hide commits. A response
+already streaming is not cut off, and a fetch that read the row before the
+hide and reached the store after the delete answers `404`, not §11.2's `500`,
+which stays the answer for a missing object behind a live `ready` row.
+
+**What erasure covers** is what the relay holds. Not a copy any recipient
+already retrieved, and not a Postgres backup, which holds the row until it
+rotates.
+
+**Two store defaults it rests on:** the bucket is unversioned — with versioning
+on, `DeleteObject` leaves the ciphertext as a noncurrent version while every
+check above still passes — and deleting an absent key succeeds. Both are
+asserted against SeaweedFS (`infra/object-store-adapter.test.mjs`). **Neither
+is verified against Hetzner.**
+
+- **Errors:** `400 VALIDATION_FAILED` (`media_id` not a uuid) ·
+  `401 UNAUTHENTICATED` · `404 NOT_FOUND` · `429 RATE_LIMITED`.
+- **Album and owner deletion stay Phase 2** (§9.10).
 
 ---
 
@@ -3686,8 +3752,8 @@ with use rather than with content.
 ### 11.8 Every route, in one table
 
 The document's single enumeration — §7.9 covers owner auth, §9.1 the owner flow,
-§10.1 and §11 stand alone, and until now no one place listed them all. Twenty-two
-routes plus `/health`.
+§10.1 and §11 stand alone, and until now no one place listed them all. No
+count: nothing checks one against the rows.
 
 | Route                                          | Scheme            | PR  | Defined | Logs                                                 | `no-store`       |
 | ---------------------------------------------- | ----------------- | --- | ------- | ---------------------------------------------------- | ---------------- |
@@ -3706,6 +3772,7 @@ routes plus `/health`.
 | `GET /v1/media/{media_id}`                     | owner             | 3   | §9.8    | —                                                    | —                |
 | `PUT /v1/media/{media_id}/asset`               | owner             | 3   | §9.7    | —                                                    | —                |
 | `PUT /v1/media/{media_id}/thumbnail`           | owner             | 3   | §9.7    | —                                                    | —                |
+| `DELETE /v1/media/{media_id}`                  | owner             | —   | §9.11   | —                                                    | —                |
 | `POST /v1/albums/{album_id}/recipients`        | owner             | 2   | §7.7    | —                                                    | —                |
 | `POST /v1/recipients/{recipient_id}/revoke`    | owner             | 2   | §7.8    | —                                                    | —                |
 | `GET /v1/recipient`                            | recipient         | 5   | §11.4   | —                                                    | yes (ciphertext) |
@@ -3717,7 +3784,7 @@ routes plus `/health`.
 
 Every authenticated row is behind §11.5's token-hash limiter; the three
 `none` rows are behind §7.6's IP limiter; `/health` is behind neither. Methods
-in use: `GET`, `POST`, `PUT` (§3). Three routes accept a wrapping (§4.1's inbound
+in use: `GET`, `POST`, `PUT`, `DELETE` (§3). Three routes accept a wrapping (§4.1's inbound
 walk: §7.5, §7.7, §9.2); three return one (§4.1's outbound walk: §8.3, §9.2,
 §10.1). Four are shared between schemes — §9.4, §9.5, §11.2, §11.3 — and each
 resolves to exactly one `Caller` (§7.1).
