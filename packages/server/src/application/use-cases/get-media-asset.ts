@@ -69,9 +69,13 @@ export function getMediaAsset(deps: GetMediaAssetDeps) {
       }
       return logFailure === undefined ? { object } : { object, logFailure };
     } catch (error) {
-      // A broken invariant, not a 404: `ready` means both HEADs passed (§9.7)
-      // and nothing deletes. A plain Error logs a stack (§1.2).
+      // Re-read to tell the two apart. Row gone: a removal (§9.11) hid it
+      // between the lookup and the store — the 404 a moment later would get.
+      // Row still live: a broken invariant, since `ready` means both HEADs
+      // passed (§9.7) — a plain Error, which logs a stack (§1.2).
       if (error instanceof StorageError && error.code === "NOT_FOUND") {
+        const row = await deps.media.findById(input.mediaId);
+        if (row === null) throw new ApplicationError("MEDIA_NOT_FOUND");
         throw new Error("ready media has no asset object", {
           cause: error,
         });

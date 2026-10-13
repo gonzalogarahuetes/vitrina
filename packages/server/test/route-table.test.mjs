@@ -277,6 +277,21 @@ describe("the route table", () => {
     }
   });
 
+  it("§9.11 takes the media id from the path, and returns no body on either success", () => {
+    // 204 erased and 202 pending are told apart by status alone; a body is
+    // where a reason string — and a store's error text — would go (§9.8).
+    const schema = media.removeMediaSchema;
+    assert.ok(schema, "removeMediaSchema is not exported");
+    assert.deepEqual(Object.keys(schema.params.properties), ["media_id"]);
+    assert.equal(schema.querystring, undefined);
+    for (const status of [200, 201, 202, 204]) {
+      assert.ok(
+        schema.response?.[status] === undefined,
+        `removeMediaSchema declares a ${status} body`,
+      );
+    }
+  });
+
   it("takes the album from the path and never from the body (§7.8's table)", () => {
     // At create there is no recipient row, so the album must be an input —
     // and §7.3 resolves scope from the path, before the body is parsed.
@@ -289,8 +304,10 @@ describe("the route table", () => {
     ["logoutSchema", credentials.logoutSchema],
     ["logoutAllSchema", credentials.logoutAllSchema],
     ["revokeRecipientSchema", recipients.revokeRecipientSchema],
+    ["removeMediaSchema", media.removeMediaSchema],
   ]) {
-    it(`${name} declares no body (§7.5, §7.8)`, () => {
+    it(`${name} declares no body (§7.5, §7.8, §9.11)`, () => {
+      assert.ok(schema, `${name} is not exported, so the walk cannot see it`);
       /*
        * The bearer token identifies the session; the path identifies the
        * recipient. A body would be a second, disagreeable source — and on

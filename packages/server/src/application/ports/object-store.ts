@@ -106,4 +106,15 @@ export interface ObjectStore {
    * `objectSize`; decide both on the status code, as `head` does.
    */
   get(key: ObjectKey, range?: ByteRange): Promise<ObjectBody>;
+
+  /**
+   * §9.11's erasure. Idempotent: an absent object is success. THROWS
+   * `UNAVAILABLE` when the store is unreachable. Decide both on the status
+   * code, as `head` does.
+   *
+   * SUCCESS MEANS THE STORE ACCEPTED THE DELETE, NOT THAT THE OBJECT IS GONE.
+   * Confirmation is `head`'s job, and only a `head` answering `null` lets a
+   * caller report the object erased.
+   */
+  remove(key: ObjectKey): Promise<void>;
 }

@@ -111,3 +111,7 @@ export const uploadThumbnailSchema = {
   params: mediaIdParams,
   response: { 200: statusObject },
 } as const;
+
+export const removeMediaSchema = {
+  params: mediaIdParams,
+} as const;

@@ -1,4 +1,5 @@
 import {
+  DeleteObjectCommand,
   GetObjectCommand,
   HeadBucketCommand,
   HeadObjectCommand,
@@ -139,6 +140,21 @@ class S3ObjectStore implements ObjectStore {
       });
     }
   }
+
+  async remove(key: ObjectKey): Promise<void> {
+    try {
+      await this.client.send(
+        new DeleteObjectCommand({ Key: key, Bucket: this.bucket }),
+      );
+    } catch (error) {
+      if (statusOf(error) === 404) return;
+      throw new StorageError("UNAVAILABLE", {
+        cause: new Error(
+          `DELETE ${key} failed (${nameOf(error)} ${statusOf(error)})`,
+        ),
+      });
+    }
+  }
 }
 
 export function createObjectStore(
@@ -153,7 +169,10 @@ export function createObjectStore(
  * applied to the store. A wrong `DATABASE_URL` fails loudly on the first
  * query; a wrong bucket fails nowhere: writes land somewhere nobody reads and
  * `head` answers absent forever, which §9.7 renders as an upload stuck at
- * `processing`. This is the only thing that makes that noisy.
+ * `processing`. This is the only thing that makes that noisy — and only until
+ * something writes to the wrong name: SeaweedFS creates a bucket on its first
+ * `PutObject` (measured), after which this check passes. AWS does not;
+ * Hetzner is unverified.
  *
  * It also lets `head`'s 404 mean one thing afterwards. A `HEAD` carries no
  * response body, so a missing bucket and a missing object are the same status

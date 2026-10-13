@@ -53,6 +53,12 @@ function inMemoryMedia({ status = "pending", ownerId = OWNER } = {}) {
       row.updatedAt = at("2026-09-26T09:00:01.000Z");
       return "started";
     },
+    // §9.11's counter, which this file does not exercise:
+    // upload-removal-race.test.mjs does. Present because the port requires it.
+    async endUpload(id) {
+      calls.push(`endUpload:${id}`);
+      return { state: "live" };
+    },
     async markReady(id, byteSize) {
       calls.push(`markReady:${byteSize}`);
       if (row.status !== "processing") return; // the WHERE clause

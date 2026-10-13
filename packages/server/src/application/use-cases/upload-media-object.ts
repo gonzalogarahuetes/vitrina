@@ -3,6 +3,7 @@ import { objectKey, type MediaVariant } from "../../domain/media/object-key.js";
 import type { MediaRepository, MediaRow } from "../ports/media-repository.js";
 import type { ObjectStore } from "../ports/object-store.js";
 import { ApplicationError } from "../errors.js";
+import { makeEraseHiddenMedia } from "../erase-hidden-media.js";
 
 export type UploadMediaObjectDeps = {
   readonly media: MediaRepository;
@@ -39,87 +40,107 @@ export function uploadMediaObject(deps: UploadMediaObjectDeps) {
       throw new ApplicationError("MEDIA_ALREADY_READY");
     }
 
-    let counted = 0;
-    async function* counting(source: Readable) {
-      for await (const chunk of source) {
-        counted += chunk.length;
-        yield chunk;
-      }
-    }
-
     try {
-      await deps.objectStore.put(
-        objectKey(media.id, input.variant),
-        Readable.from(counting(input.body), { objectMode: false }),
-        input.length,
-      );
-    } catch (error) {
-      await deps.media.markFailed(media.id);
-      const row = await deps.media.findById(input.mediaId);
-      if (row === null) throwOnNullRow(input.mediaId);
-
-      return {
-        row,
-        failure: {
-          kind: "upload",
-          cause: error,
-        },
-      };
-    }
-
-    try {
-      const written = await deps.objectStore.head(
-        objectKey(media.id, input.variant),
-      );
-      const otherVariant = input.variant === "asset" ? "thumbnail" : "asset";
-      const other = await deps.objectStore.head(
-        objectKey(media.id, otherVariant),
-      );
-
-      if (!written) {
-        const row = await deps.media.findById(input.mediaId);
-        if (row === null) throwOnNullRow(input.mediaId);
-
-        return {
-          row,
-        };
+      let counted = 0;
+      async function* counting(source: Readable) {
+        for await (const chunk of source) {
+          counted += chunk.length;
+          yield chunk;
+        }
       }
 
-      if (written.length !== counted) {
+      try {
+        await deps.objectStore.put(
+          objectKey(media.id, input.variant),
+          Readable.from(counting(input.body), { objectMode: false }),
+          input.length,
+        );
+      } catch (error) {
         await deps.media.markFailed(media.id);
         const row = await deps.media.findById(input.mediaId);
-        if (row === null) throwOnNullRow(input.mediaId);
+        if (row === null) throwOnNullRow();
 
         return {
           row,
+          failure: {
+            kind: "upload",
+            cause: error,
+          },
         };
       }
 
-      if (!other) {
+      try {
+        const written = await deps.objectStore.head(
+          objectKey(media.id, input.variant),
+        );
+        const otherVariant = input.variant === "asset" ? "thumbnail" : "asset";
+        const other = await deps.objectStore.head(
+          objectKey(media.id, otherVariant),
+        );
+
+        if (!written) {
+          const row = await deps.media.findById(input.mediaId);
+          if (row === null) throwOnNullRow();
+
+          return {
+            row,
+          };
+        }
+
+        if (written.length !== counted) {
+          await deps.media.markFailed(media.id);
+          const row = await deps.media.findById(input.mediaId);
+          if (row === null) throwOnNullRow();
+
+          return {
+            row,
+          };
+        }
+
+        if (!other) {
+          const row = await deps.media.findById(input.mediaId);
+          if (row === null) throwOnNullRow();
+
+          return {
+            row,
+          };
+        }
+
+        await deps.media.markReady(media.id, written.length + other.length);
         const row = await deps.media.findById(input.mediaId);
-        if (row === null) throwOnNullRow(input.mediaId);
+        if (row === null) throwOnNullRow();
+        return { row };
+      } catch (error) {
+        const row = await deps.media.findById(input.mediaId);
+        if (row === null) throwOnNullRow();
 
-        return {
-          row,
-        };
+        return { row, failure: { kind: "confirmation", cause: error } };
       }
-
-      await deps.media.markReady(media.id, written.length + other.length);
-      const row = await deps.media.findById(input.mediaId);
-      if (row === null) throwOnNullRow(input.mediaId);
-      return { row };
-    } catch (error) {
-      const row = await deps.media.findById(input.mediaId);
-      if (row === null) throwOnNullRow(input.mediaId);
-
-      return { row, failure: { kind: "confirmation", cause: error } };
+    } finally {
+      const end = await deps.media.endUpload(media.id);
+      if (end.state === "removed") {
+        if (end.uploadsInFlight === 0) {
+          const erased = await makeEraseHiddenMedia(deps)(media.id);
+          if (erased.state === "pending") {
+            throw new ApplicationError("MEDIA_NOT_FOUND", {
+              cause: erased.failure,
+            });
+          } else {
+            throw new ApplicationError("MEDIA_NOT_FOUND");
+          }
+        }
+        throw new ApplicationError("MEDIA_NOT_FOUND");
+      }
     }
   };
 }
 
-function throwOnNullRow(mediaId: string): never {
-  // Not MEDIA_NOT_FOUND: the row existed and we transitioned it, and §4.2
-  // means nothing in v1 deletes one. A broken invariant is a 500 with a
-  // stack, which is what the unrecognised branch of the envelope is for.
-  throw new Error(`media ${mediaId} vanished between transition and re-read`);
+/*
+ * A null re-read means the row was hidden mid-request by §9.11's removal —
+ * not a broken invariant, which it was while nothing deleted a row. The
+ * `finally`'s endUpload sees the same hide and throws this same 404, so the
+ * choice of error here does not reach the client.
+ */
+function throwOnNullRow(): never {
+  throw new ApplicationError("MEDIA_NOT_FOUND");
 }

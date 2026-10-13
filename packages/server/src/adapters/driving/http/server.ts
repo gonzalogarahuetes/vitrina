@@ -123,9 +123,9 @@ export async function buildServer(
   await app.register(cors, {
     origin: deps.config.clientOrigin, // exact string from config — never true, never "*"
     credentials: false, // Authorization header only; see note below
-    // §9.9: `PUT` for §9.7's uploads, no `DELETE` because §4.2 means no route
-    // deletes anything in v1.
-    methods: ["GET", "POST", "PUT"],
+    // `PUT` for §9.7's uploads (§9.9); `DELETE` for §9.11's media removal,
+    // the one route that deletes. Revoke is a POST because it deletes nothing.
+    methods: ["GET", "POST", "PUT", "DELETE"],
     // Authorization is EXPLICIT, not wildcarded: the Fetch standard makes it a
     // non-wildcard header. So every authenticated request preflights, because
     // of bearer auth rather than Range (§3.1).
@@ -163,9 +163,15 @@ export async function buildServer(
   // than escaping the budget. 2xx only: a 403 or 404 paid the floor in the hook.
   app.addHook("onSend", async (request, reply, payload) => {
     const ok = reply.statusCode >= 200 && reply.statusCode < 300;
-    if (request.routeOptions.config?.chargesByteBudget === true && ok && !limiter.isCharged(request)) {
+    if (
+      request.routeOptions.config?.chargesByteBudget === true &&
+      ok &&
+      !limiter.isCharged(request)
+    ) {
       if (payload instanceof Readable) payload.destroy(); // release the store's socket
-      throw new Error("a byte-budget route answered 2xx without calling chargeBytes");
+      throw new Error(
+        "a byte-budget route answered 2xx without calling chargeBytes",
+      );
     }
     return payload;
   });
