@@ -60,6 +60,7 @@ import type { AccessLogRepository } from "./application/ports/access-log-reposit
 import { createAccessLogRepository } from "./adapters/driven/postgres/access-log-repository.js";
 import { getAccessLogEntries } from "./application/use-cases/get-access-log-entries.js";
 import { getAccessLogSummary } from "./application/use-cases/get-access-log-summary.js";
+import { removeMedia } from "./application/use-cases/remove-media.js";
 
 /**
  * The v1 Argon2id parameters, declared in `@vitrina/shared` because the client
@@ -162,6 +163,7 @@ export function buildUseCases(
     getMediaAsset: getMediaAsset({ media, objectStore, accessLogs }),
     getAccessLogEntries: getAccessLogEntries({ accessLogs, albums }),
     getAccessLogSummary: getAccessLogSummary({ accessLogs, albums }),
+    removeMedia: removeMedia({ media, objectStore }),
   };
 }
 

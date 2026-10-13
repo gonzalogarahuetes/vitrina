@@ -60,6 +60,7 @@ import type {
   RecipientAccessSummary,
 } from "../ports/access-log-repository.js";
 import type { GetAccessLogSummaryInput } from "./get-access-log-summary.js";
+import type { RemovedMedia, RemoveMediaInput } from "./remove-media.js";
 
 export type UseCases = {
   // PR 2b — the owner credential lifecycle (api-sketch §7.5, §8.3).
@@ -115,4 +116,5 @@ export type UseCases = {
   readonly getAccessLogSummary: (
     input: GetAccessLogSummaryInput,
   ) => Promise<readonly RecipientAccessSummary[]>;
+  readonly removeMedia: (input: RemoveMediaInput) => Promise<RemovedMedia>;
 };

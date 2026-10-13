@@ -18,6 +18,7 @@ import { rfc3339 } from "../rfc3339.js";
 import {
   createMediaSchema,
   getMediaSchema,
+  removeMediaSchema,
   uploadAssetSchema,
   uploadThumbnailSchema,
 } from "../schemas/media.js";
@@ -270,5 +271,30 @@ export function mediaRoutes(deps: MediaRoutesDeps) {
         upload("thumbnail", THUMBNAIL_MAX_BYTES),
       );
     });
+
+    app.delete<{ Params: { media_id: string } }>(
+      "/media/:media_id",
+      { schema: removeMediaSchema, preHandler: requireOwner },
+      async (request, reply) => {
+        const caller = request.caller;
+        if (caller?.kind !== "owner") throw new ApiError("UNAUTHENTICATED");
+
+        const result = await deps.useCases.removeMedia({
+          mediaId: request.params.media_id,
+          ownerId: caller.ownerId,
+        });
+
+        if (result.state === "pending") {
+          if (result.failure) {
+            request.log.error(
+              { err: result.failure, mediaId: request.params.media_id },
+              "remove media failed",
+            );
+          }
+          return reply.code(202).send();
+        }
+        return reply.code(204).send();
+      },
+    );
   };
 }

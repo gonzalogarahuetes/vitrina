@@ -147,6 +147,10 @@ function inMemoryMedia(albums) {
       row.status = "processing";
       return "started";
     },
+    // §9.11's counter; media-removal-routes.test.mjs exercises it.
+    async endUpload() {
+      return "live";
+    },
     async markReady(mediaId, byteSize) {
       const row = rows.get(mediaId);
       if (row.status !== "processing") return;

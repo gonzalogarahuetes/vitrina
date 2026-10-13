@@ -334,11 +334,17 @@ describe("CORS", () => {
     assert.ok(Number(res.headers["access-control-max-age"]) > 0);
   });
 
-  it("allows PUT for §9.7's uploads and refuses DELETE", async () => {
+  it("allows PUT for §9.7's uploads and DELETE for §9.11's removal", async () => {
     /*
-     * §6.2's row. PUT is a preflighted method, so omitting it from `methods`
-     * fails no server-side test and breaks every browser upload. DELETE is
-     * absent because §4.2 means no v1 route deletes anything.
+     * §6.1's row. Both are preflighted methods, so omitting either from
+     * `methods` fails no server-side test and breaks the browser client: PUT
+     * every upload, DELETE every removal.
+     *
+     * FLIPPED DELIBERATELY, 9 October 2026. This case asserted DELETE's
+     * absence while no v1 route deleted anything (§9.9). §9.11's media removal
+     * is a deletion — the row and both objects go, unlike revoke (§7.8), which
+     * is a POST because it deletes nothing — so DELETE is in the route table
+     * again and `methods` must say so.
      */
     const preflight = (method) =>
       app.inject({
@@ -354,9 +360,6 @@ describe("CORS", () => {
     // @fastify/cors answers the preflight either way; the browser reads the
     // header, so that is what this asserts rather than the status.
     const del = await preflight("DELETE");
-    assert.doesNotMatch(
-      String(del.headers["access-control-allow-methods"] ?? ""),
-      /DELETE/,
-    );
+    assert.match(String(del.headers["access-control-allow-methods"] ?? ""), /DELETE/);
   });
 });

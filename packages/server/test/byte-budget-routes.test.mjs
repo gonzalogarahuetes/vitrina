@@ -49,8 +49,8 @@ describe("the routes that charge the byte budget", () => {
   });
 
   it("sees the whole surface", () => {
-    // §11.8: twenty-two routes plus /health. Fewer means the seam was
-    // installed late, and everything below is checking an empty list.
+    // A floor, not §11.8's count — the table carries none. Far fewer means the
+    // seam was installed late, and everything below is checking an empty list.
     const distinct = new Set(routes.map((r) => `${r.method} ${r.url}`));
     assert.ok(distinct.size >= 23, `only ${distinct.size} routes seen`);
   });
