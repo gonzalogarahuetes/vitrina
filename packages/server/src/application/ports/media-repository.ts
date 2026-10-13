@@ -55,6 +55,27 @@ export type MediaEnvelope = {
  */
 export type UploadStart = "started" | "already_ready";
 
+/**
+ * `endUpload`'s report. `"removed"` means the row was hidden, or is gone,
+ * when the upload finished — so the object just written belongs to no row
+ * that will serve it, and the uploader removes it (§9.11).
+ */
+export type UploadEnd = "live" | "removed";
+
+/** `hide`'s report: how many uploads were in flight when the row was hidden. */
+export type HiddenMedia = {
+  readonly id: string;
+  /** Above zero means an object may still land: erasure must wait (§9.11). */
+  readonly uploadsInFlight: number;
+};
+
+/*
+ * HIDDEN ROWS — §9.11, schema §3's `removed_at`. Once `hide` has set it, the
+ * row is invisible to `findById`, `listByAlbum` and `listReadyEnvelopes`, and
+ * `beginUpload` refuses it. Those four filters ARE the read side of removal:
+ * every route that serves or accepts a media row reaches it through one of
+ * them, and §9.3's album scope sees albums only.
+ */
 export interface MediaRepository {
   /**
    * Creates at `pending` with its envelope — no row ever exists without one.
@@ -65,10 +86,11 @@ export interface MediaRepository {
   create(media: NewMedia): Promise<CreatedMedia>;
 
   /** §9.8, and the scope lookup for §9.7's uploads. `ownerId` comes from the
-   * join, so the use case resolves §9.3 exactly as it does for albums. */
+   * join, so the use case resolves §9.3 exactly as it does for albums.
+   * `null` for a hidden row, as for an absent one. */
   findById(mediaId: string): Promise<MediaRow | null>;
 
-  /** §9.4, `created_at` ascending, every status. Not the same query as below,
+  /** §9.4, `created_at` ascending, every status but hidden. Not the same query as below,
    * deliberately: a `readyOnly` flag is how two routes' difference on purpose
    * becomes one call site someone flips. */
   listByAlbum(albumId: string): Promise<readonly MediaListing[]>;
@@ -79,19 +101,49 @@ export interface MediaRepository {
 
   /**
    * `pending | processing | failed → processing` — §9.7's first and fourth
-   * edges. `null` for no such row. Guarded on `status <> 'ready'`, which is
-   * the check "PUT is idempotent" removes.
+   * edges. `null` for no such row, or a hidden one. Guarded on `status <>
+   * 'ready'`, which is the check "PUT is idempotent" removes.
+   *
+   * `"started"` also increments `uploads_in_flight`, in the same statement:
+   * the caller then owes exactly one `endUpload`, on every exit path. Nothing
+   * else is counted — `null` and `"already_ready"` owe nothing.
    */
   beginUpload(mediaId: string): Promise<UploadStart | null>;
 
   /**
+   * Decrements `uploads_in_flight` — call it in a `finally`, after `put` has
+   * settled, once per `"started"`. A missed call leaves the row's removal at
+   * `202` until someone intervenes (§9.11). Reports whether the row was hidden
+   * meanwhile, so the uploader can remove the object it just wrote.
+   */
+  endUpload(mediaId: string): Promise<UploadEnd>;
+
+  /**
    * `processing → ready`, guarded on `status = 'processing'` so `pending →
-   * ready` is inexpressible. `byteSize` is the sum of the two `HEAD` lengths;
-   * no client-declared size is read at any point.
+   * ready` is inexpressible, and on `removed_at IS NULL` so a hidden row never
+   * becomes viewable. `byteSize` is the sum of the two `HEAD` lengths; no
+   * client-declared size is read at any point.
    */
   markReady(mediaId: string, byteSize: number): Promise<void>;
 
   /** `processing → failed`, guarded likewise. A zero row count is benign —
    * a concurrent request reached the row first. */
   markFailed(mediaId: string): Promise<void>;
+
+  /**
+   * §9.11's first step: sets `removed_at`, keeping the first one, and reports
+   * the in-flight count. Any status. The owner check is in the `WHERE`, through
+   * the album join, so another owner's row is never touched: `null` for
+   * absent and not-yours alike (§7.3). A hidden row is found again, which is
+   * what lets a repeated `DELETE` resume an erasure.
+   */
+  hide(mediaId: string, ownerId: string): Promise<HiddenMedia | null>;
+
+  /**
+   * §9.11's last step: deletes the row, and only a hidden one with no upload in
+   * flight — the guard is the `WHERE`, so a caller cannot erase early by
+   * skipping a check. Call it only after both objects are confirmed absent.
+   * `false` when nothing was deleted.
+   */
+  erase(mediaId: string): Promise<boolean>;
 }
