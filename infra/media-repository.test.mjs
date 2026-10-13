@@ -22,6 +22,8 @@ import { createMediaRepository } from '../packages/server/dist/adapters/driven/p
  * are distinguishable. Also here:
  *   - metadata round-trips as bytea, byte for byte (a plain Uint8Array is
  *     serialised as JSON and the envelope comes back undecryptable);
+ *   - the database refuses metadata under 81 bytes (005's
+ *     CHK_media_metadata_len) and sets no ceiling;
  *   - byte_size is a NUMBER, not the string node-postgres returns for bigint;
  *   - §9.4 lists every row and §9.5 returns only `ready` envelopes — the pair
  *     §6.2 owes, asserted together because the two filter differently on
@@ -154,6 +156,37 @@ test('the metadata envelope round-trips as bytea, byte for byte', async () => {
 	assert.ok(row, 'the ready row is missing from the envelope list')
 	assert.equal(row.envelope.length, 81)
 	assert.equal(hex(row.envelope), hex(metadata))
+})
+
+/** A bare INSERT, so neither the route nor the adapter stands in front of the table. */
+const insertWithMetadata = (metadata) =>
+	pool.query(
+		`INSERT INTO media (id, album_id, kind, metadata) VALUES ($1, $2, 'photo', $3)`,
+		[randomUUID(), ALBUM, metadata],
+	)
+
+test('005: the database refuses a metadata envelope under 81 bytes, and accepts 81', async () => {
+	/*
+	 * CHK_media_metadata_len. §9.6 refuses first; this is what holds when a
+	 * route forgets, because a short envelope is one no client can open
+	 * (encryption spec §3.2). SQL, not the route: the route's own refusal
+	 * would pass this with no constraint present.
+	 */
+	await assert.rejects(
+		() => insertWithMetadata(bytes(0x5a, 80)),
+		(error) => {
+			assert.equal(error.code, '23514')
+			assert.equal(error.constraint, 'CHK_media_metadata_len')
+			return true
+		},
+	)
+	await insertWithMetadata(bytes(0x5a, 81))
+})
+
+test('005: the database does not cap metadata — the ceiling is the route\'s', async () => {
+	// 005, after 003: "Do not complete the pair." 4096 is relay policy. Fails
+	// the day someone adds the ceiling here.
+	await insertWithMetadata(bytes(0x5a, 8192))
 })
 
 test('a duplicate id is DUPLICATE_MEDIA_ID, and the error quotes no value', async () => {

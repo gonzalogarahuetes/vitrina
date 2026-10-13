@@ -23,7 +23,9 @@ import { Client } from 'pg'
  *
  * And one property of a file rather than of the runner: 003 refuses to run on
  * a database that holds an album, because it replaces plaintext columns the
- * relay cannot encrypt, and its refusal rolls back whole.
+ * relay cannot encrypt, and its refusal rolls back whole. Likewise 005 fails on
+ * a database already holding metadata under its floor, rather than adding the
+ * constraint NOT VALID around it.
  *
  * Property 3 runs against a scratch database created here, so it never
  * touches the stack's real one. It tampers with the *recorded* hash rather
@@ -37,6 +39,8 @@ const SCRATCH_DB = 'vitrina_migrations_test'
 const SCRATCH_URL = withDatabase(DATABASE_URL, SCRATCH_DB)
 const GUARD_DB = 'vitrina_migrations_guard_test'
 const GUARD_URL = withDatabase(DATABASE_URL, GUARD_DB)
+const FLOOR_DB = 'vitrina_migrations_floor_test'
+const FLOOR_URL = withDatabase(DATABASE_URL, FLOOR_DB)
 
 const RUNNER = fileURLToPath(new URL('../packages/server/scripts/migrate.mjs', import.meta.url))
 const MIGRATIONS_DIR = new URL('../packages/server/migrations/', import.meta.url)
@@ -105,7 +109,7 @@ before(async () => {
 	// CREATE DATABASE cannot run inside a transaction; a bare query is fine.
 	// DROP first so a crashed previous run does not poison this one.
 	await withClient(DATABASE_URL, async (client) => {
-		for (const db of [SCRATCH_DB, GUARD_DB]) {
+		for (const db of [SCRATCH_DB, GUARD_DB, FLOOR_DB]) {
 			await client.query(`DROP DATABASE IF EXISTS ${db}`)
 			await client.query(`CREATE DATABASE ${db}`)
 		}
@@ -114,7 +118,7 @@ before(async () => {
 
 after(async () => {
 	await withClient(DATABASE_URL, async (client) => {
-		for (const db of [SCRATCH_DB, GUARD_DB]) {
+		for (const db of [SCRATCH_DB, GUARD_DB, FLOOR_DB]) {
 			await client.query(`DROP DATABASE IF EXISTS ${db}`)
 		}
 	})
@@ -194,5 +198,49 @@ test('003 refuses to run on a database that holds an album, and applies nothing'
 		)
 		const { rows: albums } = await client.query('SELECT count(*)::int AS n FROM albums')
 		assert.equal(albums[0].n, 1)
+	})
+})
+
+test('005 refuses a database holding metadata under 81 bytes, and applies nothing', async () => {
+	const first = await runMigrator(FLOOR_URL)
+	assert.equal(first.code, 0, first.stderr)
+
+	// A database that meets 005 holding a short envelope: migrate fully, forget
+	// 005 and drop its constraint, then insert the row it would have refused.
+	await withClient(FLOOR_URL, async (client) => {
+		const {
+			rows: [owner],
+		} = await client.query(
+			"INSERT INTO owners (email, auth_hash) VALUES ('floor@vitrina.test', $1) RETURNING id",
+			[Buffer.alloc(32)],
+		)
+		const {
+			rows: [album],
+		} = await client.query(
+			'INSERT INTO albums (id, owner_id, title, wrapped_key, wrap_nonce) VALUES (gen_random_uuid(), $1, $2, $3, $4) RETURNING id',
+			[owner.id, Buffer.alloc(41), Buffer.alloc(48), Buffer.alloc(24)],
+		)
+		await client.query('DELETE FROM schema_migrations WHERE version >= 5')
+		await client.query('ALTER TABLE media DROP CONSTRAINT "CHK_media_metadata_len"')
+		await client.query(
+			"INSERT INTO media (id, album_id, kind, metadata) VALUES (gen_random_uuid(), $1, 'photo', $2)",
+			[album.id, Buffer.alloc(80)],
+		)
+	})
+
+	const second = await runMigrator(FLOOR_URL)
+	assert.equal(second.code, 1)
+	assert.match(second.stderr, /005_\w+\.sql: .*"CHK_media_metadata_len".*violated by some row/)
+
+	// Rolled back whole: 005 is unrecorded, no constraint exists, the row stays.
+	await withClient(FLOOR_URL, async (client) => {
+		const { rows: versions } = await client.query('SELECT max(version) AS v FROM schema_migrations')
+		assert.equal(versions[0].v, 4)
+		const { rows: constraints } = await client.query(
+			"SELECT 1 FROM pg_constraint WHERE conname = 'CHK_media_metadata_len'",
+		)
+		assert.equal(constraints.length, 0)
+		const { rows: media } = await client.query('SELECT octet_length(metadata) AS n FROM media')
+		assert.deepEqual(media, [{ n: 80 }])
 	})
 })
