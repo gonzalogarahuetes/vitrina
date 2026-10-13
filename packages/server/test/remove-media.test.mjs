@@ -35,7 +35,7 @@ const THUMB = `media/${MEDIA}/thumbnail`;
  * first `removed_at`; `erase` deletes only a hidden row with nothing in
  * flight. `calls` is one log shared with the store, so order is assertable.
  */
-function fakeMedia(calls, { inFlight = 0, ownerId = OWNER, hidden = false } = {}) {
+function fakeMedia(calls, { inFlight = 0, ownerId = OWNER, hidden = false, lostRace = false } = {}) {
   const row = { id: MEDIA, ownerId, removedAt: hidden ? "earlier" : null, inFlight };
   let exists = true;
   return {
@@ -51,6 +51,8 @@ function fakeMedia(calls, { inFlight = 0, ownerId = OWNER, hidden = false } = {}
     },
     async erase(mediaId) {
       calls.push("erase");
+      // The last upload out erased the row between this DELETE's HEADs and here.
+      if (lostRace) exists = false;
       if (!exists || mediaId !== row.id || row.removedAt === null || row.inFlight !== 0) {
         return false;
       }
@@ -297,6 +299,18 @@ describe("removeMedia — §9.11", () => {
 
     assert.deepEqual(outcome, { state: "erased" });
     assert.equal(media.exists, false);
+  });
+
+  it("is MEDIA_NOT_FOUND when another erasure deleted the row first", async () => {
+    // The last upload out and this retry both confirmed the objects absent;
+    // the upload's erase won. Row already gone is done — the 404 §9.11 gives
+    // a repeat — not erased by this request, and never 202 or 500.
+    const { media, objectStore, remove } = subject({ lostRace: true });
+
+    await assert.rejects(() => remove({ mediaId: MEDIA, ownerId: OWNER }), isNotFound);
+
+    assert.equal(media.exists, false);
+    assert.equal(objectStore.objects.size, 0);
   });
 
   it("resumes an erasure on a row already hidden", async () => {

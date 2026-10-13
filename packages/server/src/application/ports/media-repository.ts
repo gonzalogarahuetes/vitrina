@@ -56,11 +56,16 @@ export type MediaEnvelope = {
 export type UploadStart = "started" | "already_ready";
 
 /**
- * `endUpload`'s report. `"removed"` means the row was hidden, or is gone,
- * when the upload finished — so the object just written belongs to no row
- * that will serve it, and the uploader removes it (§9.11).
+ * `endUpload`'s report. `"removed"` means the row was hidden when the upload
+ * finished, so the object just written belongs to no row that will serve it.
+ * `uploadsInFlight` is the count AFTER this decrement, read in the same
+ * statement: the row lock orders concurrent decrements, so of the uploads
+ * finishing onto one hidden row exactly one sees 0 — and that one runs the
+ * erasure a `DELETE` runs (§9.11), because no `DELETE` may be coming back.
  */
-export type UploadEnd = "live" | "removed";
+export type UploadEnd =
+  | { readonly state: "live" }
+  | { readonly state: "removed"; readonly uploadsInFlight: number };
 
 /** `hide`'s report: how many uploads were in flight when the row was hidden. */
 export type HiddenMedia = {
@@ -114,7 +119,11 @@ export interface MediaRepository {
    * Decrements `uploads_in_flight` — call it in a `finally`, after `put` has
    * settled, once per `"started"`. A missed call leaves the row's removal at
    * `202` until someone intervenes (§9.11). Reports whether the row was hidden
-   * meanwhile, so the uploader can remove the object it just wrote.
+   * meanwhile, and how many uploads remain in flight.
+   *
+   * THROWS when there is no row. That is a broken invariant, not a removal:
+   * this upload is still counted, and `erase` refuses while the count is above
+   * zero, so the row cannot be gone. Reading absence as `"removed"` hides it.
    */
   endUpload(mediaId: string): Promise<UploadEnd>;
 

@@ -57,7 +57,7 @@ function inMemoryMedia({ status = "pending", ownerId = OWNER } = {}) {
     // upload-removal-race.test.mjs does. Present because the port requires it.
     async endUpload(id) {
       calls.push(`endUpload:${id}`);
-      return "live";
+      return { state: "live" };
     },
     async markReady(id, byteSize) {
       calls.push(`markReady:${byteSize}`);

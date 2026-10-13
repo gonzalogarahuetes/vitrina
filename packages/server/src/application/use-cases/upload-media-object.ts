@@ -3,6 +3,7 @@ import { objectKey, type MediaVariant } from "../../domain/media/object-key.js";
 import type { MediaRepository, MediaRow } from "../ports/media-repository.js";
 import type { ObjectStore } from "../ports/object-store.js";
 import { ApplicationError } from "../errors.js";
+import { makeEraseHiddenMedia } from "../erase-hidden-media.js";
 
 export type UploadMediaObjectDeps = {
   readonly media: MediaRepository;
@@ -117,11 +118,16 @@ export function uploadMediaObject(deps: UploadMediaObjectDeps) {
       }
     } finally {
       const end = await deps.media.endUpload(media.id);
-      if (end === "removed") {
-        try {
-          await deps.objectStore.remove(objectKey(media.id, input.variant));
-        } catch (error) {
-          // we ignore the error here since the owner’s next DELETE covers it now that the counter is back at 0
+      if (end.state === "removed") {
+        if (end.uploadsInFlight === 0) {
+          const erased = await makeEraseHiddenMedia(deps)(media.id);
+          if (erased.state === "pending") {
+            throw new ApplicationError("MEDIA_NOT_FOUND", {
+              cause: erased.failure,
+            });
+          } else {
+            throw new ApplicationError("MEDIA_NOT_FOUND");
+          }
         }
         throw new ApplicationError("MEDIA_NOT_FOUND");
       }

@@ -26,6 +26,7 @@ import type { MediaRow } from "../../../../application/ports/media-repository.js
 import type { Readable } from "node:stream";
 import type { MediaVariant } from "../../../../domain/media/object-key.js";
 import type { UploadOutcome } from "../../../../application/use-cases/upload-media-object.js";
+import { ApplicationError } from "../../../../application/errors.js";
 
 export type MediaRoutesDeps = {
   readonly useCases: UseCases;
@@ -129,6 +130,19 @@ export function mediaRoutes(deps: MediaRoutesDeps) {
             body: request.body,
             length: contentLength,
           });
+        } catch (error) {
+          if (
+            error instanceof ApplicationError &&
+            error.code === "MEDIA_NOT_FOUND" &&
+            error.cause !== undefined
+          ) {
+            request.log.error(
+              { err: error.cause, mediaId: request.params.media_id, variant },
+              "upload finished onto a removed row; erasure did not complete, row stays hidden",
+            );
+            throw new ApiError("NOT_FOUND");
+          }
+          throw error;
         } finally {
           clearTimeout(deadline);
         }

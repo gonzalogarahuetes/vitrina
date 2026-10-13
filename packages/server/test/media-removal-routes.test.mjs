@@ -72,9 +72,11 @@ function inMemoryMedia(albums) {
     },
     async endUpload(mediaId) {
       const row = rows.get(mediaId);
-      if (!row) return "removed";
+      if (!row) throw new Error("endUpload on a row that cannot be gone");
       row.inFlight -= 1;
-      return row.removedAt === null ? "live" : "removed";
+      return row.removedAt === null
+        ? { state: "live" }
+        : { state: "removed", uploadsInFlight: row.inFlight };
     },
     async markReady(mediaId, byteSize) {
       const row = rows.get(mediaId);
@@ -108,6 +110,7 @@ function fakeStore() {
     gets: [],
     removeFails: false,
     getHook: null,
+    putHook: null,
     seed(mediaId) {
       store.objects.set(`media/${mediaId}/asset`, Buffer.alloc(200, 0xaa));
       store.objects.set(`media/${mediaId}/thumbnail`, Buffer.alloc(100, 0xbb));
@@ -116,6 +119,7 @@ function fakeStore() {
       const chunks = [];
       for await (const chunk of body) chunks.push(chunk);
       store.objects.set(key, Buffer.concat(chunks));
+      store.putHook?.(key);
     },
     async head(key) {
       const bytes = store.objects.get(key);
@@ -447,4 +451,53 @@ describe("a fetch racing a removal — §9.11 against §11.2 and §11.3", () => 
       assert.equal(response.statusCode, 500, response.body);
     });
   }
+});
+
+describe("an upload that finishes onto a hidden row — §9.11 at the route", () => {
+  /*
+   * The DELETE landed while this PUT streamed (the hook stands in for it),
+   * and this upload is the last one out, so it runs the erasure a DELETE runs.
+   */
+  async function uploadingWhenHidden({ captureLogs = false } = {}) {
+    const ctx = await setup({ captureLogs });
+    const id = ctx.media.add(ctx.albumId, "processing");
+    ctx.objectStore.objects.set(`media/${id}/thumbnail`, Buffer.alloc(100, 0xbb));
+    ctx.objectStore.putHook = () => {
+      ctx.media.rows.get(id).removedAt = NOW;
+    };
+    const put = () =>
+      ctx.app.inject({
+        method: "PUT",
+        url: `/v1/media/${id}/asset`,
+        headers: { ...ctx.parent.auth, "content-type": "application/octet-stream" },
+        payload: Buffer.alloc(200, 0x77),
+      });
+    return { ...ctx, id, put };
+  }
+
+  it("answers 404, and the row and both objects are gone", async () => {
+    const { id, put, media, objectStore } = await uploadingWhenHidden();
+
+    const response = await put();
+
+    assert.equal(response.statusCode, 404, response.body);
+    assert.equal(response.json().code, "NOT_FOUND");
+    assert.equal(objectStore.objects.size, 0, "an object survived the last upload out");
+    assert.equal(media.rows.has(id), false, "the row survived the last upload out");
+  });
+
+  it("answers 404 when the erasure cannot reach the store, logs it at error, and keeps the row hidden", async () => {
+    // The level §9.11 gives the DELETE path's unreachable store. The envelope
+    // alone logs an ApplicationError's cause at warn, which is not enough.
+    const { id, put, media, objectStore, logLines } = await uploadingWhenHidden({ captureLogs: true });
+    objectStore.removeFails = true;
+
+    const response = await put();
+
+    assert.equal(response.statusCode, 404, response.body);
+    assert.ok(media.rows.has(id), "erased with the objects unconfirmed");
+    assert.notEqual(media.rows.get(id).removedAt, null);
+    const logged = logLines.find((line) => line.level === 50 && JSON.stringify(line).includes("StorageError"));
+    assert.ok(logged, `expected an error line carrying the StorageError, got: ${JSON.stringify(logLines)}`);
+  });
 });

@@ -149,7 +149,7 @@ function inMemoryMedia(albums) {
     },
     // §9.11's counter; media-removal-routes.test.mjs exercises it.
     async endUpload() {
-      return "live";
+      return { state: "live" };
     },
     async markReady(mediaId, byteSize) {
       const row = rows.get(mediaId);

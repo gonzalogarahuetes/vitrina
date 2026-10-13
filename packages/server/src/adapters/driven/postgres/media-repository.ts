@@ -126,13 +126,17 @@ class PostgresMediaRepository implements MediaRepository {
       `UPDATE media
         SET uploads_in_flight = uploads_in_flight - 1
         WHERE id = $1
-        RETURNING removed_at`,
+        RETURNING removed_at, uploads_in_flight`,
       [mediaId],
     );
 
-    if (!mediaRow || mediaRow.removed_at) return "removed";
+    if (!mediaRow) {
+      throw new Error("endUpload: no row for a counted upload");
+    }
 
-    return "live";
+    return mediaRow.removed_at
+      ? { state: "removed", uploadsInFlight: mediaRow.uploads_in_flight }
+      : { state: "live" };
   }
 
   async markReady(mediaId: string, byteSize: number): Promise<void> {

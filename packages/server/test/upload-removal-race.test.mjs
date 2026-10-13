@@ -12,10 +12,12 @@
  */
 
 import assert from "node:assert/strict";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { Readable } from "node:stream";
 import { describe, it } from "node:test";
 
 import { uploadMediaObject } from "../dist/application/use-cases/upload-media-object.js";
+import { removeMedia } from "../dist/application/use-cases/remove-media.js";
 import { ApplicationError } from "../dist/application/errors.js";
 import { StorageError } from "../dist/application/ports/object-store.js";
 
@@ -29,9 +31,14 @@ const THUMB = `media/${MEDIA}/thumbnail`;
  * The media port with §9.11's guards where the SQL has them: a hidden row is
  * invisible to `findById` and refused by `beginUpload`; `markReady` writes
  * only a live `processing` row; the counter cannot go below zero (the
- * migration's CHECK). `throwOn` makes one method throw, once.
+ * migration's CHECK); `erase` deletes only a hidden row with nothing in
+ * flight, and only once. `throwOn` makes one method throw, once.
+ *
+ * `hide` is the port's, and also what the tests call to land a removal
+ * mid-request: its body runs synchronously up to the return, so a hook that
+ * calls it without awaiting has hidden the row by the next line.
  */
-function fakeMedia(calls, { status = "pending", throwOn = null } = {}) {
+function fakeMedia(calls, { status = "pending", throwOn = null, inFlight = 0 } = {}) {
   const row = {
     id: MEDIA,
     albumId: ALBUM,
@@ -40,7 +47,7 @@ function fakeMedia(calls, { status = "pending", throwOn = null } = {}) {
     status,
     byteSize: null,
     removedAt: null,
-    inFlight: 0,
+    inFlight,
     createdAt: new Date("2026-10-09T09:00:00.000Z"),
     updatedAt: new Date("2026-10-09T09:00:00.000Z"),
   };
@@ -54,19 +61,31 @@ function fakeMedia(calls, { status = "pending", throwOn = null } = {}) {
     const { removedAt, inFlight, ...rest } = row;
     return { ...rest };
   };
-  return {
+  const media = {
     row,
-    hide() {
-      row.removedAt = new Date("2026-10-09T09:00:05.000Z");
+    exists: true,
+    eraseResults: [],
+    async hide(id = row.id, owner = OWNER) {
+      calls.push("hide");
+      if (!media.exists || id !== row.id || owner !== row.ownerId) return null;
+      row.removedAt ??= new Date("2026-10-09T09:00:05.000Z");
+      return { id: row.id, uploadsInFlight: row.inFlight };
+    },
+    async erase(id) {
+      calls.push("erase");
+      const erased = media.exists && id === row.id && row.removedAt !== null && row.inFlight === 0;
+      if (erased) media.exists = false;
+      media.eraseResults.push(erased);
+      return erased;
     },
     async findById(id) {
       calls.push("findById");
       maybeThrow("findById");
-      return id === row.id && row.removedAt === null ? view() : null;
+      return media.exists && id === row.id && row.removedAt === null ? view() : null;
     },
     async beginUpload(id) {
       calls.push("beginUpload");
-      if (id !== row.id || row.removedAt !== null) return null;
+      if (!media.exists || id !== row.id || row.removedAt !== null) return null;
       if (row.status === "ready") return "already_ready";
       row.status = "processing";
       row.inFlight += 1;
@@ -75,9 +94,13 @@ function fakeMedia(calls, { status = "pending", throwOn = null } = {}) {
     async endUpload(id) {
       calls.push("endUpload");
       assert.equal(id, row.id);
+      // The port: no row is a broken invariant, and it throws.
+      if (!media.exists) throw new Error("endUpload: no row, while this upload is counted");
       assert.ok(row.inFlight > 0, "endUpload without a matching started beginUpload");
       row.inFlight -= 1;
-      return row.removedAt === null ? "live" : "removed";
+      return row.removedAt === null
+        ? { state: "live" }
+        : { state: "removed", uploadsInFlight: row.inFlight };
     },
     async markReady(id, byteSize) {
       calls.push("markReady");
@@ -93,10 +116,14 @@ function fakeMedia(calls, { status = "pending", throwOn = null } = {}) {
       row.status = "failed";
     },
   };
+  return media;
 }
 
 /** key → length. Hooks run inside the call, so a hide lands mid-request. */
-function fakeStore(calls, { onPut, onHead, putFails, headFails, removeFails, heads = {} } = {}) {
+function fakeStore(
+  calls,
+  { onPut, onHead, onRemove, putFails, headFails, removeFails, heads = {} } = {},
+) {
   const objects = new Map();
   return {
     objects,
@@ -118,6 +145,7 @@ function fakeStore(calls, { onPut, onHead, putFails, headFails, removeFails, hea
     },
     async remove(key) {
       calls.push(`remove:${key}`);
+      await onRemove?.(key);
       if (removeFails) throw new StorageError("UNAVAILABLE", { cause: new Error(`DELETE ${key}`) });
       objects.delete(key);
     },
@@ -244,46 +272,34 @@ describe("§9.11 — the counter returns to zero when something throws partway",
 });
 
 describe("§9.11 — an upload that finishes onto a hidden row", () => {
-  it("removes the object it wrote, never marks ready, and answers 404", async () => {
-    /*
-     * The race itself: the DELETE hid the row while the bytes were streaming.
-     * The DELETE answered 202 (the counter was 1), so nothing will come back
-     * for this object unless the client retries — the uploader is the one
-     * party that knows it just landed.
-     */
+  /*
+   * The DELETE that hid the row answered 202, because this upload was in
+   * flight — and a 202 the client never retries would leave everything stored.
+   * So the last upload out runs the erasure a DELETE runs: both objects,
+   * confirmed absent, then the row. It answers 404 whatever happens.
+   */
+  it("the last one out erases both objects and the row, and answers 404", async () => {
     const calls = [];
     const media = fakeMedia(calls);
     const store = fakeStore(calls, { onPut: () => media.hide() });
     store.objects.set(THUMB, 500);
 
-    await assert.rejects(() => upload(media, store), isNotFound);
+    await assert.rejects(() => upload(media, store), (error) => {
+      isNotFound(error);
+      assert.equal(error.cause, undefined, "a completed erasure is not a failure");
+      return true;
+    });
 
-    assert.notEqual(media.row.status, "ready");
-    assert.equal(store.objects.has(ASSET), false, "the late object is still in the store");
-    assert.ok(calls.indexOf(`remove:${ASSET}`) > calls.indexOf(`put:${ASSET}`));
+    assert.equal(store.objects.size, 0, "an object survived the last upload out");
+    assert.equal(media.exists, false, "the row survived the last upload out");
     assert.equal(media.row.inFlight, 0);
+    assert.ok(calls.indexOf("erase") > calls.lastIndexOf(`head:${THUMB}`), "erased before confirming");
   });
 
-  it("still answers 404, and still decrements, when that removal cannot reach the store", async () => {
-    // The object stays until the owner's DELETE is retried — which, with the
-    // counter back at zero, removes both objects and confirms them.
-    const calls = [];
-    const media = fakeMedia(calls);
-    const store = fakeStore(calls, { onPut: () => media.hide(), removeFails: true });
-
-    await assert.rejects(() => upload(media, store), isNotFound);
-
-    assert.equal(media.row.inFlight, 0);
-    assert.equal(count(calls, "endUpload"), 1);
-  });
-
-  it("is 404 when the hide lands after the last re-read, before endUpload", async () => {
-    /*
-     * The ladder has finished with a live row in hand and is about to return
-     * §9.8's status object. Only `endUpload`'s "removed" knows otherwise, so
-     * the 404 must come from there — measured: without it this answers 200
-     * for a removed photograph, and no earlier test noticed.
-     */
+  it("is still the last one out when the hide lands after the ladder's last re-read", async () => {
+    // The ladder holds a live row and is about to answer 200. Only endUpload
+    // knows otherwise — measured: without its 404, a removed photograph got a
+    // status object back.
     const calls = [];
     const media = fakeMedia(calls);
     const store = fakeStore(calls);
@@ -299,7 +315,8 @@ describe("§9.11 — an upload that finishes onto a hidden row", () => {
 
     await assert.rejects(() => upload(media, store), isNotFound);
 
-    assert.equal(store.objects.has(ASSET), false, "the late object is still in the store");
+    assert.equal(store.objects.size, 0);
+    assert.equal(media.exists, false);
     assert.equal(media.row.inFlight, 0);
   });
 
@@ -316,5 +333,147 @@ describe("§9.11 — an upload that finishes onto a hidden row", () => {
 
     assert.notEqual(media.row.status, "ready");
     assert.equal(media.row.inFlight, 0);
+  });
+
+  it("one that is not the last out erases nothing, and answers 404", async () => {
+    // Another upload of this row is still in flight; it can still land an
+    // object, so an erasure now could be followed by ciphertext. It will be
+    // the last one out.
+    const calls = [];
+    const media = fakeMedia(calls, { inFlight: 1 });
+    const store = fakeStore(calls, { onPut: () => media.hide() });
+    store.objects.set(THUMB, 500);
+
+    await assert.rejects(() => upload(media, store), isNotFound);
+
+    assert.equal(media.exists, true, "erased while another upload is in flight");
+    assert.ok(!calls.includes("erase"));
+    assert.equal(media.row.inFlight, 1, "this upload's count must still come off");
+  });
+
+  it("an erasure that cannot reach the store answers 404, carries the cause, and keeps the row", async () => {
+    // Logged at `error` by the route — §9.11's level for the DELETE path's
+    // unreachable store; media-removal-routes.test.mjs asserts the line.
+    const calls = [];
+    const media = fakeMedia(calls);
+    const store = fakeStore(calls, { onPut: () => media.hide(), removeFails: true });
+    store.objects.set(THUMB, 500);
+
+    await assert.rejects(() => upload(media, store), (error) => {
+      isNotFound(error);
+      assert.ok(error.cause instanceof StorageError, `cause was ${error.cause}`);
+      return true;
+    });
+
+    assert.equal(media.exists, true, "erased with the objects unconfirmed");
+    assert.equal(media.row.removedAt !== null, true, "the row must stay hidden");
+    assert.equal(media.row.inFlight, 0);
+  });
+
+  it("no row at endUpload is a broken invariant — a 500, not a 404", async () => {
+    // This upload is still counted and erase refuses above zero, so the row
+    // cannot be gone. Reading absence as "removed" would hide the bug.
+    const calls = [];
+    const media = fakeMedia(calls);
+    const store = fakeStore(calls, { onPut: () => { media.exists = false; } });
+
+    await assert.rejects(
+      () => upload(media, store),
+      (error) => !(error instanceof ApplicationError),
+    );
+  });
+});
+
+describe("§9.11 — the last upload out and a retried DELETE erase at once", () => {
+  /*
+   * The DELETE retry arrives after the last upload has decremented to zero, so
+   * both run the erasure. Removing an object twice is harmless and `erase`'s
+   * guard lets exactly one delete the row. The loser reads "row already gone"
+   * as done: the upload answers 404 with no failure, and a DELETE that lost
+   * answers 404, as §9.11 says for a repeat — never 202, never 500.
+   *
+   * Both orders, by holding whichever `erase` is called first until the other
+   * has run.
+   */
+  // Which party each `erase` belongs to, so the loser's answer is checked
+  // against what that party must say — not "404 or erased" from either.
+  const party = new AsyncLocalStorage();
+  const losers = new Set();
+
+  for (const held of [1, 2]) {
+    it(`exactly one erases, and the loser reports done — erase call ${held} held`, { timeout: 5000 }, async () => {
+      const calls = [];
+      const media = fakeMedia(calls);
+      let deleting;
+      let deleteRetry;
+      const store = fakeStore(calls, {
+        onPut: () => media.hide(),
+        // On the upload's first removal — after its decrement to zero — the
+        // DELETE retry arrives. Not awaited: the two run side by side.
+        onRemove: () => {
+          deleting ??= party.run("delete", () =>
+            deleteRetry({ mediaId: MEDIA, ownerId: OWNER }).then(
+              (outcome) => ({ outcome }),
+              (error) => ({ error }),
+            ),
+          );
+        },
+      });
+      deleteRetry = removeMedia({ media, objectStore: store, confirmAttempts: 3, confirmDelayMs: 0 });
+      store.objects.set(THUMB, 500);
+
+      // Hold erase call number `held` until the other one has run.
+      const erase = media.erase;
+      const erases = [];
+      let n = 0;
+      let release;
+      const otherDone = new Promise((resolve) => { release = resolve; });
+      media.erase = async (id) => {
+        const me = ++n;
+        if (me === held) await otherDone;
+        const result = await erase(id);
+        erases.push({ party: party.getStore(), result });
+        if (me !== held) release();
+        return result;
+      };
+
+      const uploaded = await party.run("upload", () =>
+        upload(media, store).then(
+          (outcome) => ({ outcome }),
+          (error) => ({ error }),
+        ),
+      );
+      const deleted = await deleting;
+
+      assert.ok(deleted, "the DELETE retry never ran — the race was not set up");
+      assert.equal(erases.length, 2, `both parties must reach erase: ${JSON.stringify(erases)}`);
+      assert.deepEqual(erases.map((e) => e.result).sort(), [false, true], "exactly one erase deletes the row");
+      assert.equal(media.exists, false);
+      assert.equal(store.objects.size, 0);
+
+      const loser = erases.find((e) => !e.result).party;
+      losers.add(loser);
+
+      // The upload answers 404 with no failure attached, won or lost.
+      assert.ok(uploaded.error, "the upload answered something other than 404");
+      isNotFound(uploaded.error);
+      assert.equal(uploaded.error.cause, undefined, "losing the race is not a failure");
+
+      // The DELETE answers by what happened to it: erased if it won, and the
+      // 404 §9.11 gives a repeat if it lost — never `erased` for a row it did
+      // not delete.
+      if (loser === "delete") {
+        assert.ok(deleted.error, `the losing DELETE answered ${JSON.stringify(deleted.outcome)}`);
+        isNotFound(deleted.error);
+      } else {
+        assert.deepEqual(deleted.outcome, { state: "erased" });
+      }
+    });
+  }
+
+  it("between them, the two orders make each party lose once", () => {
+    // Otherwise one party's losing branch is never run, and the test above
+    // asserts it twice from the same side.
+    assert.deepEqual([...losers].sort(), ["delete", "upload"]);
   });
 });
