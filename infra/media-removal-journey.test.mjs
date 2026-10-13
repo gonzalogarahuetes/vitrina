@@ -2,6 +2,7 @@ import { test, before, after } from 'node:test'
 import assert from 'node:assert/strict'
 import { randomUUID, randomBytes, createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
+import http from 'node:http'
 import { fileURLToPath } from 'node:url'
 import { Pool } from 'pg'
 import { S3Client, DeleteObjectCommand, HeadObjectCommand } from '@aws-sdk/client-s3'
@@ -42,6 +43,7 @@ const OWNER_EMAIL = `removal-${randomUUID()}@x.es`
 const ALBUM_ID = randomUUID()
 const KEEP = randomUUID()
 const GONE = randomUUID()
+const LATE = randomUUID()
 const RECIPIENT = { id: randomUUID(), token: randomBytes(32) }
 
 let app
@@ -82,7 +84,7 @@ after(async () => {
 		await pool.query('DELETE FROM owners WHERE email = $1', [OWNER_EMAIL])
 		await pool.end()
 	}
-	for (const id of [KEEP, GONE]) {
+	for (const id of [KEEP, GONE, LATE]) {
 		for (const variant of ['asset', 'thumbnail']) {
 			await s3?.send(new DeleteObjectCommand({ Bucket: BUCKET, Key: `media/${id}/${variant}` })).catch(() => {})
 		}
@@ -241,4 +243,67 @@ test('5. a repeated DELETE is 404, identical to an id that never existed', async
 
 	assert.equal(repeated.status, 404)
 	assert.equal(repeated.text, absent.text)
+})
+
+test('6. a DELETE during an upload is 202, and the last upload out finishes the erasure', async () => {
+	/*
+	 * The case a 202 exists for, over a real socket: the PUT has been admitted
+	 * and is still streaming when the DELETE arrives. Nothing retries the
+	 * DELETE here — the upload, finishing onto a hidden row as the last one in
+	 * flight, is what must leave the bucket and the table empty.
+	 */
+	const created = await call('POST', `/albums/${ALBUM_ID}/media`, {
+		...owner(),
+		body: { id: LATE, kind: 'photo', metadata: b64(randomBytes(120)) },
+	})
+	assert.equal(created.status, 201, created.text)
+	const thumb = await call('PUT', `/media/${LATE}/thumbnail`, { ...owner(), body: randomBytes(512) })
+	assert.equal(thumb.status, 200, thumb.text)
+
+	// The asset PUT, held open after its first half.
+	const body = randomBytes(8192)
+	let request
+	const response = new Promise((resolve, reject) => {
+		request = http.request(`${base}/media/${LATE}/asset`, {
+			method: 'PUT',
+			headers: {
+				authorization: `Bearer ${b64(ownerToken)}`,
+				'content-type': 'application/octet-stream',
+				'content-length': body.length,
+			},
+		})
+		request.on('response', (res) => {
+			let text = ''
+			res.on('data', (chunk) => { text += chunk })
+			res.on('end', () => resolve({ status: res.statusCode, text }))
+		})
+		request.on('error', reject)
+		request.write(body.subarray(0, 4096))
+	})
+
+	try {
+		// Admitted means counted: wait for the row to say so before deleting.
+		const deadline = Date.now() + 5000
+		for (;;) {
+			const { rows } = await pool.query('SELECT uploads_in_flight FROM media WHERE id = $1', [LATE])
+			if (rows[0]?.uploads_in_flight === 1) break
+			assert.ok(Date.now() < deadline, 'the PUT was never admitted')
+			await new Promise((r) => setTimeout(r, 25))
+		}
+
+		const removed = await call('DELETE', `/media/${LATE}`, owner())
+		assert.equal(removed.status, 202, `an upload is in flight, so not erased yet: ${removed.text}`)
+	} finally {
+		// Always release the body, so a failed assertion above does not leave
+		// the server holding the request until the upload deadline.
+		request.end(body.subarray(4096))
+	}
+
+	const uploaded = await response
+	assert.equal(uploaded.status, 404, uploaded.text)
+
+	assert.equal(await inBucket(`media/${LATE}/asset`), false, 'the late asset is still in the bucket')
+	assert.equal(await inBucket(`media/${LATE}/thumbnail`), false, 'the thumbnail is still in the bucket')
+	const { rows } = await pool.query('SELECT 1 FROM media WHERE id = $1', [LATE])
+	assert.equal(rows.length, 0, 'the row survived the last upload out')
 })

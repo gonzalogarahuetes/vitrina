@@ -491,11 +491,15 @@ test('beginUpload counts what it starts, endUpload uncounts it, and hide reports
 	assert.equal(await repository.beginUpload(id), 'started') // the other variant, concurrently
 	assert.equal((await columnsOf(id)).uploads_in_flight, 2)
 
-	assert.equal(await repository.endUpload(id), 'live')
+	assert.deepEqual(await repository.endUpload(id), { state: 'live' })
 	assert.equal((await columnsOf(id)).uploads_in_flight, 1)
 
 	assert.deepEqual(await repository.hide(id, ownerId), { id, uploadsInFlight: 1 })
-	assert.equal(await repository.endUpload(id), 'removed', 'the uploader must learn the row was hidden')
+	assert.deepEqual(
+		await repository.endUpload(id),
+		{ state: 'removed', uploadsInFlight: 0 },
+		'the uploader must learn the row was hidden, and that it was the last one out',
+	)
 	assert.equal((await columnsOf(id)).uploads_in_flight, 0)
 })
 
@@ -522,10 +526,36 @@ test('endUpload with nothing in flight rejects on the CHECK — it is not absorb
 	assert.equal((await columnsOf(id)).uploads_in_flight, 0)
 })
 
-test('endUpload on an absent row is "removed"', async () => {
-	// The port's answer for a row that is gone; unreachable while erase is
-	// guarded on the counter, and still not a TypeError.
-	assert.equal(await repository.endUpload(randomUUID()), 'removed')
+test('endUpload on an absent row throws — a broken invariant, not "removed"', async () => {
+	// An upload calling it is still counted, and erase refuses above zero, so
+	// its row cannot be gone. Absence read as "removed" would hide that.
+	// And not as an ApplicationError: every one of those maps to a 4xx, and
+	// this is a 500 with a stack, not something the client did.
+	await assert.rejects(
+		() => repository.endUpload(randomUUID()),
+		(error) => error.name !== 'ApplicationError',
+	)
+})
+
+test('two uploads finishing onto one hidden row: exactly one is the last out', async () => {
+	/*
+	 * The count comes back from the decrement's own statement, and the row lock
+	 * orders the two. Reading it in a second statement could give both 0 — two
+	 * erasures, harmless — or, from a stale read, both 1: no erasure, and the
+	 * row and its objects stay stored with no DELETE coming back for them.
+	 */
+	for (let i = 0; i < 25; i++) {
+		const id = await created()
+		await repository.beginUpload(id)
+		await repository.beginUpload(id)
+		await repository.hide(id, ownerId)
+
+		const ends = await Promise.all([repository.endUpload(id), repository.endUpload(id)])
+
+		const counts = ends.map((end) => end.uploadsInFlight).sort()
+		assert.deepEqual(counts, [0, 1], `iteration ${i}: ${JSON.stringify(ends)}`)
+		assert.ok(ends.every((end) => end.state === 'removed'))
+	}
 })
 
 test('markReady on a hidden processing row writes nothing', async () => {
