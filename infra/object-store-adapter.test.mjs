@@ -4,7 +4,12 @@ import { randomUUID } from 'node:crypto'
 import { Readable } from 'node:stream'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
-import { S3Client, DeleteObjectCommand } from '@aws-sdk/client-s3'
+import {
+	S3Client,
+	DeleteObjectCommand,
+	GetBucketVersioningCommand,
+	ListObjectVersionsCommand,
+} from '@aws-sdk/client-s3'
 
 import {
 	createObjectStore,
@@ -338,4 +343,85 @@ test('get THROWS UNAVAILABLE when the store cannot be reached, leaking no SDK me
 	assert.equal(error?.code, 'UNAVAILABLE')
 	assert.equal(error.$metadata, undefined)
 	assert.equal(error.cause?.$metadata, undefined)
+})
+
+// remove — api-sketch §9.11. Erasure rests on two things a fake cannot show:
+// that the store's delete actually removes the ciphertext, and that the
+// adapter tells "already absent" from "unreachable" on the status code.
+
+test('remove deletes the object: head answers null afterwards', async () => {
+	const k = await put(Buffer.alloc(2048, 0x0d))
+
+	await store.remove(k)
+
+	assert.equal(await store.head(k), null)
+})
+
+test('remove of an absent key succeeds — idempotent, as the port requires', async () => {
+	/*
+	 * A DELETE retried after a 202 meets objects the first attempt removed.
+	 * If absent were an error, every retry after a partial erasure would fail
+	 * on the object that is already gone, and the row could never be erased.
+	 */
+	await store.remove(key())
+})
+
+test('remove THROWS UNAVAILABLE when the store cannot be reached, leaking no SDK metadata', async () => {
+	// The other half: a remove that never reached the store must not read as
+	// "absent", which is success, and lead to a 204 over a live object.
+	const unreachable = createObjectStore(
+		clientFor({ endpoint: 'http://localhost:9', maxAttempts: 1 }),
+		BUCKET,
+	)
+
+	const error = await rejectionOf(unreachable.remove(key()))
+
+	assert.ok(error, 'expected a rejection')
+	assert.equal(error.name, 'StorageError', `got ${error.name}: ${error.message}`)
+	assert.equal(error.code, 'UNAVAILABLE')
+	assert.equal(error.$metadata, undefined)
+	assert.equal(error.cause?.$metadata, undefined)
+})
+
+// The store's own defaults, asserted rather than assumed. Measured against
+// SeaweedFS only; Hetzner's behaviour on both is unverified (§9.11).
+
+test('the bucket is not versioned', async () => {
+	/*
+	 * With versioning on, DeleteObject writes a delete marker and the
+	 * ciphertext stays in the bucket as a noncurrent version. Every other
+	 * check still passes — HEAD answers 404, remove succeeds, the route says
+	 * 204 — and the photograph has not been erased. Nothing else in this
+	 * suite would notice.
+	 */
+	const { Status } = await client.send(new GetBucketVersioningCommand({ Bucket: BUCKET }))
+
+	assert.notEqual(Status, 'Enabled')
+	assert.notEqual(Status, 'Suspended', 'suspended still keeps the versions written while enabled')
+})
+
+test('after a remove, no version of the object remains', async () => {
+	/*
+	 * The behavioural half of the assertion above, in case a store reports
+	 * one thing and does another. Lists every version and delete marker under
+	 * the key; an unversioned bucket has neither once the object is gone.
+	 */
+	const k = await put(Buffer.alloc(1024, 0x0e))
+	await store.remove(k)
+
+	const listed = await client.send(new ListObjectVersionsCommand({ Bucket: BUCKET, Prefix: k }))
+
+	assert.deepEqual(listed.Versions ?? [], [], 'a version of the ciphertext is still stored')
+	assert.deepEqual(listed.DeleteMarkers ?? [], [], 'a delete marker means the bucket is versioning')
+})
+
+test('a raw DeleteObject on an absent key succeeds against this store', async () => {
+	/*
+	 * S3 answers 204 for a key that does not exist; this asserts SeaweedFS
+	 * does too, beneath the adapter, so that the idempotence above is the
+	 * store's and not something the adapter manufactures by swallowing a 404.
+	 */
+	const response = await client.send(new DeleteObjectCommand({ Bucket: BUCKET, Key: key() }))
+
+	assert.ok(response.$metadata.httpStatusCode < 300, `got ${response.$metadata.httpStatusCode}`)
 })

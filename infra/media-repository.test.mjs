@@ -359,3 +359,253 @@ test('markFailed from processing is the recoverable direction', async () => {
 	assert.equal(await statusOf(media.id), 'failed')
 	assert.equal(await repository.beginUpload(media.id), 'started')
 })
+
+// ---------------------------------------------------------------------------
+// §9.11 — removal. 004's two columns and the four filters that are the read
+// side of it. The hermetic route tests run against a fake that implements
+// these filters; this is where the SQL itself is held to them.
+// ---------------------------------------------------------------------------
+
+const columnsOf = async (mediaId) => {
+	const { rows } = await pool.query(
+		'SELECT removed_at, uploads_in_flight FROM media WHERE id = $1',
+		[mediaId],
+	)
+	return rows[0] ?? null
+}
+
+/** A row created through the repository and moved to `status`. */
+const created = async (status = 'pending', albumId = ALBUM) => {
+	const media = newMedia(albumId, 0x0b)
+	await repository.create(media)
+	if (status !== 'pending') await forceStatus(media.id, status)
+	return media.id
+}
+
+test('004: a new row is live with nothing in flight', async () => {
+	const id = await created()
+
+	assert.deepEqual(await columnsOf(id), { removed_at: null, uploads_in_flight: 0 })
+})
+
+test('004: the counter cannot go below zero', async () => {
+	// The CHECK is what turns an unmatched endUpload into an error rather than
+	// a negative count that lets a later removal erase under a live upload.
+	const id = await created()
+
+	await assert.rejects(
+		() => pool.query('UPDATE media SET uploads_in_flight = -1 WHERE id = $1', [id]),
+		(error) => error.code === '23514',
+	)
+})
+
+test('hide sets removed_at from any status and reports nothing in flight', async () => {
+	// Any status, including pending and processing: removal doubles as
+	// cancelling a stalled upload.
+	for (const status of ['pending', 'processing', 'ready', 'failed']) {
+		const id = await created(status)
+
+		const hidden = await repository.hide(id, ownerId)
+
+		assert.deepEqual(hidden, { id, uploadsInFlight: 0 }, status)
+		assert.ok((await columnsOf(id)).removed_at instanceof Date, `${status}: removed_at not set`)
+		assert.equal(await statusOf(id), status, 'removal is not a status — #9 is untouched')
+	}
+})
+
+test('hide keeps the first removed_at, and finds an already hidden row', async () => {
+	// The second is a retried DELETE resuming an erasure: it must find the row,
+	// and must not move the moment the owner's intent took effect.
+	const id = await created('ready')
+	await repository.hide(id, ownerId)
+	const first = (await columnsOf(id)).removed_at
+
+	const again = await repository.hide(id, ownerId)
+
+	assert.deepEqual(again, { id, uploadsInFlight: 0 })
+	assert.equal((await columnsOf(id)).removed_at.getTime(), first.getTime())
+})
+
+test("hide on another owner's row is null and touches nothing", async () => {
+	// The owner check is in the WHERE. A select-then-check would be one
+	// reordering away from hiding a stranger's photograph before refusing.
+	const id = await created('ready')
+	const email = `media-other-${randomUUID()}@x.es`
+	const { rows } = await pool.query(
+		'INSERT INTO owners (email, auth_hash) VALUES ($1, $2) RETURNING id',
+		[email, createHash('sha256').update(email).digest()],
+	)
+	// The other owner owns an album too. Without one, a query that checks
+	// "this caller owns some album" rather than "this row's album" finds
+	// nothing either, and the test passes against the bug it exists for.
+	await pool.query(
+		`INSERT INTO albums (id, owner_id, title, wrapped_key, wrap_nonce) VALUES ($1, $2, $3, $4, $5)`,
+		[randomUUID(), rows[0].id, bytes(0x51, 60), bytes(0x42, 48), bytes(0x43, 24)],
+	)
+	try {
+		assert.equal(await repository.hide(id, rows[0].id), null)
+		assert.equal((await columnsOf(id)).removed_at, null)
+	} finally {
+		await pool.query('DELETE FROM owners WHERE email = $1', [email])
+	}
+})
+
+test('hide on an absent row is null', async () => {
+	assert.equal(await repository.hide(randomUUID(), ownerId), null)
+})
+
+test('a hidden row is invisible to findById, §9.4 and §9.5 — and a live one is not', async () => {
+	// The pair is the assertion: a filter that hid every row passes the first half.
+	const album = randomUUID()
+	await pool.query(
+		`INSERT INTO albums (id, owner_id, title, wrapped_key, wrap_nonce) VALUES ($1, $2, $3, $4, $5)`,
+		[album, ownerId, bytes(0x51, 60), bytes(0x42, 48), bytes(0x43, 24)],
+	)
+	const keep = await created('ready', album)
+	const gone = await created('ready', album)
+	await repository.hide(gone, ownerId)
+
+	assert.equal(await repository.findById(gone), null)
+	assert.ok(await repository.findById(keep))
+	assert.deepEqual((await repository.listByAlbum(album)).map((m) => m.id), [keep])
+	assert.deepEqual((await repository.listReadyEnvelopes(album)).map((m) => m.mediaId), [keep])
+})
+
+test('beginUpload on a hidden row is null — a 404, not a 409 — and counts nothing', async () => {
+	// `ready` would otherwise be "already_ready": hidden must win, or a PUT on a
+	// removed photograph answers 409 and tells the client the row exists.
+	for (const status of ['pending', 'ready', 'failed']) {
+		const id = await created(status)
+		await repository.hide(id, ownerId)
+
+		assert.equal(await repository.beginUpload(id), null, status)
+		assert.equal(await statusOf(id), status, `${status}: a hidden row moved`)
+		assert.equal((await columnsOf(id)).uploads_in_flight, 0)
+	}
+})
+
+test('beginUpload counts what it starts, endUpload uncounts it, and hide reports the count', async () => {
+	const id = await created()
+
+	assert.equal(await repository.beginUpload(id), 'started')
+	assert.equal(await repository.beginUpload(id), 'started') // the other variant, concurrently
+	assert.equal((await columnsOf(id)).uploads_in_flight, 2)
+
+	assert.equal(await repository.endUpload(id), 'live')
+	assert.equal((await columnsOf(id)).uploads_in_flight, 1)
+
+	assert.deepEqual(await repository.hide(id, ownerId), { id, uploadsInFlight: 1 })
+	assert.equal(await repository.endUpload(id), 'removed', 'the uploader must learn the row was hidden')
+	assert.equal((await columnsOf(id)).uploads_in_flight, 0)
+})
+
+test('beginUpload counts nothing when it does not start', async () => {
+	const id = await created('ready')
+
+	assert.equal(await repository.beginUpload(id), 'already_ready')
+	assert.equal((await columnsOf(id)).uploads_in_flight, 0)
+})
+
+test('endUpload with nothing in flight rejects on the CHECK — it is not absorbed', async () => {
+	/*
+	 * An endUpload without a matching "started" is a bug on some exit path.
+	 * The CHECK exists to make it loud. An adapter that guards the decrement
+	 * (`AND uploads_in_flight > 0`) or clamps it matches nothing, reports
+	 * nothing, and passes every other test in this file.
+	 */
+	const id = await created()
+
+	await assert.rejects(
+		() => repository.endUpload(id),
+		(error) => error.code === '23514',
+	)
+	assert.equal((await columnsOf(id)).uploads_in_flight, 0)
+})
+
+test('endUpload on an absent row is "removed"', async () => {
+	// The port's answer for a row that is gone; unreachable while erase is
+	// guarded on the counter, and still not a TypeError.
+	assert.equal(await repository.endUpload(randomUUID()), 'removed')
+})
+
+test('markReady on a hidden processing row writes nothing', async () => {
+	// The upload finished onto a row the owner removed meanwhile: becoming
+	// `ready` would put it back in front of every recipient.
+	const id = await created('processing')
+	await repository.hide(id, ownerId)
+
+	await repository.markReady(id, 1234)
+
+	assert.equal(await statusOf(id), 'processing')
+})
+
+test('erase refuses a live row and a hidden one with an upload in flight', async () => {
+	const live = await created('ready')
+	assert.equal(await repository.erase(live), false)
+	assert.ok(await repository.findById(live), 'a live row was deleted')
+
+	const busy = await created()
+	await repository.beginUpload(busy)
+	await repository.hide(busy, ownerId)
+	assert.equal(await repository.erase(busy), false)
+	assert.ok(await columnsOf(busy), 'erased with an upload in flight')
+
+	await repository.endUpload(busy)
+	assert.equal(await repository.erase(busy), true)
+	assert.equal(await columnsOf(busy), null)
+})
+
+test("erase takes the media row's access_log rows with it, and nothing else", async () => {
+	/*
+	 * The cascade schema §5 keeps: the log is personal data about viewing,
+	 * and "opened 11 of 19" is true of an album that now holds 19. Album-level
+	 * rows (media_id NULL) and other media's rows stay.
+	 */
+	const id = await created('ready')
+	const other = await created('ready')
+	const recipient = randomUUID()
+	await pool.query(
+		`INSERT INTO recipients (id, album_id, kind, label, token_hash) VALUES ($1, $2, 'qr', $3, $4)`,
+		[recipient, ALBUM, bytes(0x61, 50), createHash('sha256').update(recipient).digest()],
+	)
+	await pool.query(
+		`INSERT INTO access_log (recipient_id, media_id, event) VALUES
+		   ($1, NULL, 'album_opened'), ($1, $2, 'asset_viewed'), ($1, $3, 'asset_viewed')`,
+		[recipient, id, other],
+	)
+
+	await repository.hide(id, ownerId)
+	assert.equal(await repository.erase(id), true)
+
+	const { rows } = await pool.query(
+		'SELECT event, media_id FROM access_log WHERE recipient_id = $1 ORDER BY id',
+		[recipient],
+	)
+	assert.deepEqual(rows, [
+		{ event: 'album_opened', media_id: null },
+		{ event: 'asset_viewed', media_id: other },
+	])
+})
+
+test('hide racing beginUpload: either the upload is refused or hide counts it', async () => {
+	/*
+	 * The outcome that would erase under a live upload is beginUpload
+	 * "started" with hide reporting zero in flight. Both statements write the
+	 * one row, so Postgres orders them; this asserts the adapter reports
+	 * either order truthfully — including that a beginUpload which waited on
+	 * the hide's lock and then matched nothing says null, not "already_ready".
+	 */
+	for (let i = 0; i < 25; i++) {
+		const id = await created()
+
+		const [started, hidden] = await Promise.all([
+			repository.beginUpload(id),
+			repository.hide(id, ownerId),
+		])
+
+		assert.ok(started === 'started' || started === null, `iteration ${i}: beginUpload said ${started}`)
+		if (started === 'started') {
+			assert.equal(hidden.uploadsInFlight, 1, `iteration ${i}: hide missed an admitted upload`)
+		}
+	}
+})
