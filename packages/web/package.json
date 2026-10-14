@@ -8,7 +8,8 @@
     "dev": "vite dev",
     "build": "vite build && node scripts/check-build.mjs",
     "preview": "vite preview",
-    "lint": "eslint . && svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --fail-on-warnings",
+    "prepare": "svelte-kit sync || echo ''",
+    "lint": "svelte-kit sync && eslint . && svelte-check --tsconfig ./tsconfig.json --fail-on-warnings",
     "test": "vitest run"
   },
   "dependencies": {
