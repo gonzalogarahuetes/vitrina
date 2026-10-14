@@ -1,13 +1,33 @@
 {
   "name": "@vitrina/web",
-  "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
-  "scripts": {
-    "test": "echo \"web: no tests yet\""
-  },
-  "keywords": [],
-  "author": "",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
   "license": "UNLICENSED",
-  "type": "module"
+  "scripts": {
+    "dev": "vite dev",
+    "build": "vite build && node scripts/check-build.mjs",
+    "preview": "vite preview",
+    "lint": "eslint . && svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --fail-on-warnings",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@vitrina/envelope": "workspace:*",
+    "@vitrina/shared": "workspace:*"
+  },
+  "devDependencies": {
+    "@sveltejs/adapter-static": "^3.0.10",
+    "@sveltejs/kit": "^2.70.3",
+    "@sveltejs/vite-plugin-svelte": "^7.3.1",
+    "eslint": "^10.8.1",
+    "eslint-plugin-svelte": "^3.23.1",
+    "globals": "^17.13.0",
+    "svelte": "^5.57.2",
+    "svelte-check": "^4.7.6",
+    "svelte-eslint-parser": "^1.9.0",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.71.2",
+    "vite": "^8.3.4",
+    "vitest": "^5.0.4"
+  }
 }
