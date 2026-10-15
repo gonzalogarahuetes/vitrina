@@ -35,7 +35,7 @@ export default defineConfig(({ command, mode }) => {
     plugins: [
       guards(root),
       announcerStyle(),
-      // noVersionCheck(),
+      noVersionCheck(),
       envelopeWasm(root),
       sveltekit({
         // Source, not dist/: the client only takes types from it, and `pnpm lint`
