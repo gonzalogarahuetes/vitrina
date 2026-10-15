@@ -2,7 +2,13 @@ import adapter from "@sveltejs/adapter-static";
 import { sveltekit } from "@sveltejs/kit/vite";
 import { fileURLToPath } from "node:url";
 import { defineConfig, loadEnv } from "vite";
-import { envelopeWasm, guards, parseApiOrigin } from "./vite-plugins.ts";
+import {
+  announcerStyle,
+  noVersionCheck,
+  envelopeWasm,
+  guards,
+  parseApiOrigin,
+} from "./vite-plugins.ts";
 
 /*
  * Headers a <meta> tag cannot carry. Whoever chooses hosting sets these on
@@ -21,12 +27,15 @@ const root = fileURLToPath(new URL(".", import.meta.url));
 
 export default defineConfig(({ command, mode }) => {
   const apiOrigin = parseApiOrigin(
-    process.env["VITE_API_ORIGIN"] ?? loadEnv(mode, root, "VITE_")["VITE_API_ORIGIN"],
+    process.env["VITE_API_ORIGIN"] ??
+      loadEnv(mode, root, "VITE_")["VITE_API_ORIGIN"],
   );
 
   return {
     plugins: [
       guards(root),
+      announcerStyle(),
+      noVersionCheck(),
       envelopeWasm(root),
       sveltekit({
         // Source, not dist/: the client only takes types from it, and `pnpm lint`
@@ -49,10 +58,17 @@ export default defineConfig(({ command, mode }) => {
             // `vite dev` alone adds 'self' for its HMR socket; check-build.mjs
             // fails a production build whose connect-src names anything else.
             "connect-src": [
-              apiOrigin as `${string}.${string}` | `${string}://localhost:${number}`,
+              apiOrigin as
+                | `${string}.${string}`
+                | `${string}://localhost:${number}`,
               ...(command === "serve" ? (["self"] as const) : []),
             ],
             "img-src": ["self", "blob:"],
+            // Stylesheets from our own origin only, stated rather than inherited from
+            // default-src. No inline styles: see announcerStyle() in vite-plugins.ts.
+            "style-src": ["self"],
+            // Atkinson Hyperlegible, from static/fonts/ (theme.css). Same origin only.
+            "font-src": ["self"],
             // Neither falls back to default-src.
             "base-uri": ["none"],
             "form-action": ["none"],

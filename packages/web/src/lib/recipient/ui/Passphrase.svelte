@@ -1,0 +1,188 @@
+<script lang="ts">
+  import { en } from "$lib/copy/en";
+  import type { PassphrasePhase } from "$lib/recipient/session";
+
+  let { phase, onSubmit }: { phase: PassphrasePhase; onSubmit: (words: readonly string[]) => void } = $props();
+
+  /* Five fields, as the prototype draws them. Extra words typed into one field are kept: they are joined with spaces. */
+  const FIELDS = 5;
+  let words = $state<string[]>(Array.from({ length: FIELDS }, () => ""));
+  const busy = $derived(phase === "deriving" || phase === "loading");
+
+  function submit(e: SubmitEvent): void {
+    e.preventDefault();
+    if (busy) return;
+    onSubmit(words.map((w) => w.trim()).filter((w) => w !== ""));
+  }
+
+</script>
+
+<main class="screen">
+  <h1>{en["recipient.passphrase.title"]}</h1>
+  <form onsubmit={submit} novalidate>
+    <fieldset disabled={busy}>
+      <legend>{en["recipient.passphrase.label"]}</legend>
+      <p class="hint">{en["pass.entry"]}</p>
+      {#each words as _, i (i)}
+        <div class="row">
+          <label for="word-{i}"><span aria-hidden="true">{i + 1}</span><span class="visually-hidden">{en["recipient.passphrase.word"](i + 1)}</span></label>
+          <input
+            id="word-{i}"
+            class="field"
+            class:invalid={phase === "wrong" || (phase === "empty" && words[i]?.trim() === "")}
+            type="text"
+            autocomplete="off"
+            autocapitalize="none"
+            spellcheck="false"
+            aria-invalid={phase === "wrong"}
+            bind:value={words[i]}
+          />
+        </div>
+      {/each}
+    </fieldset>
+
+    {#if phase === "empty"}
+      <div class="alert" role="alert">{@render warn()}<span>{en["pass.empty"]}</span></div>
+    {:else if phase === "wrong"}
+      <div class="alert" role="alert">{@render warn()}<span>{en["pass.wrong"]}</span></div>
+    {/if}
+
+    {#if phase === "deriving"}
+      <!-- The derivation wait (flows §2): no progress figure, the input cannot be edited or resubmitted. -->
+      <div class="wait" role="status">
+        <div class="rings" aria-hidden="true"><div class="ring"></div><div class="ring two"></div><div class="dot"></div></div>
+        <span>{en["derive.wait"]}</span>
+      </div>
+    {:else}
+      <button class="btn" type="submit" disabled={busy}>{en["recipient.passphrase.submit"]}</button>
+    {/if}
+  </form>
+
+  <div class="bottom lost">
+    <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"
+      ><circle cx="8" cy="15" r="4"></circle><path d="M11 12l9-9"></path><path d="M17 6l3 3"></path></svg
+    >
+    <span>{en["pass.lost"]}</span>
+  </div>
+</main>
+
+{#snippet warn()}
+  <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true" class="warn"
+    ><circle cx="12" cy="12" r="10"></circle><path d="M12 7v6"></path><path d="M12 17h.01"></path></svg
+  >
+{/snippet}
+
+<style>
+  .screen {
+    padding-top: 40px;
+    gap: 18px;
+  }
+  form {
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+  }
+  fieldset {
+    border: 0;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    min-width: 0;
+  }
+  legend {
+    padding: 0;
+    margin-bottom: 4px;
+  }
+  .hint {
+    margin: 0 0 6px;
+    color: var(--ink-muted);
+  }
+  .row {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+  }
+  label {
+    width: 24px;
+    flex: none;
+    font-weight: 700;
+    font-size: 22px;
+  }
+  .field {
+    width: 100%;
+    min-height: var(--target);
+    border: 2px solid var(--ink-muted);
+    border-radius: 12px;
+    background: #fff;
+    font: 400 22px/1.2 var(--font);
+    color: var(--ink);
+    padding: 12px 16px;
+  }
+  .field.invalid {
+    border-color: var(--danger);
+  }
+  .field:disabled {
+    background: #eeebe4;
+    color: var(--ink-muted);
+  }
+  .warn {
+    flex: none;
+    margin-top: 3px;
+  }
+  .wait {
+    display: flex;
+    align-items: center;
+    gap: 18px;
+  }
+  .rings {
+    width: 84px;
+    height: 84px;
+    flex: none;
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .ring {
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    border: 3px solid var(--accent);
+    animation: breathe 2.6s ease-in-out infinite;
+  }
+  .ring.two {
+    inset: 18px;
+    animation-delay: -1.3s;
+  }
+  .dot {
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: var(--accent);
+  }
+  @keyframes breathe {
+    0%,
+    100% {
+      transform: scale(0.62);
+      opacity: 0.3;
+    }
+    50% {
+      transform: scale(1);
+      opacity: 1;
+    }
+  }
+  .lost {
+    display: flex;
+    gap: 12px;
+    align-items: flex-start;
+    border-top: 2px solid var(--surface);
+    padding-top: 16px;
+  }
+  .lost svg {
+    flex: none;
+    margin-top: 2px;
+    color: var(--ink-muted);
+  }
+</style>

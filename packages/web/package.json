@@ -10,13 +10,15 @@
     "preview": "vite preview",
     "prepare": "svelte-kit sync || echo ''",
     "lint": "svelte-kit sync && eslint . && svelte-check --tsconfig ./tsconfig.json --fail-on-warnings",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:browser": "playwright test"
   },
   "dependencies": {
     "@vitrina/envelope": "workspace:*",
     "@vitrina/shared": "workspace:*"
   },
   "devDependencies": {
+    "@playwright/test": "1.63.0",
     "@sveltejs/adapter-static": "^3.0.10",
     "@sveltejs/kit": "^2.70.3",
     "@sveltejs/vite-plugin-svelte": "^7.3.1",

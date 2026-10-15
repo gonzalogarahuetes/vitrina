@@ -70,3 +70,11 @@ export const OWNER_KDF_V1: KdfParameters = {
   iterations: 3,
   parallelism: 1,
 };
+
+export {
+  decodeBase64url,
+  decodeBase64urlRange,
+  encodeBase64url,
+  encodedLength,
+  MalformedEncodingError,
+} from "./base64url.js";

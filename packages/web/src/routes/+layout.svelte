@@ -1,4 +1,6 @@
 <script lang="ts">
+  import "$lib/theme.css";
+  import { en } from "$lib/copy/en";
   import type { Snippet } from "svelte";
   import type { LayoutData } from "./$types";
 
@@ -8,6 +10,8 @@
 {#if data.envelope.status === "ready"}
   {@render children()}
 {:else}
-  <!-- ⟦copy: derive.failed⟧ belongs to the screens; this is the state, not its text. -->
-  <p data-state="envelope-unavailable">derive.failed</p>
+  <!-- Flows §2's "could not derive" family: never shown as a wrong password. -->
+  <main class="screen centred" role="alert" data-state="envelope-unavailable">
+    <h1>{en["derive.failed"]}</h1>
+  </main>
 {/if}
