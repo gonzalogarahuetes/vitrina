@@ -243,16 +243,17 @@
 
 ### 4.1 Open link
 
-1. **Parse the fragment.** If it is missing or malformed → dead page (§4.7).
-2. **Validate `relay`** against the allowlist (invite spec §1). An unfamiliar relay gets a confirmation screen **before any request**.
-3. **Call `history.replaceState`** to strip the fragment (invite spec §2.2). Its interaction with storage is pending (§4.7).
-4. **Branch:** `key` present → `Q-held`; `key` absent → `P-locked` (§4.2).
-5. **`Q-held`:** call `GET /v1/recipient` and decrypt the label for the watermark. `403` → revoked; `401` → not recognised (§4.6).
-6. Onboarding (§4.3), then the grid (§4.4).
+1. **Read the fragment, then strip it** with `history.replaceState` (invite spec §2.2) before anything else runs, including the router: SvelteKit's own navigation would otherwise copy the URL, fragment included, into `history.state`, which the browser saves with the session. Its interaction with storage is pending (§4.7).
+2. **Parse it.** Missing or malformed → dead page (§4.7). A well-formed `v` other than 1 → the newer-version screen (invite spec §6).
+3. **Branch:** `key` present → `Q-held`; `key` absent → `P-locked` (§4.2).
+4. **`Q-held`:** call `GET /v1/recipient` and decrypt the label for the watermark. `403` → revoked; `401` → not recognised (§4.6).
+5. Onboarding (§4.3), then the grid (§4.4).
+
+**No relay check in the web client.** The URL form's relay is the host that served the page, and the page talks only to the API origin it was built with. A page served from an attacker's origin runs the attacker's code, so a check inside it protects nothing (invite spec §1).
 
 **Call `GET /v1/albums/{album_id}/metadata` on entering the grid, not behind onboarding.** That call _is_ the album open (api-sketch §11.6), and making it here means each open in the owner's log matches a grid that was actually on screen. `GET /v1/recipient` and `GET /v1/albums/{album_id}` write no log and may run during onboarding.
 
-⟦copy: open.unfamiliar-relay — names the origin and asks before contacting it (invite spec §1, phishing)⟧
+⟦copy: open.newer-version — this invitation needs a newer version of the app; ask the person who sent it (invite spec §6)⟧
 
 ### 4.2 Enter passphrase
 
@@ -304,7 +305,7 @@
 
 ### 4.5 Viewer
 
-- **Fetch only when the photo is displayed.** First a range from byte 0 (header and chunk 0), which logs `asset_viewed`. Later ranges are computed arithmetically (encryption spec §3.3). **Neighbouring photos are not prefetched.** The thumbnail already in memory may stand in while the fetch runs.
+- **Fetch only when the photo is displayed.** One request, `Range: bytes=0-`, which logs `asset_viewed`, then decrypt the whole object: photos are a few chunks, and the WASM binding decrypts whole objects. Ranges computed arithmetically (encryption spec §3.3) are for video, Phase 3. **Neighbouring photos are not prefetched.** The thumbnail already in memory may stand in while the fetch runs.
 - **Render to canvas, with the watermark and explicit zoom and pan controls** (brief §11: a requirement).
 
 **Failing:** `404` means the owner removed the photo after the grid loaded (§3.7) · `403` → revoked · decryption fails · the device runs out of memory (brief §11), which is its own state.

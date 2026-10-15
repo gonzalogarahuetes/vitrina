@@ -1,6 +1,6 @@
 # Vitrina
 
-Private photo sharing built on a blind relay: the client encrypts before upload, the server only ever stores ciphertext it cannot read, and keys travel out of band. Currently Phase 0 — envelope crate, repo foundations, spec corrections.
+Private photo sharing built on a blind relay: the client encrypts before upload, the server only ever stores ciphertext it cannot read, and keys travel out of band. Currently Phase 1: the server is complete (`packages/server`), and the web client (`packages/web`) is starting. Phase 0 is closed.
 
 ## Canonical documents
 
@@ -11,9 +11,10 @@ Private photo sharing built on a blind relay: the client encrypts before upload,
 | `spec/vitrina-project-brief.md`   | **Canonical.** Threat model, promises, non-negotiables (§6), open decisions |
 | `spec/vitrina-encryption-spec.md` | The envelope format. **Read in full before any work in `crates/envelope/`** |
 | `spec/vitrina-invite-spec.md`     | Invite payload and its serialisations                                       |
-| `spec/vitrina-phase-0-plan.md`    | Current work, the C ladder, and the delegation map                          |
+| `spec/vitrina-phase-0-plan.md`    | Phase 0 history: the C ladder, V.1's device measurements. Closed            |
 | `spec/vitrina-schema.md`          | Database schema, and §6 the canonical token-hashing rules                   |
-| `spec/vitrina-api-sketch.md`      | The HTTP API. Phase 1 and later — not Phase 0 work                          |
+| `spec/vitrina-api-sketch.md`      | The HTTP API. §11.8 is the one table of every route                         |
+| `spec/vitrina-client-flows.md`    | Screens, their states, and key state per step. Read before any `packages/web` work |
 
 They are not auto-imported. Read the ones relevant to the task at hand.
 
@@ -77,8 +78,8 @@ pnpm test:infra                             # if anything under adapters/driven/
 `test:infra` builds first, deliberately: it imports `packages/server/dist/`, so without
 the build it tests the previous compile and reports a green that verified nothing.
 
-`crates/envelope` is green: C.1's `to_bytes` landed (`header.rs`). Run the `cargo` lines only when `crates/` changed — a TypeScript-only change is covered by `pnpm test && pnpm lint`.
+Run the `cargo` lines only when `crates/` changed — a TypeScript-only change is covered by `pnpm test && pnpm lint`.
 
 ## Scope
 
-Phase 0 only. Nothing from Phase 1 onward unless I explicitly ask. Nothing from Phase 3 (video) or Phase 4 (native) gets built early — the non-negotiables exist so that waiting costs nothing.
+Phase 1: photos only, web client only. Nothing from Phase 2 unless I explicitly ask. Nothing from Phase 3 (video) or Phase 4 (native) gets built early — the non-negotiables exist so that waiting costs nothing.

@@ -5,7 +5,7 @@ use chacha20poly1305::XChaCha20Poly1305;
 use zeroize::Zeroizing;
 
 use crate::owner_wrap::OwnerWrapError;
-use crate::{AlbumId, AssetId, RecipientId, WrongLength};
+use crate::{AlbumId, AlbumWrapError, AssetId, RecipientId, WrongLength};
 
 const TITLE_DOMAIN: &[u8; 16] = b"vitrina-title-v1";
 const LABEL_DOMAIN: &[u8; 16] = b"vitrina-label-v1";
@@ -111,6 +111,11 @@ impl AlbumKey {
             got: bytes.len(),
         })?;
         Ok(AlbumKey::from_bytes(bytes))
+    }
+    pub fn generate() -> Result<AlbumKey, AlbumWrapError> {
+        let mut key_bytes = Zeroizing::new([0u8; Self::LEN]);
+        getrandom::fill(&mut key_bytes[..]).map_err(|_| AlbumWrapError::RandomnessUnavailable)?;
+        Ok(AlbumKey(key_bytes))
     }
 }
 

@@ -469,6 +469,19 @@ The account and its first `owner_keys` row are created in one transaction. An ow
 
 Filenames, capture timestamps, dimensions, and (Phase 3) duration are serialized as JSON and encrypted under `K_meta(asset_id)` using this same envelope format. There is no separate format for metadata.
 
+**The JSON's fields, fixed 15 October 2026** — before the first real upload, because the relay cannot rewrite them afterwards (brief §7):
+
+| Field      | Required | Type and meaning                                                                                                     |
+| ---------- | -------- | -------------------------------------------------------------------------------------------------------------------- |
+| `width`    | yes      | Positive integer: pixels of the image **as encrypted** — after downscaling, and after EXIF orientation is applied to the pixels |
+| `height`   | yes      | Positive integer, as `width`                                                                                         |
+| `name`     | no       | The original filename. Permitted because it is inside the envelope; it never reaches the relay in plaintext         |
+| `taken_at` | no       | The capture time, as the camera recorded it                                                                          |
+
+**Readers MUST ignore unknown fields**, the opposite of the invite payload's rule (invite spec §6): Phase 3 adds `duration`, and a photo reader must not refuse a document that carries it. Changes are therefore additive only, and there is no version field. A missing or non-integer `width` or `height` makes that one asset unavailable, never the whole album.
+
+**Orientation is applied before stripping.** EXIF stripping (below) removes the orientation tag, so a client that strips without first rotating the pixels uploads portrait photographs sideways — and reports the unrotated dimensions here.
+
 **Storage location: a binary column on the `media` row, not an object in the bucket.** A metadata envelope is a few hundred bytes, is never range-requested, and is always fetched together with its album rather than individually. Clients SHOULD fetch all metadata for an album in a single request — and that requirement is only cheap if a single query returns all of them. Held as objects instead, opening a hundred-photo album would mean a hundred storage fetches proxied through the API on every load.
 
 _This is a judgement call with a real cost, recorded so it is not mistaken for an oversight: it means the object bucket alone is not a complete backup. Losing the database loses filenames and capture dates even though every photograph survives. The database was never disposable — it also holds album membership, recipients, and the access log — so this changes the recovery story less than it first appears. Asset and thumbnail ciphertext still goes to object storage, one object per asset._

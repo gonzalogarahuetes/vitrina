@@ -372,4 +372,29 @@ mod tests {
             })
         );
     }
+
+    // Album Key Tests
+    // ----------------------------------------------------
+
+    #[test]
+    fn generates_unique_album_keys() {
+        assert_ne!(
+            AlbumKey::generate().unwrap().expose_bytes(),
+            AlbumKey::generate().unwrap().expose_bytes()
+        );
+    }
+
+    #[test]
+    fn generates_album_key_e2e() {
+        let album_k = AlbumKey::generate().unwrap();
+        let wrapped =
+            wrap_album_key_with_master(&album_k, &master_key(), &AlbumId::from_bytes(ALBUM_ID))
+                .unwrap();
+
+        let unwrapped =
+            unwrap_album_key_with_master(&wrapped, &master_key(), &AlbumId::from_bytes(ALBUM_ID))
+                .unwrap();
+
+        assert_eq!(album_k.expose_bytes(), unwrapped.expose_bytes())
+    }
 }

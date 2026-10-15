@@ -63,7 +63,7 @@ test("AlbumKey is opaque: no method or property returns its bytes", () => {
   // Double-underscore names are wasm-bindgen's own plumbing, not API.
   const visible = (o: object) => Object.getOwnPropertyNames(o).filter((n) => !n.startsWith("__"));
   assert.deepEqual(visible(e.AlbumKey.prototype), ["constructor", "free"]);
-  assert.deepEqual(visible(e.AlbumKey), ["length", "name", "prototype", "fromBytes"]);
+  assert.deepEqual(visible(e.AlbumKey).sort(), ["fromBytes", "generate", "length", "name", "prototype"]);
   assert.doesNotMatch(JSON.stringify(key), new RegExp(Buffer.from(ALBUM_KEY).toString("hex")));
 });
 
@@ -159,6 +159,33 @@ test("generate draws a distinct K_master every time", () => {
   const albumId = new Uint8Array(randomBytes(16));
   const underOther = e.wrapAlbumKeyWithMaster(key, e.MasterKey.generate(), albumId);
   assert.equal(caught(() => e.unwrapAlbumKeyWithMaster(underOther, b, albumId)).code, "AuthenticationFailed");
+});
+
+// §2: K_album is 32 random bytes, and a new album's is drawn inside the module,
+// so it never exists as JavaScript bytes. There are no bytes to inspect, so each
+// property is shown through what the key does.
+test("AlbumKey.generate draws a usable K_album that never existed as JavaScript bytes", () => {
+  const plaintext = new Uint8Array(randomBytes(100));
+  const a = e.AlbumKey.generate();
+  const b = e.AlbumKey.generate();
+
+  const thumb = e.encryptThumb(a, ASSET_ID, plaintext);
+  assert.deepEqual(e.decryptThumb(a, ASSET_ID, thumb), plaintext, "an ordinary album key");
+
+  assert.equal(caught(() => e.decryptThumb(b, ASSET_ID, thumb)).code, "AuthenticationFailed", "distinct per call");
+
+  // A generate that never filled its buffer would return the all-zero key: a
+  // valid, constant K_album for every album, and every other test would pass.
+  const zero = e.AlbumKey.fromBytes(new Uint8Array(32));
+  assert.equal(caught(() => e.decryptThumb(zero, ASSET_ID, thumb)).code, "AuthenticationFailed", "not all zeros");
+
+  // The path a new album takes: wrapped under K_master at create, unwrapped on
+  // a later sign-in, and still the same key.
+  const master = e.MasterKey.generate();
+  const albumId = new Uint8Array(randomBytes(16));
+  const stored = e.wrapAlbumKeyWithMaster(a, master, albumId);
+  const reopened = e.unwrapAlbumKeyWithMaster(e.MasterWrappedKey.fromParts(stored.wrapped, stored.wrapNonce), master, albumId);
+  assert.deepEqual(e.decryptThumb(reopened, ASSET_ID, thumb), plaintext, "survives the K_master wrap");
 });
 
 // §2: the album wrap binds album_id through the AAD, so the wrong id is an

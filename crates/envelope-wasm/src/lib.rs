@@ -24,6 +24,13 @@ impl AlbumKey {
             .map(AlbumKey)
             .map_err(|e| wrong_length("albumKey", e).into())
     }
+    #[wasm_bindgen(js_name = generate)]
+    /// A fresh K_album drawn inside the module: it never exists as JavaScript bytes.
+    pub fn generate() -> Result<AlbumKey, JsValue> {
+        envelope::AlbumKey::generate()
+            .map(AlbumKey)
+            .map_err(|e| Failure::from(e).into())
+    }
 }
 
 fn asset_id(bytes: &[u8]) -> Result<envelope::AssetId, JsValue> {

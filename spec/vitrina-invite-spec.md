@@ -30,7 +30,7 @@ Defining the payload as an object with three serialisations costs nothing now an
 
 All binary fields use base64url without padding (RFC 4648 §5). Sizes: `album` → 22 chars, `token` → 43 chars, `key` → 43 chars.
 
-`relay` is included rather than hardcoded so that a self-hosted deployment (roadmap Phase 5) produces working invites without a client rebuild. Clients MUST validate it against an allowlist or require explicit user confirmation before contacting an unfamiliar origin — an invite is untrusted input, and a payload that points at an attacker's relay is a phishing vector.
+`relay` is included rather than hardcoded so that a self-hosted deployment (roadmap Phase 5) produces working invites without a client rebuild. Clients the relay does not serve (native apps, Phase 4) MUST validate it against an allowlist or require explicit user confirmation before contacting an unfamiliar origin — an invite is untrusted input, and a payload that points at an attacker's relay is a phishing vector. **The web client is exempt:** in the URL form (§2) the relay is the host that served the page, and a page served from an attacker's origin runs the attacker's code, so a check inside it protects nothing (`vitrina-client-flows.md` §4.1).
 
 ### 1.1 `token` and `key` are independent secrets
 
@@ -131,7 +131,7 @@ Native clients inherit every obligation in §2.2, with one addition: iOS and And
 2. Round trip: object → QR → decode → object
 3. **A test asserting that no HTTP request issued by the client contains `key` material in its URL, headers, or body.** This is the §2.1 guard. It is the single most important test in the client codebase.
 4. Rejection of an unknown `v`
-5. Rejection or explicit confirmation of an unrecognised `relay` origin
+5. Rejection or explicit confirmation of an unrecognised `relay` origin — in clients the relay does not serve (§1)
 6. Passphrase unwrap against fixed vectors
 7. Assertion that after load, `key` appears in no persistent browser storage
 
