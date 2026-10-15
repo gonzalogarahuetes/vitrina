@@ -70,6 +70,99 @@ export function guards(root: string): Plugin {
 }
 
 /*
+ * SvelteKit's generated root component renders its route announcer with an
+ * inline `style` attribute (core/sync/write_root.js). Svelte builds it from an
+ * HTML template, so under `style-src 'self'` the attribute is blocked and the
+ * browser reports a CSP violation on every page load. The same rules live in
+ * theme.css as `#svelte-announcer`; this removes only the attribute, before
+ * Svelte compiles the file.
+ *
+ * Loud on purpose: if SvelteKit changes that markup, or the build never sees
+ * root.svelte, the build fails instead of the violation quietly coming back.
+ */
+const ROOT_SVELTE = /[\\/]\.svelte-kit[\\/]generated[\\/]root\.svelte$/;
+const ANNOUNCER_STYLE = /(<div id="svelte-announcer"[^>]*?)\s+style="[^"]*"/;
+
+export function stripAnnouncerStyle(source: string): string {
+  if (!ANNOUNCER_STYLE.test(source)) {
+    throw new Error(
+      "SvelteKit's root.svelte no longer has the announcer's inline style this plugin removes. " +
+        "Check the new markup against style-src 'self' and update vite-plugins.ts and theme.css.",
+    );
+  }
+  return source.replace(ANNOUNCER_STYLE, "$1");
+}
+
+export function announcerStyle(): Plugin {
+  let seen = false;
+  return {
+    name: "vitrina:announcer-style",
+    enforce: "pre",
+    buildStart() {
+      seen = false;
+    },
+    transform(code, id) {
+      if (!ROOT_SVELTE.test(id.split("?")[0] ?? id)) return undefined;
+      seen = true;
+      return { code: stripAnnouncerStyle(code), map: null };
+    },
+    generateBundle() {
+      if (!seen) throw new Error("vitrina:announcer-style never saw .svelte-kit/generated/root.svelte");
+    },
+  };
+}
+
+/*
+ * SvelteKit's version check. After a failed route load or on reaching an
+ * error page (@sveltejs/kit src/runtime/client/client.js, the two calls to
+ * `stores.updated.check()`), a production build fetches `_app/version.json`
+ * from the app's own origin (src/runtime/client/utils.js, create_updated_store)
+ * to see whether a redeploy explains the failure. connect-src names the API
+ * alone, deliberately: a same-origin request still reaches the static host and
+ * its logs. So every such fetch was already refused by the CSP, and check()
+ * already always returned false; this makes it return false without asking.
+ * `version.pollInterval: 0` stops only the timer, and no option stops the rest.
+ *
+ * Loud on purpose, like announcerStyle(): if SvelteKit changes the function,
+ * or the build never sees the file, the build fails.
+ */
+const KIT_CLIENT_UTILS = /[\\/]@sveltejs[\\/]kit[\\/]src[\\/]runtime[\\/]client[\\/]utils\.js$/;
+const VERSION_CHECK = /(async function check\(\) \{\s*clearTimeout\(timeout\);)/;
+
+export function disableVersionCheck(source: string): string {
+  if (!VERSION_CHECK.test(source) || !source.includes("fetch(`${assets}/${__SVELTEKIT_APP_VERSION_FILE__}`")) {
+    throw new Error(
+      "SvelteKit's create_updated_store() no longer looks as vite-plugins.ts expects. " +
+        "Check whether it still fetches version.json, and update disableVersionCheck().",
+    );
+  }
+  return source.replace(VERSION_CHECK, "$1\n\t\treturn false; // vitrina: no version.json request (vite-plugins.ts)");
+}
+
+export function noVersionCheck(): Plugin {
+  let seen = false;
+  return {
+    name: "vitrina:no-version-check",
+    enforce: "pre",
+    apply: "build",
+    buildStart() {
+      seen = false;
+    },
+    transform(code, id) {
+      if (!KIT_CLIENT_UTILS.test(id.split("?")[0] ?? id)) return undefined;
+      seen = true;
+      return { code: disableVersionCheck(code), map: null };
+    },
+    generateBundle(options) {
+      // The server build of adapter-static never imports the client runtime.
+      if (!seen && options.format === "es" && this.environment?.name !== "ssr") {
+        throw new Error("vitrina:no-version-check never saw @sveltejs/kit's client utils.js");
+      }
+    },
+  };
+}
+
+/*
  * `virtual:envelope-wasm` — the module's bytes as base64, so they ship inside
  * the JS bundle and loading them is not a fetch (CSP connect-src names the API
  * alone). Vite has no `?inline` for .wasm; this is that, and nothing more.

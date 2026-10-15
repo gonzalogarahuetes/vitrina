@@ -4,8 +4,8 @@
  * otherwise enforce only at runtime, where CI never looks.
  */
 import { createHash } from "node:crypto";
-import { readFileSync, readdirSync } from "node:fs";
-import { join, relative } from "node:path";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { dirname, join, relative } from "node:path";
 
 const BUILD = new URL("../build/", import.meta.url).pathname;
 const failures = [];
@@ -34,6 +34,8 @@ const same = (a, b) => a.length === b.length && a.every((v, i) => v === b[i]);
 
 if (!same(csp("default-src"), ["'self'"])) fail(`default-src is ${csp("default-src").join(" ")}`);
 if (!same(csp("img-src"), ["'self'", "blob:"])) fail(`img-src is ${csp("img-src").join(" ")}`);
+if (!same(csp("style-src"), ["'self'"])) fail(`style-src is ${csp("style-src").join(" ") || "absent"}`);
+if (!same(csp("font-src"), ["'self'"])) fail(`font-src is ${csp("font-src").join(" ") || "absent"}`);
 
 // The only inline script allowed is SvelteKit's bootstrap, admitted by hash.
 const inline = [...html.matchAll(/<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/gi)].map((m) => m[1]);
@@ -62,6 +64,44 @@ else {
 // Inline handlers and style attributes would need 'unsafe-inline' to run.
 if (/\son[a-z]+\s*=/i.test(html)) fail("index.html has an inline event handler");
 if (/\sstyle\s*=/i.test(html)) fail("index.html has a style attribute");
+
+// --- Same-origin CSS references resolve -------------------------------------
+// Every url() in the built CSS must be a file in build/: a font named in
+// theme.css but missing from static/fonts/ would otherwise fall back silently.
+// A data: URI is refused too — CSP admits none, so it would fail at runtime.
+for (const f of files(BUILD).filter((f) => f.endsWith(".css"))) {
+  const text = readFileSync(f, "utf8");
+  for (const [, ref] of text.matchAll(/url\(\s*["']?([^"')]+)["']?\s*\)/gi)) {
+    if (/^(?:https?:)?\/\//i.test(ref)) continue; // reported below as a third-party origin
+    if (/^data:/i.test(ref)) {
+      fail(`${relative(BUILD, f)} inlines a data: URI, which CSP refuses`);
+      continue;
+    }
+    const target = ref.startsWith("/") ? join(BUILD, ref.split(/[?#]/)[0]) : join(dirname(f), ref.split(/[?#]/)[0]);
+    if (!existsSync(target)) fail(`${relative(BUILD, f)} references ${ref}, which is not in build/`);
+  }
+}
+
+// --- No inline style attributes in built templates ---------------------------
+// Svelte compiles markup to HTML template strings. A `style="…"` inside one is
+// parsed as an inline style, which style-src 'self' blocks at runtime; this is
+// how SvelteKit's announcer slipped through (vite-plugins.ts). A static scan
+// only: it cannot see styles set as text at runtime (setAttribute, cssText, an
+// injected <style>). The browser check is what covers those.
+for (const f of files(BUILD).filter((f) => f.endsWith(".js"))) {
+  const text = readFileSync(f, "utf8");
+  for (const [tag] of text.matchAll(/<[a-zA-Z][\w-]*\s[^<>]*\bstyle\s*=\s*["'][^<>]*>/g)) {
+    fail(`${relative(BUILD, f)} has an inline style attribute in markup: ${tag.slice(0, 80)}`);
+  }
+}
+
+// --- No version check -------------------------------------------------------
+// SvelteKit fetches _app/version.json after a failed route load, from the
+// app's own origin, which connect-src refuses (vite-plugins.ts,
+// noVersionCheck). The client bundle must not even name it.
+for (const f of files(BUILD).filter((f) => f.endsWith(".js"))) {
+  if (readFileSync(f, "utf8").includes("version.json")) fail(`${relative(BUILD, f)} still fetches version.json`);
+}
 
 // --- No service worker ------------------------------------------------------
 for (const f of files(BUILD)) {
