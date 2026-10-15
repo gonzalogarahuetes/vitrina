@@ -90,7 +90,11 @@ describe("the recipient path over the real envelope build", () => {
     await settle();
     const viewer = session.current.screen.kind === "album" ? session.current.screen.viewer : null;
     expect(viewer?.phase).toBe("shown");
-    expect(decoded.at(-1)).toEqual(big);
+    // Byte comparison, not toEqual: Vitest's deep equality walks 600 KiB one
+    // element at a time (about 1.4 s), which is what timed this test out in CI.
+    const shown = decoded.at(-1);
+    expect(shown?.length).toBe(big.length);
+    expect(shown !== undefined && Buffer.from(shown).equals(Buffer.from(big))).toBe(true);
     session.dispose();
   });
 });
