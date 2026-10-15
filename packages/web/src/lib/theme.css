@@ -1,0 +1,172 @@
+/*
+ * Design tokens, from the prototype boards (Entry, Grid, Viewer): colours,
+ * Atkinson Hyperlegible, and 60 px targets for an audience with imperfect
+ * eyesight (brief §11).
+ *
+ * Atkinson Hyperlegible is self-hosted from static/fonts/ (SIL OFL 1.1, its
+ * licence beside the files): CSP font-src is 'self' and check-build.mjs
+ * refuses any third-party origin, and fails if a file named here is missing.
+ */
+@font-face {
+  font-family: "Atkinson Hyperlegible";
+  src: url("/fonts/AtkinsonHyperlegible-Regular.ttf") format("truetype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Atkinson Hyperlegible";
+  src: url("/fonts/AtkinsonHyperlegible-Bold.ttf") format("truetype");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+:root {
+  --ink: #1c1b19;
+  --ink-muted: #57524a;
+  --paper: #fbf9f5;
+  --surface: #e4e1da;
+  --surface-sunk: #dad5cb;
+  --backdrop: #e6e1d6;
+  --stage: #2a2824;
+  --accent: #1f3a5f;
+  --accent-hover: #142842;
+  --accent-soft: #edf1f6;
+  --focus: #c25e00;
+  --danger: #8a2e12;
+  --danger-soft: #f3e6de;
+  --disabled-ink: #a39d92;
+  --disabled-line: #cfcac0;
+  --disabled-fill: #f2efe9;
+
+  --font: "Atkinson Hyperlegible", Verdana, sans-serif;
+  --text: 20px;
+  --text-lead: 21px;
+  --text-title: 30px;
+  --target: 60px;
+  --radius: 14px;
+  --gutter: 28px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+/*
+ * SvelteKit's route announcer, visually hidden but read by screen readers.
+ * SvelteKit ships these rules as an inline style attribute, which
+ * style-src 'self' blocks; vite-plugins.ts removes the attribute and they
+ * live here instead.
+ */
+#svelte-announcer {
+  position: absolute;
+  left: 0;
+  top: 0;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  overflow: hidden;
+  white-space: nowrap;
+  width: 1px;
+  height: 1px;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+}
+
+body {
+  background: var(--paper);
+  color: var(--ink);
+  font: 400 var(--text) / 1.45 var(--font);
+}
+
+button {
+  font: inherit;
+}
+
+:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 3px;
+}
+
+.btn {
+  min-height: var(--target);
+  width: 100%;
+  border-radius: var(--radius);
+  border: 2px solid var(--accent);
+  background: var(--accent);
+  color: #fff;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 10px 16px;
+  cursor: pointer;
+}
+
+.btn:hover {
+  background: var(--accent-hover);
+}
+
+.btn.ghost {
+  background: transparent;
+  color: var(--accent);
+  border-color: transparent;
+  width: auto;
+}
+
+.btn.ghost:hover {
+  background: var(--accent-soft);
+}
+
+.screen {
+  min-height: 100dvh;
+  max-width: 640px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+  padding: 64px var(--gutter) var(--gutter);
+}
+
+.screen.centred {
+  justify-content: center;
+}
+
+.screen h1 {
+  margin: 0;
+  font-size: var(--text-title);
+  line-height: 1.2;
+}
+
+.bottom {
+  margin-top: auto;
+}
+
+.alert {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  color: var(--danger);
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation: none !important;
+    transition: none !important;
+  }
+}
