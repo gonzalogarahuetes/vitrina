@@ -1,2 +1,6 @@
 .svelte-kit/
 build/
+
+# Playwright output (test/browser/)
+/test-results/
+/playwright-report/

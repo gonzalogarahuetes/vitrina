@@ -27,6 +27,17 @@ const SW = "No service worker: one caching responses defeats Cache-Control: no-s
 
 const GLOBAL_OWNERS = ["window", "self", "globalThis", "document"];
 
+const SNAPSHOT =
+  "No `snapshot` export: SvelteKit would write the route's form state, passphrase fields included, to sessionStorage on every reload (invite spec §2.2).";
+
+/* Every way a route module can export something named `snapshot`. */
+const SNAPSHOT_EXPORTS = [
+  "ExportNamedDeclaration > VariableDeclaration > VariableDeclarator[id.name='snapshot']",
+  "ExportNamedDeclaration > FunctionDeclaration[id.name='snapshot']",
+  "ExportNamedDeclaration > ClassDeclaration[id.name='snapshot']",
+  "ExportSpecifier[exported.name='snapshot']",
+];
+
 /** [name, message, the one module allowed to use it (absent: none)] */
 const BANNED = [
   ["localStorage", STORAGE],
@@ -75,10 +86,23 @@ export default ts.config(
   },
   { files: ["**/*.ts", "**/*.js", "**/*.svelte"], rules: restrictions(undefined) },
   { files: [SESSION_STORAGE_MODULE], rules: restrictions("session") },
+  {
+    files: ["src/routes/**/*.svelte", "src/routes/**/*.ts", "src/routes/**/*.js"],
+    rules: { "no-restricted-syntax": ["error", ...SNAPSHOT_EXPORTS.map((selector) => ({ selector, message: SNAPSHOT }))] },
+  },
   { files: [API_CLIENT_MODULE], rules: restrictions("client") },
   {
+    // test/browser/ and nothing else. The browser check must read every kind of
+    // storage, inside the page, to prove the app wrote nothing there, so it has
+    // to name the globals the rules above ban. It never ships: it is outside
+    // src/ and the bundle cannot import it. Widening this path would let app
+    // code store things unnoticed, which is the bug the check exists to catch.
+    files: ["test/browser/**"],
+    rules: { "no-restricted-globals": "off", "no-restricted-properties": "off" },
+  },
+  {
     // Config and Node-side scripts run at build time, not in the browser.
-    files: ["vite.config.ts", "vite-plugins.ts", "eslint.config.js", "scripts/**"],
+    files: ["vite.config.ts", "vite-plugins.ts", "eslint.config.js", "playwright.config.ts", "scripts/**"],
     rules: { "no-restricted-globals": "off", "no-restricted-properties": "off" },
   },
 );

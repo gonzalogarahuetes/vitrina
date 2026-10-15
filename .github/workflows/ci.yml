@@ -1,11 +1,13 @@
 # Vitrina CI —
 #
-# Two jobs, deliberately separate, and they must stay that way:
+# Three jobs, deliberately separate, and they must stay that way:
 #
-#   checks — hermetic. No Docker, no network services, no live infrastructure.
-#            `pnpm test` is Docker-free on purpose; keep it that way.
-#   infra  — brings up the docker-compose stack and talks to a live SeaweedFS
-#            S3 gateway. `pnpm test:infra` belongs here and nowhere else.
+#   checks  — hermetic. No Docker, no network services, no live infrastructure.
+#             `pnpm test` is Docker-free on purpose; keep it that way.
+#   infra   — brings up the docker-compose stack and talks to a live SeaweedFS
+#             S3 gateway. `pnpm test:infra` belongs here and nowhere else.
+#   browser — the built web app in Chromium and WebKit. Separate so its
+#             browser install never slows `checks`; see the job.
 #
 # Do not fold `test:infra` into `test`, and do not merge these jobs. The value
 # of a hermetic suite is that a red `checks` means the code is wrong, never
@@ -150,6 +152,16 @@ jobs:
       - name: pnpm build
         run: pnpm build
 
+      # The built app, for the `browser` job: it tests these bytes, never a
+      # rebuild. The WASM is inlined, so the job needs no Rust toolchain.
+      - name: Upload the web build
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: web-build
+          path: packages/web/build/
+          if-no-files-found: error
+          retention-days: 1
+
       - name: cargo fmt --check
         run: cargo fmt --check
 
@@ -190,10 +202,81 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-      # Slots for later phases. Do not implement these ahead of their step:
-      #   Phase 1  — assert no outbound request carries key material
-      #              (invite spec §7 #3)
-      # Each is another step in this job; none requires restructuring.
+      # Invite spec §7 #3 (no outbound request carries key material) runs in
+      # `pnpm test`: packages/web/src/lib/recipient/session.test.ts.
+
+  # ---------------------------------------------------------------------------
+  # Job 3 — the built web app in real browsers (packages/web/test/browser/):
+  # no CSP violation on load, and nothing but SvelteKit's scroll and empty
+  # snapshot keys in storage after a reload (invite spec §7 item 7). Chromium
+  # is the CSP authority: WebKit does not report blocked style attributes from
+  # template markup. WebKit, the closest CI gets to iPhone Safari and still an
+  # approximation, is here for storage and the key-in-memory page.
+  #
+  # Its own job so the browser install never adds to `checks`. It needs
+  # `checks` for the web-build artifact (a job can only download from jobs it
+  # waits for), so it runs beside `infra`, not beside `checks`.
+  # ---------------------------------------------------------------------------
+  browser:
+    name: browser (chromium, webkit)
+    runs-on: ubuntu-24.04
+    needs: checks
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      # See the `checks` job for why this is not corepack.
+      - name: Install pnpm
+        uses: pnpm/setup@c9883cc79df532ad1a7b81bf9ab944ceb090d65c # v2.0.0
+        with:
+          install: false
+
+      - name: Install JS dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Download the web build
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: web-build
+          path: packages/web/build/
+
+      # The browsers are cached per Playwright version. Their system libraries
+      # are packages, not files a cache can hold, so a hit still installs them.
+      - name: Playwright version
+        id: playwright
+        run: echo "version=$(pnpm --filter @vitrina/web exec playwright --version | awk '{print $2}')" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Playwright browsers
+        id: playwright-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.playwright.outputs.version }}-chromium-webkit
+
+      - name: Install Playwright browsers and their system libraries
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
+        run: pnpm --filter @vitrina/web exec playwright install --with-deps chromium webkit
+
+      - name: Install the browsers' system libraries (browsers from cache)
+        if: steps.playwright-cache.outputs.cache-hit == 'true'
+        run: pnpm --filter @vitrina/web exec playwright install-deps chromium webkit
+
+      - name: Browser checks (CSP, storage)
+        run: pnpm --filter @vitrina/web test:browser
+
+      - name: Upload Playwright results
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: playwright-results
+          path: packages/web/test-results/
+          retention-days: 7
 
   # ---------------------------------------------------------------------------
   # Job 2 — needs Docker. Two things, both against the live compose stack:
