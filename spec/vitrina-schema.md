@@ -2,13 +2,13 @@
 
 **Status:** Draft v0.1 · last updated 14 September 2026 · **provisional**
 **Companion to:** `vitrina-project-brief.md` §9–§9.3, `vitrina-encryption-spec.md` §6
-**Implemented by:** `001_initial_schema.sql` (B.5), `002` (Phase 1), `003` (titles and labels as ciphertext) and `004` (media removal)
+**Implemented by:** `001_initial_schema.sql` (B.5), `002` (Phase 1), `003` (titles and labels as ciphertext), `004` (media removal) and `005` (`media.metadata`'s floor)
 
 ---
 
 ## 0. Status and authority
 
-This document describes the shape the applied migrations implement — `001_initial_schema.sql` from B.5, `002` from Phase 1, and `003`, which made album titles and recipient labels ciphertext. It is **provisional** — Phase 1 will change it, and that is expected rather than a failure.
+This document describes the shape the applied migrations implement — the list is in the header above, and nowhere else. It is **provisional** — Phase 1 will change it, and that is expected rather than a failure.
 
 If this document and the migration ever disagree, that is a bug in one of them. Fix it deliberately and note which. Do not let them drift.
 
