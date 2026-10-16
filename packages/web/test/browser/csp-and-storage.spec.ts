@@ -26,18 +26,14 @@
  * run proves the detectors still work. The CSP ones run in Chromium only, for
  * the reason above.
  *
- * Covers the recipient routes only. When the owner routes land, they need
- * their own pages here and their own allowlist: the owner token and its
- * expiry are meant to be in sessionStorage (flows §1.1), which this allowlist
- * refuses. The full grid-and-viewer path, with a faked API, is a later step.
+ * The recipient routes, and the owner's sign-in screen as `/` first shows it
+ * with no token. The owner path, with a faked API and its own allowlist, is
+ * owner.spec.ts. The full grid-and-viewer path, with a faked API, is a later step.
  */
 import { expect, test, type Page } from "@playwright/test";
 import { en } from "../../src/lib/copy/en.ts";
 import { storageViolations, type StorageDump } from "../storage-allowlist.ts";
-
-const text = (copy: string) => async (page: Page) => {
-  await expect(page.getByText(copy, { exact: true })).toBeVisible();
-};
+import { apiOrigin, blocklistChunk, cutTheApi, dumpStorage, text, watch } from "./helpers.ts";
 
 /** A QR invite with fixed values: canonical base64url, as the owner's client writes it. */
 const b64url = (bytes: Buffer) => bytes.toString("base64url");
@@ -59,7 +55,8 @@ type Visit = {
 };
 
 const PAGES: readonly Visit[] = [
-  { name: "root", path: "/", ready: async (page) => expect(page.locator("[data-state='envelope-ready']")).toBeVisible(), secrets: [] },
+  // No token, so the owner's sign-in screen, and no request at all.
+  { name: "root (owner sign-in)", path: "/", ready: async (page) => expect(page.getByRole("heading", { name: en["signin.title"] })).toBeVisible(), secrets: [] },
   { name: "dead page", path: "/v/", ready: text(en.dead), secrets: [] },
   { name: "newer version", path: "/v/#v=2&x=y", ready: text(en["open.newer-version"]), secrets: ["v=2&x=y"] },
   // The key is opened and held in memory; the first request fails, so the app waits offline.
@@ -71,76 +68,6 @@ const PAGES: readonly Visit[] = [
     roundTrip: true,
   },
 ];
-
-/** Every request to anything but the page's own origin fails, as with no network. */
-async function cutTheApi(page: Page): Promise<void> {
-  const base = test.info().project.use.baseURL;
-  if (base === undefined) throw new Error("playwright.config.ts sets no baseURL");
-  const own = new URL(base).origin;
-  await page.route((url) => url.origin !== own, (route) => route.abort("internetdisconnected"));
-}
-
-declare global {
-  interface Window {
-    __reportCsp?: (violation: string) => void;
-  }
-}
-
-/**
- * Starts recording on `page`, across every document it loads (reloads
- * included): CSP events, CSP console messages, uncaught page errors. The
- * returned function reads everything recorded so far.
- */
-async function watch(page: Page): Promise<() => Promise<string[]>> {
-  const seen: string[] = [];
-  page.on("console", (m) => {
-    if (/content security policy/i.test(m.text())) seen.push(`console: ${m.text().slice(0, 200)}`);
-  });
-  page.on("pageerror", (e) => seen.push(`page error: ${e.message.slice(0, 200)}`));
-  // A binding outlives navigations; the listener is installed before any page script.
-  await page.exposeFunction("__reportCsp", (v: string) => void seen.push(v));
-  await page.addInitScript(() => {
-    document.addEventListener(
-      "securitypolicyviolation",
-      (e) => window.__reportCsp?.(`${e.effectiveDirective} blocked ${e.blockedURI || "inline"}`),
-      true,
-    );
-  });
-  return async () => [...seen];
-}
-
-/** Everything persistent the page can see, read inside the page. */
-async function dumpStorage(page: Page): Promise<StorageDump> {
-  return page.evaluate(async () => {
-    const entries = (s: Storage): Record<string, string> => {
-      const out: Record<string, string> = {};
-      for (let i = 0; i < s.length; i++) {
-        const k = s.key(i);
-        if (k !== null) out[k] = s.getItem(k) ?? "";
-      }
-      return out;
-    };
-    const idb = typeof indexedDB.databases === "function" ? (await indexedDB.databases()).map((d) => d.name ?? "") : [];
-    const cacheNames = typeof caches === "undefined" ? [] : await caches.keys();
-    const opfs: string[] = [];
-    try {
-      const root = (await navigator.storage.getDirectory()) as unknown as { keys(): AsyncIterable<string> };
-      for await (const name of root.keys()) opfs.push(name);
-    } catch {
-      // No origin private file system in this browser: nothing stored there.
-    }
-    return {
-      sessionStorage: entries(sessionStorage),
-      localStorage: entries(localStorage),
-      indexedDB: idb,
-      cacheStorage: cacheNames,
-      opfs,
-      cookies: document.cookie,
-      windowName: window.name,
-      historyState: history.state as unknown,
-    };
-  });
-}
 
 /**
  * Load, reload once (and, for the key page, go to `/` and back), then read
@@ -162,10 +89,25 @@ async function visitAndReload(page: Page, visit: Visit): Promise<StorageDump> {
 
 for (const visit of PAGES) {
   test(`${visit.name}: no CSP violation, and storage holds only what is permitted after a reload`, async ({ page, context }) => {
-    const violations = await watch(page);
-    await cutTheApi(page);
+    const aborted = new Set<string>();
+    const violations = await watch(page, { aborted });
+    const chunk = blocklistChunk();
+    const blocklistLoads: string[] = [];
+    const apiFromRoot: string[] = [];
+    const api = apiOrigin();
+    page.on("request", (r) => {
+      if (r.url().endsWith(chunk)) blocklistLoads.push(r.url());
+      // `/` is the owner app. With no token it must make no API request at
+      // all, on a direct visit or on the QR page's round trip through it.
+      if (new URL(r.url()).origin === api && new URL(r.frame().url()).pathname === "/") apiFromRoot.push(r.url());
+    });
+    await cutTheApi(page, aborted);
     const dump = await visitAndReload(page, visit);
     const cookies = await context.cookies();
+
+    // Only signup loads the password blocklist; none of these pages is signup.
+    expect(blocklistLoads, "requests for the blocklist chunk").toEqual([]);
+    expect(apiFromRoot, "API requests from / with no token").toEqual([]);
 
     expect(await violations(), "CSP violations").toEqual([]);
     expect(storageViolations(dump, visit.secrets), "storage").toEqual([]);
@@ -256,4 +198,58 @@ test("the secret search notices the fragment's k written to window.name on load"
   const hits = qr.secrets.flatMap((secret, i) => (k.includes(secret) ? [`#${i}`] : []));
   expect(found).toEqual([`window.name holds secret ${hits.join(", ")}`]);
   expect(found.join(" ")).not.toContain(k);
+});
+
+// ── The WebKit abort tolerance, broken on purpose (abort-report.ts) ────────
+
+/** Throws `message` uncaught, once, on the round trip's visit to `/`. */
+async function throwOnRoot(page: Page, message: string, type: "Error" | "TypeError"): Promise<void> {
+  await page.addInitScript(
+    ([m, t]) => {
+      if (location.pathname !== "/") return;
+      setTimeout(() => {
+        throw t === "TypeError" ? new TypeError(m) : new Error(m);
+      }, 0);
+    },
+    [message, type] as const,
+  );
+}
+
+const QR = () => PAGES[3] as Visit;
+
+test("a genuine uncaught error on the round trip through / still fails, in both browsers", async ({ page }) => {
+  const aborted = new Set<string>();
+  const violations = await watch(page, { aborted });
+  await cutTheApi(page, aborted);
+  await throwOnRoot(page, "vitrina canary", "Error");
+  await visitAndReload(page, QR());
+  await expect.poll(violations).toContain("page error: vitrina canary");
+});
+
+test("WebKit's abort report is not tolerated for a URL the test did not abort, in either browser", async ({ page }) => {
+  const aborted = new Set<string>();
+  const violations = await watch(page, { aborted });
+  await cutTheApi(page, aborted);
+  const message = `Fetch API cannot load ${apiOrigin()}/never-requested due to access control checks.`;
+  await throwOnRoot(page, message, "TypeError");
+  await visitAndReload(page, QR());
+  await expect.poll(violations).toContain(`page error: ${message}`);
+});
+
+test("WebKit's abort report for a URL the test aborted is tolerated in WebKit only", async ({ page, browserName }) => {
+  const aborted = new Set<string>();
+  const violations = await watch(page, { aborted });
+  await cutTheApi(page, aborted);
+  // The QR page's first request, which cutTheApi aborts before the round trip.
+  const url = `${apiOrigin()}/v1/recipient`;
+  const message = `Fetch API cannot load ${url} due to access control checks.`;
+  await throwOnRoot(page, message, "TypeError");
+  await visitAndReload(page, QR());
+  expect(aborted.has(url), "the QR page's request was aborted").toBe(true);
+  if (browserName === "webkit") {
+    await page.waitForTimeout(250); // let the report arrive, so its absence means something
+    expect(await violations()).toEqual([]);
+  } else {
+    await expect.poll(violations).toContain(`page error: ${message}`);
+  }
 });

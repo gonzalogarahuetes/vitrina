@@ -7,6 +7,7 @@ import type {
 } from "./types";
 import { MalformedId, uuidToBytes } from "$lib/ids";
 import type { WrapParams, WrappedKey } from "@vitrina/envelope/wasm/envelope";
+import { withinKdfCeiling } from "./kdf-ceiling";
 
 export const openDirectKey: OpenDirectKey = (
   env: Envelope,
@@ -34,16 +35,21 @@ export const openPassphraseKey: OpenPassphraseKey = async (
     const wrapNonce = decodeBase64url(material.wrap_nonce, 24);
     const recipientIdBytes = uuidToBytes(material.id);
 
-    // Relay-supplied Argon2id params have no upper bound in the crate: a bad row could freeze the tab.
-    // Cap memory × iterations at 4 × v1 (~9 s on the slowest target) and memory at 2 × v1 (low-end Android).
-    // Interop rule: raising v1's params for new invites means raising these ceilings in every client first.
-    const m = material.kdf_memory_kib,
-      t = material.kdf_iterations,
-      p = material.kdf_parallelism;
-    if (m > 131_072 || p > 4 || m * t > 786_432)
+    if (
+      !withinKdfCeiling({
+        memoryKib: material.kdf_memory_kib,
+        iterations: material.kdf_iterations,
+        parallelism: material.kdf_parallelism,
+      })
+    ) {
       return { ok: false, error: "unusable-material" };
+    }
 
-    params = new env.WrapParams(m, t, p);
+    params = new env.WrapParams(
+      material.kdf_memory_kib,
+      material.kdf_iterations,
+      material.kdf_parallelism,
+    );
 
     wrappedKey = env.WrappedKey.fromParts(wrapped, wrapNonce, kdfSalt);
 
