@@ -1,6 +1,7 @@
 <script lang="ts">
   import { en } from "$lib/copy/en";
   import type { PassphrasePhase } from "$lib/recipient/session";
+  import DerivationWait from "$lib/ui/DerivationWait.svelte";
 
   let { phase, onSubmit }: { phase: PassphrasePhase; onSubmit: (words: readonly string[]) => void } = $props();
 
@@ -49,10 +50,7 @@
 
     {#if phase === "deriving"}
       <!-- The derivation wait (flows §2): no progress figure, the input cannot be edited or resubmitted. -->
-      <div class="wait" role="status">
-        <div class="rings" aria-hidden="true"><div class="ring"></div><div class="ring two"></div><div class="dot"></div></div>
-        <span>{en["derive.wait"]}</span>
-      </div>
+      <DerivationWait />
     {:else}
       <button class="btn" type="submit" disabled={busy}>{en["recipient.passphrase.submit"]}</button>
     {/if}
@@ -130,48 +128,6 @@
   .warn {
     flex: none;
     margin-top: 3px;
-  }
-  .wait {
-    display: flex;
-    align-items: center;
-    gap: 18px;
-  }
-  .rings {
-    width: 84px;
-    height: 84px;
-    flex: none;
-    position: relative;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-  }
-  .ring {
-    position: absolute;
-    inset: 0;
-    border-radius: 50%;
-    border: 3px solid var(--accent);
-    animation: breathe 2.6s ease-in-out infinite;
-  }
-  .ring.two {
-    inset: 18px;
-    animation-delay: -1.3s;
-  }
-  .dot {
-    width: 14px;
-    height: 14px;
-    border-radius: 50%;
-    background: var(--accent);
-  }
-  @keyframes breathe {
-    0%,
-    100% {
-      transform: scale(0.62);
-      opacity: 0.3;
-    }
-    50% {
-      transform: scale(1);
-      opacity: 1;
-    }
   }
   .lost {
     display: flex;

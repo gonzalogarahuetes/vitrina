@@ -5,6 +5,7 @@
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 import type { Plugin } from "vite";
+import { MAX_CODE_POINTS, MIN_CODE_POINTS } from "./src/lib/owner/policy.ts";
 
 /*
  * A static single-page app: no SvelteKit server code of any kind. Access
@@ -46,10 +47,22 @@ function walk(dir: string): string[] {
  */
 export const ENVELOPE_WASM = "../envelope/wasm/envelope_bg.wasm";
 
+/*
+ * The top-100k password blocklist (brief §12), supplied by the owner like the
+ * font and committed. Never downloaded. Signup imports it dynamically
+ * (lib/owner/blocklist.ts). The unit tests inject their own list, so `vitest`
+ * does not need the file. `vite dev` and `vite build` do.
+ */
+export const BLOCKLIST_FILE = "src/lib/owner/passwords-top-100k.txt";
+
 export function guards(root: string): Plugin {
+  let mode = "";
   return {
     name: "vitrina:guards",
     enforce: "pre",
+    configResolved(config) {
+      mode = config.mode;
+    },
     buildStart() {
       const src = join(root, "src");
       const found = forbiddenSourcePaths(walk(src).map((p) => relative(root, p).split(sep).join("/")));
@@ -63,6 +76,12 @@ export function guards(root: string): Plugin {
       if (!existsSync(join(root, ENVELOPE_WASM))) {
         throw new Error(
           "packages/envelope/wasm/ is missing. Build it first: pnpm --filter @vitrina/envelope build:wasm",
+        );
+      }
+      if (mode !== "test" && !existsSync(join(root, BLOCKLIST_FILE))) {
+        throw new Error(
+          `${BLOCKLIST_FILE} is missing. The owner supplies it (brief §12): one password per line, UTF-8. ` +
+            "It is not downloaded, here or anywhere.",
         );
       }
     },
@@ -202,4 +221,38 @@ export function parseApiOrigin(raw: string | undefined): string {
     throw new Error(`VITE_API_ORIGIN must be an origin, not a URL: ${raw}`);
   }
   return url.origin;
+}
+
+/*
+ * The blocklist as bundled: only the entries the policy can ever match. An
+ * entry shorter than 12 or longer than 256 code points is refused by the
+ * length check before the blocklist is consulted (lib/owner/policy.ts), so
+ * dropping it changes no outcome. Of a top-100k list, about one entry in a
+ * hundred survives, which is most of the chunk's weight gone. It also keeps
+ * entries like `http://www` out of the bundle, where check-build.mjs's URL
+ * scan would rightly refuse them. The file on disk stays as supplied.
+ */
+export function filterBlocklist(raw: string): string {
+  return raw
+    .split("\n")
+    .map((line) => (line.endsWith("\r") ? line.slice(0, -1) : line))
+    .filter((line) => {
+      const n = [...line].length;
+      return n >= MIN_CODE_POINTS && n <= MAX_CODE_POINTS;
+    })
+    .join("\n");
+}
+
+export function blocklistFilter(root: string): Plugin {
+  const file = join(root, BLOCKLIST_FILE);
+  return {
+    name: "vitrina:blocklist-filter",
+    enforce: "pre",
+    load(id) {
+      const [path, query] = id.split("?");
+      if (path !== file || query !== "raw") return undefined;
+      this.addWatchFile(file);
+      return `export default ${JSON.stringify(filterBlocklist(readFileSync(file, "utf8")))};`;
+    },
+  };
 }

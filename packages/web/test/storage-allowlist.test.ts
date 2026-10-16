@@ -85,3 +85,31 @@ describe("the storage allowlist", () => {
     expect(storageViolations(clean, [KEY])).toEqual([]);
   });
 });
+
+describe("the owner allowlist (flows §1.1)", () => {
+  const TOKEN = "A".repeat(43);
+  const owner = session({ "vitrina:owner:token": TOKEN, "vitrina:owner:expires_at": "2026-10-29T12:00:00Z" });
+
+  it("permits the token and its expiry on owner pages only", () => {
+    expect(storageViolations(owner, [], { owner: true })).toEqual([]);
+    expect(storageViolations(owner)).toEqual([
+      'sessionStorage key "vitrina:owner:token" is not permitted',
+      'sessionStorage key "vitrina:owner:expires_at" is not permitted',
+    ]);
+  });
+
+  it("refuses either key holding anything but its shape", () => {
+    expect(storageViolations(session({ "vitrina:owner:token": "a@b.c" }), [], { owner: true })).toEqual(['sessionStorage key "vitrina:owner:token" is not a token']);
+    expect(storageViolations(session({ "vitrina:owner:expires_at": "tomorrow" }), [], { owner: true })).toEqual([
+      'sessionStorage key "vitrina:owner:expires_at" is not an RFC 3339 UTC time',
+    ]);
+  });
+
+  it("refuses any third owner key, an email, a password or a proof", () => {
+    expect(storageViolations(session({ "vitrina:owner:email": "a@b.c" }), [], { owner: true })).toEqual([
+      'sessionStorage key "vitrina:owner:email" is not permitted',
+    ]);
+    const found = storageViolations(with_({ localStorage: { k: "hunter2hunter2" } }), ["hunter2hunter2"], { owner: true });
+    expect(found).toEqual(["localStorage holds secret #0"]);
+  });
+});

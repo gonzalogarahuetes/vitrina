@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { defineConfig, loadEnv } from "vite";
 import {
   announcerStyle,
+  blocklistFilter,
   noVersionCheck,
   envelopeWasm,
   guards,
@@ -37,6 +38,7 @@ export default defineConfig(({ command, mode }) => {
       announcerStyle(),
       noVersionCheck(),
       envelopeWasm(root),
+      blocklistFilter(root),
       sveltekit({
         // Source, not dist/: the client only takes types from it, and `pnpm lint`
         // runs before anything has built shared/ (CI's order). A dist/ that
