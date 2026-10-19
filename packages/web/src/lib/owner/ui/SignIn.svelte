@@ -40,7 +40,8 @@
   // A failed or paused attempt empties the password field, as the board does.
   // A 429 keeps the address (flows §0).
   $effect(() => {
-    if (phase === "failed" || phase === "unavailable" || phase === "paused") password = "";
+    if (phase === "failed" || phase === "unavailable" || phase === "paused")
+      password = "";
   });
 
   function submit(e: SubmitEvent): void {
@@ -60,7 +61,9 @@
 
   {#if phase === "unavailable"}
     <Alert text={en["signin.unavailable"]} />
-    <button class="btn" type="button" onclick={() => onRetry(email)}>{en["signin.retry"]}</button>
+    <button class="btn" type="button" onclick={() => onRetry(email)}
+      >{en["signin.retry"]}</button
+    >
   {:else}
     <form onsubmit={submit} novalidate>
       <fieldset disabled={busy}>
@@ -78,7 +81,13 @@
             bind:value={email}
           />
         </div>
-        <PasswordField id="signin-password" label={en["signin.password.label"]} autocomplete="current-password" invalid={phase === "failed"} bind:value={password} />
+        <PasswordField
+          id="signin-password"
+          label={en["signin.password.label"]}
+          autocomplete="current-password"
+          invalid={phase === "failed"}
+          bind:value={password}
+        />
       </fieldset>
 
       {#if phase === "failed"}
@@ -92,14 +101,20 @@
       {:else if phase === "busy"}
         <p class="note" role="status">{en["signin.busy"]}</p>
       {:else}
-        <button class="btn" type="submit" disabled={!ready || phase === "paused"}>{en["signin.submit"]}</button>
+        <button
+          class="btn"
+          type="submit"
+          disabled={!ready || phase === "paused"}>{en["signin.submit"]}</button
+        >
       {/if}
     </form>
   {/if}
 
   {#if !busy}
     <div class="bottom">
-      <button class="btn ghost" type="button" onclick={onSignup}>{en["signin.to-signup"]}</button>
+      <button class="btn ghost" type="button" onclick={onSignup}
+        >{en["signin.to-signup"]}</button
+      >
     </div>
   {/if}
 </main>

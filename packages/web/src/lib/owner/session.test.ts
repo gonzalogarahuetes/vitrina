@@ -294,6 +294,21 @@ describe("sign-in on a new device (flows §3.3)", () => {
     assertNoSecrets(h.sent);
   });
 
+  it("keeps the screen's prefill address for the whole attempt, so the form is never re-created mid-attempt", async () => {
+    for (const prefill of ["", EMAIL]) {
+      const h = harness({ password: "x" });
+      h.override("POST /v1/login", h.err(401, "INVALID_CREDENTIALS"));
+      h.session.start();
+      if (prefill !== "") h.session.backToSignin(prefill);
+      const from = h.states.length;
+      h.session.submitSignin(EMAIL, PASSWORD);
+      await settle();
+      const during = h.states.slice(from).map((st) => st.screen);
+      expect(during.length).toBeGreaterThan(1);
+      for (const sc of during) expect(sc.kind === "signin" ? sc.email : "(left sign-in)", JSON.stringify(sc)).toBe(prefill);
+    }
+  });
+
   it("sends the address exactly as typed: not trimmed, not lowercased", async () => {
     const h = harness();
     await signedIn(h);
@@ -313,7 +328,7 @@ describe("sign-in on a new device (flows §3.3)", () => {
     h.session.start();
     h.session.submitSignin(EMAIL, "the wrong password");
     await settle();
-    expect(h.screen()).toEqual({ kind: "signin", phase: "failed", notice: null, email: EMAIL, pausedUntil: null });
+    expect(h.screen()).toEqual({ kind: "signin", phase: "failed", notice: null, email: "", pausedUntil: null });
     expect(zeroed(h.proofs[0] as Uint8Array)).toBe(true);
     expect(live(h.handles)).toEqual([]);
     expect(h.storage.writes).toEqual([]);
@@ -378,7 +393,7 @@ describe("sign-in on a new device (flows §3.3)", () => {
       h.session.submitSignin(EMAIL, PASSWORD);
       await settle();
       const until = NOW.getTime() + 37_000;
-      expect(h.screen()).toEqual({ kind: "signin", phase: "paused", notice: null, email: EMAIL, pausedUntil: until });
+      expect(h.screen()).toEqual({ kind: "signin", phase: "paused", notice: null, email: "", pausedUntil: until });
       expect(h.sleeps, "no wait in place").toEqual([]);
       expect(routes(h.sent).filter((r) => r === route), "no automatic resend").toHaveLength(1);
       expect(live(h.handles), "every key handle freed").toEqual([]);
@@ -396,7 +411,7 @@ describe("sign-in on a new device (flows §3.3)", () => {
       expect(timer?.ms).toBe(37_000);
       h.setNow(new Date(until));
       timer?.fn();
-      expect(h.screen()).toEqual({ kind: "signin", phase: "ready", notice: null, email: EMAIL, pausedUntil: null });
+      expect(h.screen()).toEqual({ kind: "signin", phase: "ready", notice: null, email: "", pausedUntil: null });
       const derivations = h.events.filter((e) => e === "deriveLoginCredential").length;
       h.session.submitSignin(EMAIL, PASSWORD);
       await settle();
