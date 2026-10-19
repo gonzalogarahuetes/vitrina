@@ -32,7 +32,7 @@ Reasoning lives in brief §9.1 (why two auth mechanisms), §9.2 (what is deliber
 | Password / passphrase | Argon2id, never SHA-256                                                                                                                                                                                               |
 | Deletion              | `ON DELETE CASCADE` on every foreign key — see §5, and the constraint it does _not_ satisfy                                                                                                                           |
 
-**The two client-generated IDs are not a style choice.** `media.id` _is_ the envelope's `asset_id`, fixed before encryption begins. `recipients.id` sits inside the wrap AAD (`"vitrina-wrap-v1" ‖ recipient_id`, encryption spec §6.2), so the client must know it before it can compute `wrapped`. A `DEFAULT gen_random_uuid()` on either column produces blobs that cannot be unwrapped, works fine for QR recipients, and fails as an opaque AEAD error.
+**The two client-generated IDs are not a style choice.** `media.id` _is_ the envelope's `asset_id`, fixed before encryption begins. `recipients.id` sits inside both wrap AADs (`"vitrina-wrap-v1" ‖ recipient_id` and `"vitrina-invite-wrap-v1" ‖ recipient_id`, encryption spec §6.2 and §6.1), so the client must know it before it can compute `wrapped`. A `DEFAULT gen_random_uuid()` on either column produces blobs that cannot be unwrapped, and fails as an opaque AEAD error.
 
 ## 2. Diagram
 
@@ -270,36 +270,37 @@ No `status` column — brief §9.2.
 | `kdf_iterations`  | `integer`     | NULL                                            |
 | `kdf_parallelism` | `integer`     | NULL                                            |
 
-The last six columns are the four conceptual items of encryption spec §6.2 — `wrapped`, `wrap_nonce`, `salt`, and the Argon2id parameters, which are three integers. All six are NULL for QR recipients and all six NOT NULL for passphrase recipients, enforced by one constraint:
+**Changed by `006`, owed** (encryption spec §6.1, 19 October 2026): until `006` is applied, the constraints below are not yet the ones in the database — the applied ones require all six columns NULL for QR recipients. Since the change, every recipient has a wrapping: under a random invite key for QR recipients, under a passphrase-derived key for passphrase recipients. So `wrapped` and `wrap_nonce` are NOT NULL for both kinds, and the four KDF columns are NULL for QR recipients and NOT NULL for passphrase recipients, enforced by one constraint:
 
 ```sql
 CHECK (
-  (kind = 'qr'         AND wrapped IS NULL     AND wrap_nonce IS NULL
-                       AND kdf_salt IS NULL    AND kdf_memory_kib IS NULL
-                       AND kdf_iterations IS NULL AND kdf_parallelism IS NULL)
-  OR
-  (kind = 'passphrase' AND wrapped IS NOT NULL AND wrap_nonce IS NOT NULL
-                       AND kdf_salt IS NOT NULL AND kdf_memory_kib IS NOT NULL
-                       AND kdf_iterations IS NOT NULL AND kdf_parallelism IS NOT NULL)
-)
-```
-
-A second constraint pins the lengths the spec fixes exactly, and floors the KDF parameters so they can be raised but never weakened:
-
-```sql
-CHECK (
-  kind = 'qr' OR (
-        octet_length(kdf_salt)   = 16      -- crypto_pwhash_SALTBYTES
-    AND octet_length(wrap_nonce) = 24      -- XChaCha20-Poly1305 nonce
-    AND octet_length(wrapped)    = 48      -- K_album (32) + Poly1305 tag (16)
-    AND kdf_memory_kib  >= 16384           -- absolute floor, NOT the v1 value
-    AND kdf_iterations  >= 2
-    AND kdf_parallelism >= 1
+  wrapped IS NOT NULL AND wrap_nonce IS NOT NULL
+  AND (
+    (kind = 'qr'         AND kdf_salt IS NULL     AND kdf_memory_kib IS NULL
+                         AND kdf_iterations IS NULL AND kdf_parallelism IS NULL)
+    OR
+    (kind = 'passphrase' AND kdf_salt IS NOT NULL AND kdf_memory_kib IS NOT NULL
+                         AND kdf_iterations IS NOT NULL AND kdf_parallelism IS NOT NULL)
   )
 )
 ```
 
-For QR recipients every column is NULL, the right-hand side evaluates to NULL, and `kind = 'qr'` satisfies the OR. A wrong length in any of the three `bytea` columns is not a style problem — it is a blob that cannot be unwrapped, discovered at unwrap time rather than at insert time.
+A second constraint pins the lengths the spec fixes exactly, for both kinds, and floors the KDF parameters so they can be raised but never weakened:
+
+```sql
+CHECK (
+      octet_length(wrap_nonce) = 24      -- XChaCha20-Poly1305 nonce
+  AND octet_length(wrapped)    = 48      -- K_album (32) + Poly1305 tag (16)
+  AND (kind = 'qr' OR (
+        octet_length(kdf_salt) = 16      -- crypto_pwhash_SALTBYTES
+    AND kdf_memory_kib  >= 16384         -- absolute floor, NOT the v1 value
+    AND kdf_iterations  >= 2
+    AND kdf_parallelism >= 1
+  ))
+)
+```
+
+A wrong length in any `bytea` column is not a style problem — it is a blob that cannot be unwrapped, discovered at unwrap time rather than at insert time. **`006` cannot convert existing QR rows**: the relay has no `K_album` to wrap, so a QR row without a wrapping is an invite that no longer opens. It refuses to run on a database holding any QR recipient, as `003` refused to run on a database holding albums: a migration cannot tell a development database from any other, so it does not try. On a development volume, reset it.
 
 The `48` is coupled to version 1 of the wrap format. If §6.2 ever changes, this constraint must change with it — which is a feature: it forces the format change to be deliberate rather than silent.
 

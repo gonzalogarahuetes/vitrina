@@ -59,6 +59,12 @@ K_master (32 bytes, random, one per owner)          ← §6.6
     │
     └── wraps K_album, one wrapping per album
             │
+K_invite (32 bytes, random, one per QR recipient)   ← §6.1
+    └── wraps K_album, one wrapping per recipient
+            │
+KEK      (Argon2id of a passphrase, one per passphrase recipient) ← §6.2
+    └── wraps K_album, one wrapping per recipient
+            │
 K_album  (32 bytes, random, one per album)
     │
     ├── K_asset(id) = BLAKE2b-256(key = K_album, msg = "vitrina-asset-v1" ‖ asset_id)
@@ -237,15 +243,28 @@ A tempting simplification is to authenticate only the chunk index. It blocks the
 
 ## 6. Key wrapping
 
-There are two ways a recipient obtains `K_album`. The QR path is the default, but the two modes are **not ordered on a single axis** — see §6.5 before describing either as simply stronger.
+A recipient obtains `K_album` the same way in both modes: by unwrapping a wrapping the relay stores for that recipient, fetched with the access token. The modes differ only in where the wrapping key comes from — a random key carried in the QR (§6.1), or one derived from a spoken passphrase (§6.2). The QR path is the default, but the two modes are **not ordered on a single axis** — see §6.5 before describing either as simply stronger.
 
 ### 6.1 QR / link recipients (default)
 
-`K_album` travels inside the invite payload (see `vitrina-invite-spec.md`). **No wrapped key is stored server-side in any form.** The server holds only a recipient row — a label, a hashed access token, and `revoked_at`.
+**Changed 19 October 2026, before any invite was issued outside development.** The invite payload carried `K_album` itself until then. That made the payload the only way to hand a recipient the album key, and it required a client to export `K_album` as bytes in every session that created an invite, against the rule that `K_album` crosses the binding inward only. The payload now carries a per-recipient random key, and `K_album` never leaves the module that holds it.
 
-If the server database is stolen in its entirety, the attacker has ciphertext and nothing that helps decrypt it. This is the property worth protecting.
+```
+K_invite = 32 random bytes, generated client-side per recipient, carried as the invite's `key`
+wrapped  = XChaCha20-Poly1305(
+               key   = K_invite,
+               nonce = wrap_nonce (24 random bytes),
+               msg   = K_album,
+               aad   = "vitrina-invite-wrap-v1" ‖ recipient_id)
+```
 
-**Any future feature that causes a wrapped `K_album` to be stored for a direct-mode album voids this property for that album**, and MUST be treated as a change to the album's security posture rather than as a convenience. The specific candidate is a recipient "saving" a shared album into their own account (brief §11): wrapping `K_album` under a key derived from that recipient's account password reintroduces the offline attack §6.3 exists to manage, against a human-chosen secret that §6.3 forbids for exactly this reason. The owner chose direct mode; a recipient must not be able to undo that choice silently.
+`"vitrina-invite-wrap-v1"` is 22 ASCII bytes, no null terminator and no length prefix, and `recipient_id` is the 16 raw UUID bytes, so the AAD is exactly **38 bytes**. **The domain string is deliberately not §6.2's `"vitrina-wrap-v1"`**: the two wraps take keys of different origins under the same `recipient_id`, and a distinct string means a wrapping made in one mode can never authenticate as the other. `wrapped` is 48 bytes and `wrap_nonce` 24, as in §6.2. There is no KDF: `K_invite` is uniformly random and used directly.
+
+The server stores `wrapped` and `wrap_nonce`. It never sees `K_invite`, which lives only in the invite's fragment (invite spec §2.1).
+
+If the server database is stolen in its entirety, the attacker has ciphertext and wrappings under 256-bit random keys, and nothing that helps decrypt either: unlike §6.2's passphrase, `K_invite` cannot be attacked offline. This is the property worth protecting.
+
+**Any future feature that causes `K_album` to be stored wrapped under a key a person chooses — a password, a passphrase they picked — voids this property for that album**, and MUST be treated as a change to the album's security posture rather than as a convenience. The specific candidate is a recipient "saving" a shared album into their own account (brief §11): wrapping `K_album` under a key derived from that recipient's account password reintroduces the offline attack §6.3 exists to manage, against a human-chosen secret that §6.3 forbids for exactly this reason. The owner chose direct mode; a recipient must not be able to undo that choice silently.
 
 ### 6.2 Passphrase recipients
 
@@ -328,10 +347,10 @@ So `Café  Roble` and `cafe roble` derive the same KEK. **A mismatch here is not
 
 This distinction is easy to blur and it is what makes revocation work.
 
-- `K_album` lets a recipient **decrypt**. The server never has it and can never withdraw it.
-- The **access token** lets a recipient **fetch ciphertext**. The server stores its hash and can invalidate it instantly.
+- The **invite key** (`K_invite`, §6.1) or the **passphrase** (§6.2) lets a recipient **unwrap `K_album`**, and `K_album` lets them **decrypt**. The server never has any of the three.
+- The **access token** lets a recipient **fetch ciphertext, and fetch their wrapping**. The server stores its hash and can invalidate it instantly.
 
-They travel together in one invite payload but are independent secrets serving different parties. Revocation invalidates the token. That prevents all future access to ciphertext, which is real and useful — and it is enforced by the server's behaviour, not by mathematics.
+They travel together in one invite payload but are independent secrets serving different parties. Revocation invalidates the token. That prevents all future access to ciphertext **and to the wrapping**, so after revocation the invite alone opens nothing in either mode: a recipient who has not yet unwrapped `K_album` never can, and one who has holds it only in the memory of a session that nothing persists. That is real and useful — and it is enforced by the server's behaviour, not by mathematics.
 
 **The UI MUST NOT imply that revocation prevents decryption of anything already retrieved.** True cryptographic revocation requires re-encrypting the album under a new `K_album` and redistributing it to the remaining recipients. That may be worth building later; it is not what the revoke button does today.
 
@@ -341,15 +360,13 @@ They travel together in one invite payload but are independent secrets serving d
 
 Earlier drafts of this document called the QR path "strictly stronger." That is wrong, and the correction matters because it changes which mode you would reach for against which risk.
 
-**Direct mode is stronger against a stolen database.** No wrapped key exists server-side, so a full database compromise yields ciphertext and nothing that helps decrypt it (§6.1). Passphrase mode stores `wrapped`, which is offline-attackable given a weak passphrase — hence §6.3.
+**Direct mode is stronger against a stolen database.** Both modes store a wrapping, but direct mode's is under a 256-bit random key, so a full database compromise yields nothing that helps decrypt (§6.1). Passphrase mode's `wrapped` is offline-attackable given a weak passphrase — hence §6.3.
 
-**Passphrase mode is stronger against a forwarded or captured invite**, for two reasons, and the first needs nothing built.
+**Passphrase mode is stronger against a forwarded or captured invite**, because **the link alone is insufficient.** `key` is absent from the payload (invite spec §4), so someone who forwards, photographs or steals the link holds nothing that unwraps — the passphrase travelled by a separate channel. Direct mode hands over both secrets in one artifact: whoever photographs the QR has full access until the owner revokes it.
 
-**The link alone is insufficient.** `key` is absent from the payload (invite spec §4), so someone who forwards, photographs or steals the link holds ciphertext they cannot decrypt — the passphrase travelled by a separate channel. Direct mode hands over everything in one artifact: whoever photographs the QR has both secrets, permanently, and no server behaviour retracts the key half.
+**The relay participates in every unwrap, in both modes**, because the client must fetch its wrapping to obtain `K_album`. Until 19 October 2026 this was passphrase mode's alone, and direct mode's photographed QR stayed a working key forever; now revocation retracts both. The same lever is available to either mode — the relay could count unwraps, rate-limit them, bind them to a device, or refuse after the first. None of that is in v1; the point is that both modes leave it possible.
 
-**And the relay participates in every unwrap**, because the client must fetch the wrapped blob to derive `K_album`. That gives the relay a lever it does not have in direct mode — it could count unwraps, rate-limit them, bind them to a device, or refuse after the first. None of that is in v1; the point is that the mode leaves it possible.
-
-Neither mode dominates. Direct mode remains the default because database theft is the threat this architecture exists to defeat, and because delivery by QR is what makes the product usable by a grandparent with no account. But if invite sharing ever becomes the concern that matters most, the mode that keeps the server in the loop is the one with a lever to pull.
+Neither mode dominates. Direct mode remains the default because database theft is the threat this architecture exists to defeat, and because delivery by QR is what makes the product usable by a grandparent with no account. If invite sharing ever becomes the concern that matters most, passphrase mode is the one whose link is useless on its own.
 
 ### 6.6 Owner key wrapping
 

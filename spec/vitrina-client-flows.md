@@ -33,7 +33,7 @@
 
 | Mode       | State      | In memory                                                | Screen                 |
 | ---------- | ---------- | -------------------------------------------------------- | ---------------------- |
-| QR         | `Q-held`   | token, `K_album` — both from the fragment                | onboarding, grid, viewer |
+| QR         | `Q-held`   | token and `K_invite` from the fragment; `K_album`, unwrapped from `GET /v1/recipient/key` | onboarding, grid, viewer |
 | QR         | `Q-lost`   | nothing                                                  | dead page (§4.7)       |
 | Passphrase | `P-locked` | token from the fragment; the wrapping from `GET /v1/recipient/key` | passphrase entry       |
 | Passphrase | `P-open`   | token, `K_album`                                         | onboarding, grid, viewer |
@@ -186,8 +186,8 @@
 1. **Mode.** QR is the default. Passphrase is the fallback, but must not be presented as weaker in every respect (invite spec §4; encryption spec §6.5).
 2. **Label.** This is the name the watermark will carry (brief §5). It is encrypted under `K_label`.
 3. **Generate** the recipient id, the token and `token_hash`.
-4. **QR:** the payload carries `K_album`. **Passphrase:** pick the wordlist, defaulting to the owner's display language and changeable, offering only vetted languages (brief §15.2; encryption spec §6.3). Then generate at least 5 words, run the derivation wait, and wrap `K_album`.
-5. `POST /v1/albums/{album_id}/recipients`. **Nothing is shown for sharing until it answers `201`.** A `409` means regenerate the id and token and retry (api-sketch §7.7). In passphrase mode the wrap is redone under the new id.
+4. **QR:** generate a random 32-byte `K_invite`, wrap `K_album` under it (encryption spec §6.1), and put `K_invite` in the payload; `K_album` never leaves the key module. **Passphrase:** pick the wordlist, defaulting to the owner's display language and changeable, offering only vetted languages (brief §15.2; encryption spec §6.3). Then generate at least 5 words, run the derivation wait, and wrap `K_album`.
+5. `POST /v1/albums/{album_id}/recipients`. **Nothing is shown for sharing until it answers `201`.** A `409` means regenerate the id and token and retry (api-sketch §7.7). The wrap is redone under the new id, in both modes, since the id is in its AAD.
 6. **Share screen.** QR: the link and its QR, rendered to invite spec §3's requirements. Passphrase: the link and the passphrase shown separately, with an instruction to send them by different channels (encryption spec §6.5).
 
 - **The key material goes in the fragment: `#`, never `?`** (invite spec §2.1).
@@ -206,7 +206,7 @@
 **Revoke:** confirm → `POST /v1/recipients/{recipient_id}/revoke` → revoked. The route is idempotent, so a retry counts as success. **Failing:** `404` means the screen is stale, so refresh it.
 
 - **Revocation is immediate, and the UI may say so** (api-sketch §7.8).
-- **It stops future access only.** It undoes nothing already retrieved, and a QR recipient keeps the key they hold (brief §8; encryption spec §6.4). Re-inviting the same person means a new invite (§3.8).
+- **It stops future access only.** It undoes nothing already retrieved (brief §8; encryption spec §6.4). The invite itself, QR or passphrase, opens nothing afterwards, because the relay stops serving the wrapping. Re-inviting the same person means a new invite (§3.8).
 
 ⟦copy: revoke.confirm · revoke.done — immediate, future access only (brief §8, "Revocation is server-enforced, not cryptographic")⟧
 
@@ -246,7 +246,7 @@
 1. **Read the fragment, then strip it** with `history.replaceState` (invite spec §2.2) before anything else runs, including the router: SvelteKit's own navigation would otherwise copy the URL, fragment included, into `history.state`, which the browser saves with the session. Its interaction with storage is pending (§4.7).
 2. **Parse it.** Missing or malformed → dead page (§4.7). A well-formed `v` other than 1 → the newer-version screen (invite spec §6).
 3. **Branch:** `key` present → `Q-held`; `key` absent → `P-locked` (§4.2).
-4. **`Q-held`:** call `GET /v1/recipient` and decrypt the label for the watermark. `403` → revoked; `401` → not recognised (§4.6).
+4. **QR:** call `GET /v1/recipient/key` and unwrap `K_album` under `K_invite` (encryption spec §6.1; no derivation wait, there is no Argon2id), zeroing `K_invite` afterwards → `Q-held`. A failed unwrap means a damaged link → dead page. Then `GET /v1/recipient` and decrypt the label for the watermark. `403` → revoked; `401` → not recognised (§4.6).
 5. Onboarding (§4.3), then the grid (§4.4).
 
 **No relay check in the web client.** The URL form's relay is the host that served the page, and the page talks only to the API origin it was built with. A page served from an attacker's origin runs the attacker's code, so a check inside it protects nothing (invite spec §1).
@@ -298,7 +298,7 @@
 - **The grid never fetches a full asset** (api-sketch §11.6).
 
 **Waiting:** the metadata, because no layout is possible without dimensions (encryption spec §7) · thumbnails, which fill in progressively.
-**Failing:** a thumbnail that fails to fetch or decrypt gets a failed state on its own cell · `403` → revoked · the title fails to decrypt under a QR link's key, which means a damaged link: show the dead page.
+**Failing:** a thumbnail that fails to fetch or decrypt gets a failed state on its own cell · `403` → revoked · the title fails to decrypt, which after a successful unwrap means corrupted data: show the dead page.
 
 ⟦copy: grid.empty⟧
 ⟦copy: watermark — name and date. It works socially, not forensically, and must not claim to identify or trace anyone (brief §5)⟧
@@ -329,13 +329,13 @@
 
 | After a reload or a discarded tab | Preferred mechanism                          | Fallback                  |
 | --------------------------------- | -------------------------------------------- | ------------------------- |
-| QR                                | `Q-held`, restored from tab-scoped storage   | `Q-held`, from the fragment |
+| QR                                | `Q-held`, after unwrapping again with `K_invite` restored from tab-scoped storage | `Q-held`, from the fragment |
 | Passphrase                        | `P-locked`: the token is restored, the passphrase is asked again | `P-locked`                |
 | Tab closed                        | dead page                                    | dead page                 |
 
 - **Preferred:** on first load, copy the fragment's contents into `sessionStorage` (tab-scoped), then call `replaceState`. A reload or a discarded tab reads them back. As written today, invite spec §2.2 step 4 forbids writing `key` to `sessionStorage`.
 - **Fallback, if storage does not survive a discard:** never strip the fragment. The cost is exposure through the share sheet, bookmarks and tab sync.
-- **Under both mechanisms, a passphrase recipient never comes back already `P-open`**, because `K_album` was never in the fragment.
+- **Under both mechanisms, no recipient comes back holding `K_album`**: it was never in the fragment, for either kind. What a QR recipient's tab keeps is `K_invite`, which unwraps nothing once the invite is revoked.
 
 **The dead page** is reached when the tab was closed, the fragment is missing or malformed, or a bookmark holds no invite. It knows nothing: titles and labels are ciphertext, and there is no key. All it can offer is to open the invitation link again.
 
