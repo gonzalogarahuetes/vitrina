@@ -1,6 +1,6 @@
 /*
  * The owner path in a real browser, with the production build, the real WASM,
- * the owner's real key functions, and a faked API (a relay in this file,
+ * the owner's real key functions, and a faked API (relay.ts,
  * behind context.route). The relay stores whatever the app posts and hands it
  * back, so every wrapping that is opened here was made by the app itself.
  *
@@ -18,149 +18,18 @@
  *
  * The last tests break the checks on purpose and expect them to notice.
  */
-import { expect, test, type BrowserContext, type Page, type Route } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import { randomBytes } from "node:crypto";
 import { en } from "../../src/lib/copy/en.ts";
 import { storageViolations } from "../storage-allowlist.ts";
-import { apiOrigin, blocklistChunk, dumpStorage, watch } from "./helpers.ts";
+import { blocklistChunk, dumpStorage, watch } from "./helpers.ts";
+import { fakeRelay, type Logged } from "./relay.ts";
 
 /** As typed, spaces and capitals included: the app must send it unchanged. */
 const EMAIL = "  Parent.Example@Example.COM ";
 const PASSWORD = "copper kettle under the stairs 47";
 const ARGON = 60_000;
 
-type Logged = { method: string; path: string; search: string; hash: string; body: string; headers: Record<string, string> };
-
-/** A relay that keeps what it is sent. Normalises the address as api-sketch §8.2 does. */
-function fakeRelay(opts: { expiresInMs: number }) {
-  const norm = (e: string) => e.normalize("NFC").trim().toLowerCase();
-  const accounts = new Map<string, Record<string, unknown>>();
-  const tokens = new Map<string, { email: string; revoked: boolean }>();
-  const albums = new Map<string, Record<string, unknown>[]>();
-  const log: Logged[] = [];
-  let holdOwnerKey: Promise<void> | null = null;
-  /** "METHOD /path" → Retry-After seconds, refused once with a 429. */
-  const refuse = new Map<string, number>();
-
-  const mint = (email: string) => {
-    const token = randomBytes(32).toString("base64url");
-    tokens.set(token, { email, revoked: false });
-    return { token, expires_at: new Date(Date.now() + opts.expiresInMs).toISOString().replace(/\.\d+Z$/, "Z") };
-  };
-
-  async function handle(route: Route, pageOrigin: string): Promise<void> {
-    const req = route.request();
-    const url = new URL(req.url());
-    const headers = await req.allHeaders();
-    const cors = {
-      "access-control-allow-origin": pageOrigin,
-      "access-control-allow-headers": "authorization, content-type, range",
-      "access-control-allow-methods": "GET, POST, PUT, DELETE",
-      "access-control-expose-headers": "retry-after",
-      "cache-control": "no-store",
-    };
-    if (req.method() === "OPTIONS") return route.fulfill({ status: 204, headers: cors });
-    const body = req.postData() ?? "";
-    log.push({ method: req.method(), path: url.pathname, search: url.search, hash: url.hash, body, headers });
-
-    const json = (status: number, value: unknown) => route.fulfill({ status, headers: { ...cors, "content-type": "application/json" }, body: JSON.stringify(value) });
-    const error = (status: number, code: string) => json(status, { code, message: "x" });
-    const caller = () => {
-      const t = /^Bearer (.+)$/.exec(headers["authorization"] ?? "")?.[1];
-      const row = t === undefined ? undefined : tokens.get(t);
-      return row === undefined || row.revoked ? null : { token: t as string, ...row };
-    };
-    const key = `${req.method()} ${url.pathname}`;
-    const retryAfter = refuse.get(key);
-    if (retryAfter !== undefined) {
-      refuse.delete(key);
-      return route.fulfill({
-        status: 429,
-        headers: { ...cors, "content-type": "application/json", "retry-after": String(retryAfter) },
-        body: JSON.stringify({ code: "RATE_LIMITED", message: "x" }),
-      });
-    }
-
-    if (key === "POST /v1/signup") {
-      const b = JSON.parse(body) as Record<string, unknown>;
-      const email = norm(b["email"] as string);
-      if (accounts.has(email)) return error(409, "CONFLICT");
-      accounts.set(email, b);
-      albums.set(email, []);
-      return json(201, { id: randomBytes(16).toString("hex"), created_at: new Date().toISOString(), ...mint(email) });
-    }
-    if (key === "POST /v1/login/params") {
-      const a = accounts.get(norm((JSON.parse(body) as { email: string }).email));
-      const decoy = { kdf_salt: randomBytes(16).toString("base64url"), kdf_memory_kib: 65536, kdf_iterations: 3, kdf_parallelism: 1 };
-      return json(200, a === undefined ? decoy : { kdf_salt: a["kdf_salt"], kdf_memory_kib: a["kdf_memory_kib"], kdf_iterations: a["kdf_iterations"], kdf_parallelism: a["kdf_parallelism"] });
-    }
-    if (key === "POST /v1/login") {
-      const b = JSON.parse(body) as { email: string; proof: string };
-      const email = norm(b.email);
-      const a = accounts.get(email);
-      if (a === undefined || a["proof"] !== b.proof) return error(401, "INVALID_CREDENTIALS");
-      return json(200, mint(email));
-    }
-    const who = caller();
-    if (who === null) return error(401, "UNAUTHENTICATED");
-    const a = accounts.get(who.email) as Record<string, unknown>;
-    switch (key) {
-      case "GET /v1/owner/key":
-        if (holdOwnerKey !== null) await holdOwnerKey;
-        return json(200, {
-          kdf_salt: a["kdf_salt"],
-          kdf_memory_kib: a["kdf_memory_kib"],
-          kdf_iterations: a["kdf_iterations"],
-          kdf_parallelism: a["kdf_parallelism"],
-          wrapped_master: a["wrapped_master"],
-          wrap_nonce: a["wrap_nonce"],
-        });
-      case "GET /v1/albums":
-        return json(200, { albums: [...(albums.get(who.email) ?? [])].reverse() });
-      case "POST /v1/albums": {
-        const b = JSON.parse(body) as Record<string, unknown>;
-        const list = albums.get(who.email) ?? [];
-        if (list.some((x) => x["id"] === b["id"])) return error(409, "CONFLICT");
-        const created_at = new Date().toISOString();
-        list.push({ ...b, created_at, media_count: 0 });
-        return json(201, { id: b["id"], created_at });
-      }
-      case "POST /v1/logout":
-        (tokens.get(who.token) as { revoked: boolean }).revoked = true;
-        return route.fulfill({ status: 204, headers: cors });
-      case "POST /v1/logout/all":
-        for (const t of tokens.values()) if (t.email === who.email) t.revoked = true;
-        return route.fulfill({ status: 204, headers: cors });
-    }
-    return error(404, "NOT_FOUND");
-  }
-
-  return {
-    log,
-    tokens,
-    accounts,
-    /** The next request to `route` ("METHOD /path") gets a 429 with this Retry-After. */
-    refuseNext(route: string, retryAfterSeconds: number): void {
-      refuse.set(route, retryAfterSeconds);
-    },
-    /** Delays GET /v1/owner/key until the returned function is called. */
-    hold(): () => void {
-      let release!: () => void;
-      holdOwnerKey = new Promise((r) => (release = r));
-      return () => {
-        holdOwnerKey = null;
-        release();
-      };
-    },
-    async attach(context: BrowserContext): Promise<void> {
-      const base = test.info().project.use.baseURL as string;
-      const origin = apiOrigin();
-      await context.route((u) => u.origin === origin, (route) => handle(route, new URL(base).origin));
-      // Anything else off-origin fails, as with no network.
-      await context.route((u) => u.origin !== origin && u.origin !== new URL(base).origin, (route) => route.abort("internetdisconnected"));
-    },
-  };
-}
 
 const heading = (page: Page, name: string) => expect(page.getByRole("heading", { name, exact: true })).toBeVisible({ timeout: ARGON });
 
