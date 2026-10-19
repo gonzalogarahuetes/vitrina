@@ -5,7 +5,8 @@
  */
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
-import { dirname, join, relative } from "node:path";
+import { basename, dirname, join, relative } from "node:path";
+import { gzipSync } from "node:zlib";
 
 const BUILD = new URL("../build/", import.meta.url).pathname;
 const failures = [];
@@ -139,8 +140,31 @@ for (const f of files(BUILD).filter((f) => f.endsWith(".js"))) {
   }
 }
 
+// --- The password blocklist: one chunk, reached only by a dynamic import ------
+// brief §12's top-100k list is bundled because connect-src forbids fetching it,
+// and split out so it never weighs on the recipient path or on page load. A
+// static import anywhere would pull it into whatever chunk made it.
+let blocklistReport = "";
+{
+  const js = files(BUILD).filter((f) => f.endsWith(".js"));
+  // Chunk names are hashes; lib/owner/blocklist.ts carries this string.
+  const chunks = js.filter((f) => readFileSync(f, "utf8").includes("vitrina:password-blocklist"));
+  if (chunks.length !== 1) fail(`expected one blocklist chunk, found ${chunks.length}`);
+  else {
+    const chunk = chunks[0];
+    const name = basename(chunk).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const staticImport = new RegExp(`(?:\\bfrom\\s*|\\bimport\\s*)["'][^"']*${name}["']`);
+    for (const f of js) {
+      if (f !== chunk && staticImport.test(readFileSync(f, "utf8"))) fail(`${relative(BUILD, f)} imports the blocklist statically`);
+    }
+    if (html.includes(basename(chunk))) fail("index.html preloads the blocklist");
+    const raw = readFileSync(chunk);
+    blocklistReport = `, blocklist ${relative(BUILD, chunk)} ${(raw.length / 1024).toFixed(0)} KiB, ${(gzipSync(raw, { level: 9 }).length / 1024).toFixed(0)} KiB gzipped`;
+  }
+}
+
 if (failures.length > 0) {
   console.error("check-build: build/ violates the static-SPA guards\n  " + failures.join("\n  "));
   process.exit(1);
 }
-console.log(`check-build: ok (connect-src ${apiOrigin}, ${inline.length} inline script by hash)`);
+console.log(`check-build: ok (connect-src ${apiOrigin}, ${inline.length} inline script by hash${blocklistReport})`);
