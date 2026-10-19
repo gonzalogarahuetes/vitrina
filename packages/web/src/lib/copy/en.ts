@@ -82,8 +82,15 @@ export const en = {
   "owner.checking": "Checking this device…",
   /** Flows §0, for the owner. Changes nothing; retry. */
   "offline.owner": "Can't reach Vitrina right now. Check your connection, then try again.",
-  /** A 429's Retry-After. Must not suggest attempts on the account are counted: the limit is per network. */
+  /** A 429's Retry-After on a token route, waited out in place. Must not suggest attempts on the account are counted. */
   "wait.rate-limited": "Waiting a moment before trying again.",
+  /**
+   * flows §0, a 429 on a credential route: the form is back, the password
+   * field is empty, and submitting resumes when the countdown ends. Says
+   * "this network", because the limit is per IP (api-sketch §7.6). Never the
+   * account, and never that attempts are counted.
+   */
+  "credential.paused": (when: string) => `This network has to pause before signing in or signing up again. You can try again in ${when}.`,
   "password.show": "Show password",
   "password.hide": "Hide password",
 
@@ -198,4 +205,12 @@ export function watermarkDate(d: Date): string {
 /** When a session ends, for session.ending: "Thu 29 Oct, 12:00", in the device's time zone. */
 export function sessionEndTime(d: Date): string {
   return new Intl.DateTimeFormat("en-GB", { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }).format(d);
+}
+
+/** The countdown for credential.paused: "about 12 minutes", "45 seconds". Rounded up, never "0". */
+export function pauseLeft(ms: number): string {
+  const seconds = Math.max(1, Math.ceil(ms / 1000));
+  if (seconds < 60) return seconds === 1 ? "1 second" : `${seconds} seconds`;
+  const minutes = Math.ceil(seconds / 60);
+  return minutes === 1 ? "about 1 minute" : `about ${minutes} minutes`;
 }

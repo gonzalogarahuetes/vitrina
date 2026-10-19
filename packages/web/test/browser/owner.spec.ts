@@ -39,6 +39,8 @@ function fakeRelay(opts: { expiresInMs: number }) {
   const albums = new Map<string, Record<string, unknown>[]>();
   const log: Logged[] = [];
   let holdOwnerKey: Promise<void> | null = null;
+  /** "METHOD /path" → Retry-After seconds, refused once with a 429. */
+  const refuse = new Map<string, number>();
 
   const mint = (email: string) => {
     const token = randomBytes(32).toString("base64url");
@@ -69,6 +71,15 @@ function fakeRelay(opts: { expiresInMs: number }) {
       return row === undefined || row.revoked ? null : { token: t as string, ...row };
     };
     const key = `${req.method()} ${url.pathname}`;
+    const retryAfter = refuse.get(key);
+    if (retryAfter !== undefined) {
+      refuse.delete(key);
+      return route.fulfill({
+        status: 429,
+        headers: { ...cors, "content-type": "application/json", "retry-after": String(retryAfter) },
+        body: JSON.stringify({ code: "RATE_LIMITED", message: "x" }),
+      });
+    }
 
     if (key === "POST /v1/signup") {
       const b = JSON.parse(body) as Record<string, unknown>;
@@ -128,6 +139,10 @@ function fakeRelay(opts: { expiresInMs: number }) {
     log,
     tokens,
     accounts,
+    /** The next request to `route` ("METHOD /path") gets a 429 with this Retry-After. */
+    refuseNext(route: string, retryAfterSeconds: number): void {
+      refuse.set(route, retryAfterSeconds);
+    },
     /** Delays GET /v1/owner/key until the returned function is called. */
     hold(): () => void {
       let release!: () => void;
@@ -344,4 +359,86 @@ test("the request audit notices a password in a request", () => {
   expect(() => assertRequests(log, "unused")).toThrow(/password in GET \/v1\/albums/);
   const leak: Logged[] = [{ method: "GET", path: "/v1/owner/key", search: "", hash: "", body: "", headers: { "x-proof": "PROOFVALUE" } }];
   expect(() => assertRequests(leak, "PROOFVALUE")).toThrow(/proof in GET \/v1\/owner\/key/);
+});
+
+// ── flows §0: a 429 on a credential route ─────────────────────────────────
+
+test("a 429 on /login: back to the form with a countdown, the password field cleared, the address kept, nothing resent", async ({ browser }) => {
+  test.setTimeout(180_000);
+  const relay = fakeRelay({ expiresInMs: 14 * 24 * 60 * 60 * 1000 });
+  const ctx = await browser.newContext();
+  await relay.attach(ctx);
+  const page = await ctx.newPage();
+  const violations = await watch(page);
+
+  // An account to sign in to, made by the app itself.
+  await page.goto("/");
+  await page.getByRole("button", { name: en["signin.to-signup"] }).click();
+  await page.getByLabel(en["signup.email.label"]).fill(EMAIL);
+  await page.getByLabel(en["signup.password.label"]).fill(PASSWORD);
+  await page.getByRole("button", { name: en["signup.submit"] }).click();
+  await heading(page, en["albums.title"]);
+  await page.getByRole("button", { name: en["logout.device"] }).click();
+  await heading(page, en["signin.title"]);
+
+  relay.refuseNext("POST /v1/login", 3);
+  const email = page.getByLabel(en["signin.email.label"]);
+  const password = page.getByLabel(en["signin.password.label"], { exact: true });
+  const submit = page.getByRole("button", { name: en["signin.submit"] });
+  await email.fill(EMAIL);
+  await password.fill(PASSWORD);
+  await submit.click();
+
+  await expect(page.getByText(/^This network has to pause/)).toBeVisible({ timeout: ARGON });
+  await expect(password, "the password field is cleared").toHaveValue("");
+  await expect(email, "the address is kept, as typed").toHaveValue(EMAIL);
+  await expect(submit, "submitting waits for the countdown").toBeDisabled();
+  const logins = () => relay.log.filter((r) => r.path === "/v1/login").length;
+  expect(logins()).toBe(1);
+
+  // Retry-After is 3 s. Nothing is resent by the app in that time or after it.
+  await page.waitForTimeout(4_000);
+  expect(logins(), "no automatic resend").toBe(1);
+  await expect(page.getByText(/^This network has to pause/)).toHaveCount(0);
+
+  await password.fill(PASSWORD);
+  await expect(submit).toBeEnabled();
+  await submit.click();
+  await heading(page, en["albums.title"]);
+  expect(logins()).toBe(2);
+  expect(await violations()).toEqual([]);
+  await ctx.close();
+});
+
+test("a 429 on /signup: its own path, never signup.uncertain; the password field is cleared and the address kept", async ({ browser }) => {
+  test.setTimeout(180_000);
+  const relay = fakeRelay({ expiresInMs: 14 * 24 * 60 * 60 * 1000 });
+  const ctx = await browser.newContext();
+  await relay.attach(ctx);
+  const page = await ctx.newPage();
+  await page.goto("/");
+  await page.getByRole("button", { name: en["signin.to-signup"] }).click();
+
+  relay.refuseNext("POST /v1/signup", 2);
+  const email = page.getByLabel(en["signup.email.label"]);
+  const password = page.getByLabel(en["signup.password.label"]);
+  await email.fill(EMAIL);
+  await password.fill(PASSWORD);
+  await page.getByRole("button", { name: en["signup.submit"] }).click();
+
+  await expect(page.getByText(/^This network has to pause/)).toBeVisible({ timeout: ARGON });
+  await expect(page.getByText(en["signup.uncertain"])).toHaveCount(0);
+  await expect(password).toHaveValue("");
+  await expect(email).toHaveValue(EMAIL);
+  expect(relay.accounts.size, "no account created").toBe(0);
+
+  await page.waitForTimeout(3_000);
+  await password.fill(PASSWORD);
+  await page.getByRole("button", { name: en["signup.submit"] }).click();
+  await heading(page, en["albums.title"]);
+  const bodies = relay.log.filter((r) => r.path === "/v1/signup").map((r) => JSON.parse(r.body) as { kdf_salt: string; wrapped_master: string });
+  expect(bodies).toHaveLength(2);
+  expect(bodies[1]?.kdf_salt, "a fresh salt on resubmit").not.toBe(bodies[0]?.kdf_salt);
+  expect(bodies[1]?.wrapped_master, "a fresh K_master on resubmit").not.toBe(bodies[0]?.wrapped_master);
+  await ctx.close();
 });

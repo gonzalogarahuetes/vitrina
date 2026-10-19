@@ -11,12 +11,13 @@
   import Alert from "$lib/ui/Alert.svelte";
   import DerivationWait from "$lib/ui/DerivationWait.svelte";
   import PasswordField from "./PasswordField.svelte";
+  import Paused from "./Paused.svelte";
 
   let {
     phase,
     notice,
     initialEmail,
-    rateLimited,
+    pausedUntil,
     onSubmit,
     onRetry,
     onSignup,
@@ -24,7 +25,7 @@
     phase: SigninPhase;
     notice: SigninNotice;
     initialEmail: string;
-    rateLimited: boolean;
+    pausedUntil: number | null;
     onSubmit: (email: string, password: string) => void;
     onRetry: (email: string) => void;
     onSignup: () => void;
@@ -36,14 +37,15 @@
   const busy = $derived(phase === "busy" || phase === "deriving");
   const ready = $derived(email.trim() !== "" && password !== "");
 
-  // A failed attempt empties the password field, as the board does.
+  // A failed or paused attempt empties the password field, as the board does.
+  // A 429 keeps the address (flows §0).
   $effect(() => {
-    if (phase === "failed" || phase === "unavailable") password = "";
+    if (phase === "failed" || phase === "unavailable" || phase === "paused") password = "";
   });
 
   function submit(e: SubmitEvent): void {
     e.preventDefault();
-    if (busy || !ready) return;
+    if (busy || !ready || phase === "paused") return;
     onSubmit(email, password);
   }
 </script>
@@ -81,14 +83,16 @@
 
       {#if phase === "failed"}
         <Alert text={en["signin.failed"]} />
+      {:else if phase === "paused" && pausedUntil !== null}
+        <Paused until={pausedUntil} />
       {/if}
 
       {#if phase === "deriving"}
         <DerivationWait layout="stacked" />
       {:else if phase === "busy"}
-        <p class="note" role="status">{rateLimited ? en["wait.rate-limited"] : en["signin.busy"]}</p>
+        <p class="note" role="status">{en["signin.busy"]}</p>
       {:else}
-        <button class="btn" type="submit" disabled={!ready}>{en["signin.submit"]}</button>
+        <button class="btn" type="submit" disabled={!ready || phase === "paused"}>{en["signin.submit"]}</button>
       {/if}
     </form>
   {/if}

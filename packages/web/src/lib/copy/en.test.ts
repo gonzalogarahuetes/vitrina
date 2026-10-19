@@ -40,7 +40,7 @@ describe("the copy", () => {
   }
 
   it("unlock, sign-in and the rate-limit wait never suggest that attempts are counted", () => {
-    const owner = strings().filter(([slot]) => /^(unlock|signin|wait|session|signed-out)/.test(slot));
+    const owner = strings().filter(([slot]) => /^(unlock|signin|wait|session|signed-out|credential)/.test(slot));
     expect(owner.length).toBeGreaterThan(10);
     expect(owner.filter(([, s]) => OWNER_ATTEMPTS.test(s))).toEqual([]);
   });
@@ -64,5 +64,30 @@ describe("the copy", () => {
 
   it("the unlock screen names no address", () => {
     expect(en["unlock.prompt"]).toBe("Unlock");
+  });
+});
+
+describe("credential.paused (flows §0, a 429 on a credential route)", () => {
+  const text = en["credential.paused"]("about 12 minutes");
+
+  it("names this network as what is paused", () => {
+    expect(text).toMatch(/\bthis network\b/i);
+  });
+
+  it("never names the account, and never suggests attempts are counted", () => {
+    expect(text).not.toMatch(/\baccount\b/i);
+    expect(text).not.toMatch(OWNER_ATTEMPTS);
+    expect(text).not.toMatch(/\byour (email|address|password)\b/i);
+  });
+
+  it("counts down in plain words, never to zero", async () => {
+    const { pauseLeft } = await import("./en");
+    expect(pauseLeft(900_000)).toBe("about 15 minutes");
+    expect(pauseLeft(61_000)).toBe("about 2 minutes");
+    expect(pauseLeft(60_000)).toBe("about 1 minute");
+    expect(pauseLeft(45_000)).toBe("45 seconds");
+    expect(pauseLeft(1)).toBe("1 second");
+    expect(pauseLeft(0)).toBe("1 second");
+    expect(pauseLeft(-5_000)).toBe("1 second");
   });
 });

@@ -79,7 +79,7 @@
       phase={screen.phase}
       notice={screen.notice}
       initialEmail={screen.email}
-      rateLimited={ui.rateLimited}
+      pausedUntil={screen.pausedUntil}
       onSubmit={(email, password) => session?.submitSignin(email, password)}
       onRetry={(email) => session?.backToSignin(email)}
       onSignup={() => session?.enterSignup()}
@@ -88,7 +88,7 @@
 {:else if screen.kind === "signup"}
   <SignUp
     phase={screen.phase}
-    rateLimited={ui.rateLimited}
+    pausedUntil={screen.pausedUntil}
     onSubmit={(email, password) => session?.submitSignup(email, password)}
     onSignin={(email) => session?.backToSignin(email)}
   />
@@ -143,6 +143,13 @@
       <button class="btn ghost" type="button" disabled={screen.retrying} onclick={() => session?.leaveAfterPartial()}>{en["logout.leave"]}</button>
     </div>
   </main>
+{/if}
+
+{#if ui.rateLimited && !ui.offline}
+  <!-- A token route's 429, waited out in place (flows §0). Credential routes pause their form instead. -->
+  <div class="offline" role="status">
+    <span>{en["wait.rate-limited"]}</span>
+  </div>
 {/if}
 
 {#if ui.offline}

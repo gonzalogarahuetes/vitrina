@@ -99,7 +99,7 @@ describe("page load (flows §3.1)", () => {
     const h = harness();
     h.session.start();
     await settle();
-    expect(h.screen()).toEqual({ kind: "signin", phase: "ready", notice: null, email: "" });
+    expect(h.screen()).toEqual({ kind: "signin", phase: "ready", notice: null, email: "", pausedUntil: null });
     expect(h.sent).toEqual([]);
   });
 
@@ -121,7 +121,7 @@ describe("page load (flows §3.1)", () => {
     h.override("GET /v1/owner/key", h.err(401, "UNAUTHENTICATED"));
     h.session.start();
     await settle();
-    expect(h.screen()).toEqual({ kind: "signin", phase: "ready", notice: "session-ended", email: "" });
+    expect(h.screen()).toEqual({ kind: "signin", phase: "ready", notice: "session-ended", email: "", pausedUntil: null });
     expect([...h.storage.data.keys()]).toEqual([]);
     expect(h.states.some((s) => s.screen.kind === "unlock")).toBe(false);
   });
@@ -313,7 +313,7 @@ describe("sign-in on a new device (flows §3.3)", () => {
     h.session.start();
     h.session.submitSignin(EMAIL, "the wrong password");
     await settle();
-    expect(h.screen()).toEqual({ kind: "signin", phase: "failed", notice: null, email: EMAIL });
+    expect(h.screen()).toEqual({ kind: "signin", phase: "failed", notice: null, email: EMAIL, pausedUntil: null });
     expect(zeroed(h.proofs[0] as Uint8Array)).toBe(true);
     expect(live(h.handles)).toEqual([]);
     expect(h.storage.writes).toEqual([]);
@@ -349,7 +349,7 @@ describe("sign-in on a new device (flows §3.3)", () => {
       expect([...h.storage.data.keys()]).toEqual([]);
       expect(live(h.handles)).toEqual([]);
       h.session.backToSignin();
-      expect(h.screen()).toEqual({ kind: "signin", phase: "ready", notice: null, email: "" });
+      expect(h.screen()).toEqual({ kind: "signin", phase: "ready", notice: null, email: "", pausedUntil: null });
     }
   });
 
@@ -369,14 +369,75 @@ describe("sign-in on a new device (flows §3.3)", () => {
     expect(h.screen().kind).toBe("albums");
   });
 
-  it("429 waits for Retry-After, then retries", async () => {
+  // flows §0, the credential-route exception: back to the form, nothing held, nothing retried.
+  for (const route of ["POST /v1/login/params", "POST /v1/login"] as const) {
+    it(`a 429 on ${route} returns to the form with a countdown; nothing is held and nothing is retried`, async () => {
+      const h = harness();
+      h.override(route, h.err(429, "RATE_LIMITED", { "Retry-After": "37" }));
+      h.session.start();
+      h.session.submitSignin(EMAIL, PASSWORD);
+      await settle();
+      const until = NOW.getTime() + 37_000;
+      expect(h.screen()).toEqual({ kind: "signin", phase: "paused", notice: null, email: EMAIL, pausedUntil: until });
+      expect(h.sleeps, "no wait in place").toEqual([]);
+      expect(routes(h.sent).filter((r) => r === route), "no automatic resend").toHaveLength(1);
+      expect(live(h.handles), "every key handle freed").toEqual([]);
+      for (const p of h.proofs) expect(zeroed(p), "the proof zeroed").toBe(true);
+      expect(h.storage.writes).toEqual([]);
+      expect(h.session.current.rateLimited).toBe(false);
+
+      // Submitting is refused until the countdown ends.
+      h.session.submitSignin(EMAIL, PASSWORD);
+      await settle();
+      expect(routes(h.sent).filter((r) => r === route)).toHaveLength(1);
+
+      // At pausedUntil the form is ready again, and a resubmit derives afresh.
+      const timer = h.timers.at(-1);
+      expect(timer?.ms).toBe(37_000);
+      h.setNow(new Date(until));
+      timer?.fn();
+      expect(h.screen()).toEqual({ kind: "signin", phase: "ready", notice: null, email: EMAIL, pausedUntil: null });
+      const derivations = h.events.filter((e) => e === "deriveLoginCredential").length;
+      h.session.submitSignin(EMAIL, PASSWORD);
+      await settle();
+      expect(h.screen().kind).toBe("albums");
+      expect(h.events.filter((e) => e === "deriveLoginCredential"), "a fresh derivation").toHaveLength(derivations + 1);
+    });
+  }
+
+  it("a timer that fires early reschedules instead of resuming", async () => {
     const h = harness();
-    h.override("POST /v1/login/params", h.err(429, "RATE_LIMITED", { "Retry-After": "37" }));
+    h.override("POST /v1/login/params", h.err(429, "RATE_LIMITED", { "Retry-After": "60" }));
     h.session.start();
     h.session.submitSignin(EMAIL, PASSWORD);
     await settle();
-    expect(h.sleeps).toEqual([37_000]);
-    expect(routes(h.sent).slice(0, 2)).toEqual(["POST /v1/login/params", "POST /v1/login/params"]);
+    h.setNow(new Date(NOW.getTime() + 30_000));
+    h.timers.at(-1)?.fn();
+    expect(h.screen()).toMatchObject({ phase: "paused" });
+    expect(h.timers.at(-1)?.ms).toBe(30_000);
+  });
+
+  it("leaving the paused form cancels its countdown", async () => {
+    const h = harness();
+    h.override("POST /v1/login/params", h.err(429, "RATE_LIMITED", { "Retry-After": "60" }));
+    h.session.start();
+    h.session.submitSignin(EMAIL, PASSWORD);
+    await settle();
+    h.session.backToSignin(EMAIL);
+    expect(h.timers.at(-1)?.cancelled).toBe(true);
+  });
+
+  it("a 429 on a token route is still waited out in place, then resent", async () => {
+    const h = harness({ stored: STORED });
+    h.override("GET /v1/albums", h.err(429, "RATE_LIMITED", { "Retry-After": "7" }));
+    h.session.start();
+    await settle();
+    h.session.submitUnlock(PASSWORD);
+    await settle();
+    expect(h.sleeps).toEqual([7_000]);
+    expect(routes(h.sent).filter((r) => r === "GET /v1/albums")).toHaveLength(2);
+    expect(h.states.some((s) => s.rateLimited)).toBe(true);
+    expect(h.session.current.rateLimited).toBe(false);
     expect(h.screen().kind).toBe("albums");
   });
 
@@ -474,7 +535,7 @@ describe("signup (flows §3.2)", () => {
       const s = h.screen();
       if (expected === "ready") expect(s.kind, JSON.stringify(pw)).toBe("albums");
       else {
-        expect(s, JSON.stringify(pw)).toEqual({ kind: "signup", phase: expected });
+        expect(s, JSON.stringify(pw)).toEqual({ kind: "signup", phase: expected, pausedUntil: null });
         expect(h.events).not.toContain("createAccountKeys");
         expect(h.sent).toEqual([]);
       }
@@ -488,7 +549,7 @@ describe("signup (flows §3.2)", () => {
     h.session.enterSignup();
     h.session.submitSignup(EMAIL, PASSWORD);
     await settle();
-    expect(h.screen()).toEqual({ kind: "signup", phase: "taken" });
+    expect(h.screen()).toEqual({ kind: "signup", phase: "taken", pausedUntil: null });
     expect(live(h.handles)).toEqual([]);
     expect(zeroed(h.proofs[0] as Uint8Array)).toBe(true);
     expect(h.storage.writes).toEqual([]);
@@ -508,16 +569,50 @@ describe("signup (flows §3.2)", () => {
       expect(live(h.handles)).toEqual([]);
       expect(zeroed(h.proofs[0] as Uint8Array)).toBe(true);
       h.session.backToSignin(EMAIL);
-      expect(h.screen()).toEqual({ kind: "signin", phase: "ready", notice: null, email: EMAIL });
+      expect(h.screen()).toEqual({ kind: "signin", phase: "ready", notice: null, email: EMAIL, pausedUntil: null });
     }
   });
 
-  it("429 is the one signup failure that is resent, after Retry-After", async () => {
+  it("a 429 is its own path: no account was created, never signup.uncertain, and a resubmit starts afresh", async () => {
     const h = harness();
     h.override("POST /v1/signup", h.err(429, "RATE_LIMITED", { "Retry-After": "12" }));
-    await signedUp(h);
-    expect(h.sleeps).toEqual([12_000]);
-    expect(routes(h.sent)).toEqual(["POST /v1/signup", "POST /v1/signup"]);
+    h.session.start();
+    h.session.enterSignup();
+    h.session.submitSignup(EMAIL, PASSWORD);
+    await settle();
+    const until = NOW.getTime() + 12_000;
+    expect(h.screen()).toEqual({ kind: "signup", phase: "paused", pausedUntil: until });
+    expect(h.states.some((s) => s.screen.kind === "signup-uncertain"), "never the lost-response path").toBe(false);
+    expect(h.sleeps).toEqual([]);
+    expect(routes(h.sent)).toEqual(["POST /v1/signup"]);
+    expect(live(h.handles), "the new K_master freed").toEqual([]);
+    expect(zeroed(h.proofs[0] as Uint8Array)).toBe(true);
+    expect(h.storage.writes).toEqual([]);
+
+    h.session.submitSignup(EMAIL, PASSWORD);
+    await settle();
+    expect(routes(h.sent), "refused while paused").toEqual(["POST /v1/signup"]);
+
+    h.setNow(new Date(until));
+    h.timers.at(-1)?.fn();
+    expect(h.screen()).toEqual({ kind: "signup", phase: "ready", pausedUntil: null });
+    h.session.submitSignup(EMAIL, PASSWORD);
+    await settle();
+    expect(h.screen().kind).toBe("albums");
+    // A fresh derivation: a second createAccountKeys, a second K_master.
+    expect(h.events.filter((e) => e === "createAccountKeys")).toHaveLength(2);
+    expect(h.handles.filter((x) => x.kind === "master")).toHaveLength(2);
+    expect(live(h.handles)).toHaveLength(1);
+  });
+
+  it("a lost signup response is still signup.uncertain, not paused", async () => {
+    const h = harness();
+    h.override("POST /v1/signup", "network");
+    h.session.start();
+    h.session.enterSignup();
+    h.session.submitSignup(EMAIL, PASSWORD);
+    await settle();
+    expect(h.screen()).toEqual({ kind: "signup-uncertain", email: EMAIL });
   });
 
   it("400 is a generic failure", async () => {
@@ -527,7 +622,7 @@ describe("signup (flows §3.2)", () => {
     h.session.enterSignup();
     h.session.submitSignup(EMAIL, PASSWORD);
     await settle();
-    expect(h.screen()).toEqual({ kind: "signup", phase: "failed" });
+    expect(h.screen()).toEqual({ kind: "signup", phase: "failed", pausedUntil: null });
   });
 
   it("could not derive is device-failed; an empty or invalid password from the crate is signup.invalid", async () => {
@@ -542,7 +637,7 @@ describe("signup (flows §3.2)", () => {
     b.session.enterSignup();
     b.session.submitSignup(EMAIL, PASSWORD);
     await settle();
-    expect(b.screen()).toEqual({ kind: "signup", phase: "invalid" });
+    expect(b.screen()).toEqual({ kind: "signup", phase: "invalid", pausedUntil: null });
   });
 });
 
@@ -642,7 +737,7 @@ describe("logout (flows §3.11)", () => {
     expect(liveAtRequest).toBe(0);
     expect(storedAtRequest).toBe(TOKEN);
     expect([...h.storage.data.keys()]).toEqual([]);
-    expect(h.screen()).toEqual({ kind: "signin", phase: "ready", notice: "signed-out", email: "" });
+    expect(h.screen()).toEqual({ kind: "signin", phase: "ready", notice: "signed-out", email: "", pausedUntil: null });
     const req = h.sent.at(-1);
     expect(req?.headers["content-type"]).toBeUndefined();
     expect(req?.body).toBe("");

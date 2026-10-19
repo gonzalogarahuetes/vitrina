@@ -39,7 +39,9 @@ export type SigninPhase =
   /** 401 INVALID_CREDENTIALS, or a password no account can have. Never says which half was wrong. */
   | "failed"
   /** A service problem: a 400 or 5xx, or parameters this device cannot use. */
-  | "unavailable";
+  | "unavailable"
+  /** A 429 (flows §0's credential-route exception): no key material held; submit waits for `pausedUntil`. */
+  | "paused";
 
 export type SignupPhase =
   | "ready"
@@ -53,7 +55,9 @@ export type SignupPhase =
   /** 409: the address is registered. */
   | "taken"
   /** 400, 413 or 415: a client build error (api-sketch §7.5). */
-  | "failed";
+  | "failed"
+  /** A 429: no account was created, and nothing is held. Never signup-uncertain (flows §0). */
+  | "paused";
 
 export type UnlockPhase = "ready" | "empty" | "deriving" | "wrong" | "unavailable";
 
@@ -72,8 +76,15 @@ export type LogoutScope = "device" | "everywhere";
 export type Screen =
   /** Page load with a token: GET /v1/owner/key before any password is asked for. */
   | { readonly kind: "checking" }
-  | { readonly kind: "signin"; readonly phase: SigninPhase; readonly notice: SigninNotice; readonly email: string }
-  | { readonly kind: "signup"; readonly phase: SignupPhase }
+  | {
+      readonly kind: "signin";
+      readonly phase: SigninPhase;
+      readonly notice: SigninNotice;
+      readonly email: string;
+      /** While `paused`: when submitting may resume, in ms on the device's clock. Null otherwise. */
+      readonly pausedUntil: number | null;
+    }
+  | { readonly kind: "signup"; readonly phase: SignupPhase; readonly pausedUntil: number | null }
   | { readonly kind: "signup-uncertain"; readonly email: string }
   | { readonly kind: "unlock"; readonly phase: UnlockPhase; readonly signingOut: boolean }
   | { readonly kind: "cannot-unlock" }
@@ -92,7 +103,7 @@ export type Expiry = { readonly endsAt: Date; readonly ending: boolean };
 export type State = {
   readonly screen: Screen;
   readonly offline: boolean;
-  /** Waiting out a 429's Retry-After. */
+  /** Waiting out a 429's Retry-After on a token route. Credential routes pause their form instead (flows §0). */
   readonly rateLimited: boolean;
   /** From the stored expires_at, on the device's clock. Null outside a session. */
   readonly expiry: Expiry | null;
@@ -141,7 +152,12 @@ type CallOptions = {
   readonly server?: "wait" | "throw";
   /** 401: end the session (default), or throw (for /login's INVALID_CREDENTIALS). */
   readonly unauthorized?: "end" | "throw";
+  /** 429: wait for Retry-After and resend (default), or throw (the credential routes, flows §0). */
+  readonly rateLimit?: "wait" | "throw";
 };
+
+/** The credential routes: no silent retry of anything, and a 429 comes back to the caller (flows §0). */
+const CREDENTIAL: CallOptions = { server: "throw", unauthorized: "throw", rateLimit: "throw" };
 
 export class OwnerSession {
   private state: State = { screen: { kind: "checking" }, offline: false, rateLimited: false, expiry: null };
@@ -163,6 +179,7 @@ export class OwnerSession {
   private cancelExpiry: (() => void) | null = null;
   private blocklist: Promise<ReadonlySet<string>> | null = null;
   private logoutInFlight = false;
+  private cancelPause: (() => void) | null = null;
 
   constructor(private readonly deps: Deps) {
     this.api = ownerApi(deps.client);
@@ -221,6 +238,8 @@ export class OwnerSession {
     o?.resolve();
     this.cancelExpiry?.();
     this.cancelExpiry = null;
+    this.cancelPause?.();
+    this.cancelPause = null;
   }
 
   /** O-none: storage cleared, every handle freed (flows §1.1). */
@@ -236,7 +255,7 @@ export class OwnerSession {
 
   private toSignin(notice: SigninNotice, email = ""): void {
     this.reset();
-    this.set({ kind: "signin", phase: "ready", notice, email });
+    this.set({ kind: "signin", phase: "ready", notice, email, pausedUntil: null });
   }
 
   /** An owner 401 anywhere. */
@@ -289,7 +308,7 @@ export class OwnerSession {
           await this.waitOnline();
           continue;
         }
-        if (e instanceof ApiFailure && e.status === 429) {
+        if (e instanceof ApiFailure && e.status === 429 && opts.rateLimit !== "throw") {
           // The request was refused before it was handled, so resending it is safe.
           this.emit({ rateLimited: true });
           await this.deps.sleep((e.retryAfter ?? DEFAULT_RETRY_AFTER_S) * 1000);
@@ -339,7 +358,7 @@ export class OwnerSession {
 
   start(): void {
     const stored = this.deps.store.read();
-    if (stored === null) return this.set({ kind: "signin", phase: "ready", notice: null, email: "" });
+    if (stored === null) return this.set({ kind: "signin", phase: "ready", notice: null, email: "", pausedUntil: null });
     this.token = stored.token;
     this.expiresAt = stored.expiresAt;
     this.set({ kind: "checking" });
@@ -408,19 +427,20 @@ export class OwnerSession {
   /** The address is sent exactly as typed. No password policy here (brief §12). */
   submitSignin(email: string, password: string): void {
     const s = this.state.screen;
-    if (s.kind !== "signin" || s.phase === "busy" || s.phase === "deriving") return;
+    if (s.kind !== "signin" || s.phase === "busy" || s.phase === "deriving" || s.phase === "paused") return;
     if (email.trim() === "" || password === "") return;
     const epoch = this.epoch;
-    const screen = (phase: SigninPhase): Screen => ({ kind: "signin", phase, notice: null, email });
+    const screen = (phase: SigninPhase, pausedUntil: number | null = null): Screen => ({ kind: "signin", phase, notice: null, email, pausedUntil });
     this.set(screen("busy"));
 
     this.guarded(epoch, async () => {
       // Step 1.
       let params;
       try {
-        params = await this.call(epoch, () => this.api.loginParams(email), { server: "throw", unauthorized: "throw" });
+        params = await this.call(epoch, () => this.api.loginParams(email), CREDENTIAL);
       } catch (e) {
         if (e instanceof Stale) throw e;
+        if (failedWith(e, 429)) return this.pause(epoch, e as ApiFailure, (until) => screen("paused", until), () => screen("ready"));
         if (e instanceof ApiFailure || e instanceof UnexpectedResponse) return this.set(screen("unavailable"));
         throw e;
       }
@@ -458,10 +478,12 @@ export class OwnerSession {
       // cannot be wiped (api-sketch §8.4).
       let session;
       try {
-        session = await this.call(epoch, () => this.api.login(email, proof), { server: "throw", unauthorized: "throw" });
+        session = await this.call(epoch, () => this.api.login(email, proof), CREDENTIAL);
       } catch (e) {
         if (e instanceof Stale) throw e;
         this.freeKek();
+        // flows §0: no key material is held through the wait. The proof is zeroed below.
+        if (failedWith(e, 429)) return this.pause(epoch, e as ApiFailure, (until) => screen("paused", until), () => screen("ready"));
         // Identical for a wrong password and an unknown address (api-sketch §4.3).
         if (failedWith(e, 401)) return this.set(screen("failed"));
         if (e instanceof ApiFailure || e instanceof UnexpectedResponse) return this.set(screen("unavailable"));
@@ -517,6 +539,30 @@ export class OwnerSession {
     }
   }
 
+  /**
+   * flows §0, credential routes: a 429 returns to the form with a countdown
+   * from Retry-After. Nothing is retried; the caller has already freed every
+   * key handle and the proof is zeroed. At `until` the form becomes
+   * submittable again, and a resubmit derives afresh.
+   */
+  private pause(epoch: number, e: ApiFailure, paused: (until: number) => Screen, resume: () => Screen): void {
+    const now = this.deps.now().getTime();
+    const until = now + (e.retryAfter ?? DEFAULT_RETRY_AFTER_S) * 1000;
+    this.set(paused(until));
+    this.cancelPause?.();
+    const step = (): void => {
+      const left = until - this.deps.now().getTime();
+      if (left > 0) {
+        this.cancelPause = this.deps.setTimer(Math.min(left, MAX_TIMER_MS), step);
+        return;
+      }
+      this.cancelPause = null;
+      const s = this.state.screen;
+      if (epoch === this.epoch && !this.dead && (s.kind === "signin" || s.kind === "signup") && s.phase === "paused") this.set(resume());
+    };
+    this.cancelPause = this.deps.setTimer(until - now, step);
+  }
+
   /** From cannot-unlock, signin.unavailable, signup.taken and signup.uncertain. */
   backToSignin(email = ""): void {
     this.toSignin(null, email);
@@ -527,7 +573,7 @@ export class OwnerSession {
   enterSignup(): void {
     const s = this.state.screen;
     if (s.kind !== "signin" || s.phase === "busy" || s.phase === "deriving") return;
-    this.set({ kind: "signup", phase: "ready" });
+    this.set({ kind: "signup", phase: "ready", pausedUntil: null });
     // Start loading the blocklist now, so it is usually ready by submit.
     this.loadBlocklist().catch(() => undefined);
   }
@@ -542,10 +588,10 @@ export class OwnerSession {
 
   submitSignup(email: string, password: string): void {
     const s = this.state.screen;
-    if (s.kind !== "signup" || s.phase === "busy" || s.phase === "deriving") return;
+    if (s.kind !== "signup" || s.phase === "busy" || s.phase === "deriving" || s.phase === "paused") return;
     if (email.trim() === "" || password === "") return;
     const epoch = this.epoch;
-    const screen = (phase: SignupPhase): Screen => ({ kind: "signup", phase });
+    const screen = (phase: SignupPhase, pausedUntil: number | null = null): Screen => ({ kind: "signup", phase, pausedUntil });
     this.set(screen("busy"));
 
     this.guarded(epoch, async () => {
@@ -601,11 +647,14 @@ export class OwnerSession {
               wrappedMaster: keys.wrappedMaster,
               wrapNonce: keys.wrapNonce,
             }),
-          { network: "throw", server: "throw", unauthorized: "throw" },
+          { ...CREDENTIAL, network: "throw" },
         );
       } catch (e) {
         if (e instanceof Stale) throw e;
         this.freeHandles();
+        // A 429 is refused before anything is created: its own path, never
+        // signup.uncertain (flows §0). A resubmit draws a fresh K_master and salt.
+        if (failedWith(e, 429)) return this.pause(epoch, e as ApiFailure, (until) => screen("paused", until), () => screen("ready"));
         if (failedWith(e, 409)) return this.set(screen("taken"));
         if (e instanceof NetworkFailure || serverFault(e)) return this.set({ kind: "signup-uncertain", email });
         if (e instanceof ApiFailure) return this.set(screen("failed"));
