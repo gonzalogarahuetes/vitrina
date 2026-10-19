@@ -1941,10 +1941,11 @@ later route treating recipient auth as if it were an account — adding a refres
 an expiry, a "session", or a password.
 
 **Recipient tokens carry no expiry**, only `revoked_at` (brief §9.1). Expiry would
-buy nothing: `token` and `key` travel in the same payload in direct mode, so
-expiring the token stops future fetches while leaving a permanent decryption key
-(encryption spec §6.4) — and it would break the album for a recipient who did
-nothing wrong, whose only recovery is the parent noticing and re-inviting. If
+break the album for a recipient who did nothing wrong, whose only recovery is the
+parent noticing and re-inviting. _Until 19 October 2026 this paragraph also argued
+that expiry would leave a permanent decryption key in a direct-mode payload; since
+encryption spec §6.1 changed, the payload's key unwraps nothing without the token,
+so that half no longer applies and the decision rests on the other._ If
 expiry ever arrives it is per-invite and opt-in, never a default.
 
 The consequence — that the link forwards with a tap and grants the whole album —
@@ -1959,17 +1960,18 @@ Owner scheme. `201` on success. The album must belong to the caller, or `404`
 
 | Field                                                 | Type                                      | Notes                                                                                                                                                                                                                                                                                                                                            |
 | ----------------------------------------------------- | ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `id`                                                  | uuid                                      | **Client-generated, required, no server default.** It is inside the wrap AAD — `"vitrina-wrap-v1" ‖ recipient_id`, 16 raw bytes (encryption spec §6.2) — so the client needs it before it can compute `wrapped`. A server-assigned id breaks unwrapping, works fine for QR recipients, and fails as an opaque AEAD error (brief §9.3; schema §3) |
+| `id`                                                  | uuid                                      | **Client-generated, required, no server default.** It is inside both wrap AADs — `"vitrina-wrap-v1" ‖ recipient_id` and `"vitrina-invite-wrap-v1" ‖ recipient_id`, 16 raw bytes (encryption spec §6.2, §6.1) — so the client needs it before it can compute `wrapped`. A server-assigned id breaks unwrapping and fails as an opaque AEAD error (brief §9.3; schema §3) |
 | `kind`                                                | `"qr"` \| `"passphrase"`                  | Enum, mirroring the `CHECK`                                                                                                                                                                                                                                                                                                                      |
 | `label`                                               | 55–1366 chars → **41–1024 bytes**         | Ciphertext under `K_label(recipient_id)` (encryption spec §2); the relay stores it and cannot read it. Bytes are the real check (§5.3); any character limit is the client's                                                                                                                                                                                                                                                                               |
 | `token_hash`                                          | 43 chars base64url → **exactly 32 bytes** | SHA-256 of the 32 raw token bytes, computed by the client (§7.4)                                                                                                                                                                                                                                                                                 |
-| `wrapped`                                             | 64 chars → 48 bytes                       | **passphrase only**, forbidden for `qr`                                                                                                                                                                                                                                                                                                          |
-| `wrap_nonce`                                          | 32 chars → 24 bytes                       | **passphrase only.** The field that gets forgotten, and without it the blob is undecryptable                                                                                                                                                                                                                                                     |
+| `wrapped`                                             | 64 chars → 48 bytes                       | **Both kinds**, since 19 October 2026: under `K_invite` for `qr` (encryption spec §6.1), under the passphrase KEK for `passphrase` (§6.2)                                                                                                                                                                                                          |
+| `wrap_nonce`                                          | 32 chars → 24 bytes                       | **Both kinds.** The field that gets forgotten, and without it the blob is undecryptable                                                                                                                                                                                                                                                          |
 | `kdf_salt`                                            | 22 chars → 16 bytes                       | **passphrase only**                                                                                                                                                                                                                                                                                                                              |
 | `kdf_memory_kib`, `kdf_iterations`, `kdf_parallelism` | integer                                   | **passphrase only.** Stored per row so they can be raised without invalidating existing invitations                                                                                                                                                                                                                                              |
 
-**The schema mirrors the two database `CHECK`s rather than trusting them.** All six
-wrap fields are required for `passphrase` and forbidden for `qr`, and every binary
+**The schema mirrors the two database `CHECK`s rather than trusting them.** `wrapped`
+and `wrap_nonce` are required for both kinds; the four KDF fields are required for
+`passphrase` and forbidden for `qr` (schema §3, as `006` changes it), and every binary
 field decodes to exactly the length encryption spec §6.2 fixes. A wrong length is
 not a style problem: it is a blob that cannot be unwrapped, discovered at unwrap
 time with no diagnostic. Rejecting at the boundary turns an opaque AEAD failure
@@ -3138,7 +3140,13 @@ is verified against Hetzner.**
 
 ---
 
-## 10. The passphrase recipient's key material
+## 10. The recipient's key material
+
+**Since 19 October 2026 this section serves both kinds of recipient**: a QR
+invite's `key` is `K_invite`, which unwraps a wrapping this route returns
+(encryption spec §6.1). The rest of the section was written for passphrase
+recipients and reads unchanged for them; for QR recipients, §10.3's step 4 is a
+plain XChaCha20-Poly1305 unwrap under `K_invite`, with no Argon2id.
 
 **PR 4, 13 September 2026. One route.** A passphrase recipient arrives holding
 what the invite carried — relay, album id, token — and no key (invite spec §4,
@@ -3162,10 +3170,11 @@ GET /v1/recipient/key
 
 | Field                                                 | Type               | Notes                                                                                                                                                                                                                                      |
 | ----------------------------------------------------- | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `id`                                                  | uuid               | `recipients.id` — the caller's own row. **Returned because the client needs it and may not have it**: it is inside the wrap AAD (`"vitrina-wrap-v1" ‖ recipient_id`, encryption spec §6.2), so no unwrap is possible without it. See §10.3 |
-| `kdf_salt`                                            | 22 chars, 16 bytes |                                                                                                                                                                                                                                            |
-| `kdf_memory_kib`, `kdf_iterations`, `kdf_parallelism` | integer            | The row's own values — a client MUST use these and not a constant (encryption spec §9 category 9 exists to catch the one that does)                                                                                                        |
-| `wrapped`                                             | 64 chars, 48 bytes | `K_album` under the passphrase-derived KEK, exactly as §7.7 stored it                                                                                                                                                                      |
+| `id`                                                  | uuid               | `recipients.id` — the caller's own row. **Returned because the client needs it and may not have it**: it is inside both wrap AADs (encryption spec §6.1, §6.2), so no unwrap is possible without it. See §10.3 |
+| `kind`                                                | `"qr"` \| `"passphrase"` | Since 19 October 2026. Tells the client which unwrap to run, and whether the four KDF fields are present                                                                                                                                  |
+| `kdf_salt`                                            | 22 chars, 16 bytes | **`passphrase` only**; absent for `qr`                                                                                                                                                                                                     |
+| `kdf_memory_kib`, `kdf_iterations`, `kdf_parallelism` | integer            | **`passphrase` only.** The row's own values — a client MUST use these and not a constant (encryption spec §9 category 9 exists to catch the one that does)                                                                                 |
+| `wrapped`                                             | 64 chars, 48 bytes | `K_album` under `K_invite` (`qr`) or the passphrase-derived KEK (`passphrase`), exactly as §7.7 stored it                                                                                                                                 |
 | `wrap_nonce`                                          | 32 chars, 24 bytes |                                                                                                                                                                                                                                            |
 
 Field names are §7.7's, unchanged, for the reason §7.5 gives about
@@ -3179,26 +3188,19 @@ spellings.
   argument), and therefore nothing to enumerate. The checklist asked that this
   route be "scoped strictly to the caller's own row"; a flat path makes that a
   property of the URL rather than of a `WHERE` clause someone has to remember.
-- **A QR recipient calling it gets `404 NOT_FOUND`**, no `details`. A `qr` row
-  has all six columns NULL (schema §3): there is no key material for this caller
-  and the honest answer is that the resource does not exist. No QR client ever
-  calls this route, so the case is a probe or a bug either way, and `404` is
-  what a nonexistent row would have answered under an id-bearing design — the
-  equivalence the checklist asked for, now moot but preserved.
-- **A revoked QR recipient gets `404`, not `403`** — §7.3's order decides it:
-  there is no key material for a `qr` row at step 3, and step 4 never runs. The
-  ladder gives this for free, and a handler that checks revocation first answers
-  `403` and reveals that the row exists.
+- **QR recipients call it too, since 19 October 2026.** Until then a `qr` row held
+  no wrapping, and this route answered `404` for it (and `404`, not `403`, for a
+  revoked one). Every row now has a wrapping (schema §3, as `006` changes it), so
+  both kinds get `200`, distinguished by `kind`.
 - **A revoked recipient gets `403 ACCESS_REVOKED`**, by §7.3 step 4 — and this is
   the one route where that matters beyond copy. Revocation stops the relay
-  serving ciphertext (encryption spec §6.4); the wrapped key is the one piece of
-  ciphertext whose continued availability would let a revoked passphrase holder
-  finish an unwrap they had not yet started. Refusing it is the server's
+  serving ciphertext (encryption spec §6.4); the wrapping is the one piece of
+  ciphertext whose continued availability would let a revoked holder of either
+  kind of invite finish an unwrap they had not yet started. Refusing it is the server's
   revocation doing exactly what brief §8 says it does, one artefact further.
 - **Rate-limited on the token hash like every recipient route** (PR 5, §11).
   Nothing specific to this route in v1 — see §10.4.
-- **Errors:** `401 UNAUTHENTICATED` · `403 ACCESS_REVOKED` · `404 NOT_FOUND`
-  (QR recipient) · `429 RATE_LIMITED`.
+- **Errors:** `401 UNAUTHENTICATED` · `403 ACCESS_REVOKED` · `429 RATE_LIMITED`.
 
 ### 10.2 Returns wrapped, never unwrapped — the rule, stated beside §4.1
 
@@ -3241,13 +3243,14 @@ says the recipient arrives without it.** If invite spec §4's payload does carry
 it does not, this response is the only source. Invite spec §4 settled this on
 13 September 2026: the payload does not carry `recipient_id`. A passphrase
 recipient needs it for the AAD and gets it from this route, which they must call
-anyway; a QR recipient needs it not at all, their key being in the payload rather
-than wrapped. So this response is the only source, and the field is not
-redundant.
+anyway; since 19 October 2026 a QR recipient needs it too, for the invite wrap's
+AAD (encryption spec §6.1). So this response is the only source, and the field is
+not redundant.
 
-**Not returned: `label`, `album_id`, `kind`, `created_at`.** The album is in the
-invite; the kind is implied by a `200`; and `label` is not this route's — a QR
-recipient needs it too, for the watermark (brief §5), and cannot call here.
+**Not returned: `label`, `album_id`, `created_at`.** The album is in the invite,
+and `label` is not this route's — §11.4 is where it is read, for the watermark
+every recipient draws (brief §5). _`kind` was in this list until
+19 October 2026, when a `200` stopped implying it._
 
 **That gap blocks PR 5, and is escalated rather than noted.** Trace it: brief §5's
 watermark reads _"Shared privately with María · 6 Aug 2026"_, and its entire

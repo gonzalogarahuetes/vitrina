@@ -126,7 +126,7 @@ Format decisions in §6 items 1–3 are effectively permanent. Everything else i
 - **AAD per chunk:** `asset_id ‖ chunk_index ‖ total_chunks`. Without this an attacker can reorder, truncate, or splice chunks between assets. Easy to omit, and the failure is silent.
 - **Key derivation (passphrase recipients):** Argon2id → key-encryption key → wraps the album content key. Server stores the wrapped blob, salt, and parameters; never the passphrase.
 - **Passphrases must be system-generated, high entropy** (4–5 words, diceware-style). Because the server holds the wrapped key, a user-chosen weak passphrase is offline-brute-forceable. Do not let users pick their own.
-- **QR recipients:** key material lives only in the QR. Never on the server in any form. This is the default — but **not because it is stronger in every respect.** It is stronger against a stolen database and weaker against a forwarded or captured invite, since the QR carries `K_album` while a passphrase invite does not. The full asymmetry is in encryption spec §6.5, and the default is chosen for the threat this architecture exists to defeat rather than for a general ordering.
+- **QR recipients:** the QR carries a random per-recipient invite key, never `K_album`; the relay stores `K_album` wrapped under it and never sees the invite key (encryption spec §6.1, **decided 19 October 2026**, before any invite was issued outside development, so that `K_album` never has to leave the client's key module). This is the default — but **not because it is stronger in every respect.** It is stronger against a stolen database, because a random 256-bit key cannot be attacked offline, and weaker against a forwarded or captured invite, since the QR alone opens the album until revoked while a passphrase link alone opens nothing. Revocation now retracts both kinds of invite: the relay refuses the wrapping. The full asymmetry is in encryption spec §6.5, and the default is chosen for the threat this architecture exists to defeat rather than for a general ordering.
 
 ### Revocation is server-enforced, not cryptographic
 
@@ -160,7 +160,7 @@ Since §10.1 settles v1 on proxying, revocation is checked per request and there
 
 **`byte_size` is a denormalised convenience** for owner quota and storage accounting, so that answering "how much is this owner storing" does not require enumerating a bucket. Object storage is authoritative; treat the column as a cache.
 
-**No column ever holds a plaintext filename**, and none holds key material. `recipients.wrapped_key` holds a wrapped blob for passphrase recipients; QR recipients store nothing at all (encryption spec §6.1).
+**No column ever holds a plaintext filename**, and none holds key material. `recipients.wrapped` holds a wrapped `K_album` for every recipient — under a passphrase-derived key (encryption spec §6.2) or a random invite key the relay never sees (encryption spec §6.1).
 
 **No object-key column.** `media.id` _is_ the 16-byte `asset_id`, and encryption spec §7 requires object keys to be random identifiers — which `asset_id` already is. Asset and thumbnail object keys are derived from it rather than stored, so there is no second value that can drift. See encryption spec §2 on why relying on it as a global identifier is safe.
 

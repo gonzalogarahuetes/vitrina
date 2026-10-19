@@ -22,7 +22,7 @@ Defining the payload as an object with three serialisations costs nothing now an
   "relay": "https://…", // origin of the relay serving this album
   "album": "…", // 16 bytes, base64url, no padding
   "token": "…", // 32 bytes, base64url, no padding — access token
-  "key": "…", // 32 bytes, base64url, no padding — K_album
+  "key": "…", // 32 bytes, base64url, no padding — K_invite, which unwraps K_album (encryption spec §6.1)
 }
 ```
 
@@ -37,7 +37,7 @@ All binary fields use base64url without padding (RFC 4648 §5). Sizes: `album` �
 Restating the point from the encryption spec §6.4, because the fact that they travel together is exactly what makes it easy to conflate them:
 
 - `token` authorises **fetching ciphertext** from the relay. The relay stores its hash and can revoke it.
-- `key` authorises **decrypting** that ciphertext. The relay never receives it and can never revoke it.
+- `key` authorises **unwrapping** `K_album`, which decrypts that ciphertext. The relay never receives it, but serves the wrapping only to an unrevoked token, so revocation makes it useless.
 
 Two secrets, two parties, one envelope.
 
@@ -97,13 +97,13 @@ The payload omits `key`:
 https://{relay}/v/#v=1&a={album}&t={token}
 ```
 
-**The payload does NOT carry `recipient_id`, and that is deliberate.** A passphrase recipient needs it — it is inside the wrap AAD (`"vitrina-wrap-v1" ‖ recipient_id`, encryption spec §6.2), so no unwrap is possible without it — and they get it from the key-material route that hands back the wrapped blob, which they must call anyway. Adding it here would duplicate a value the relay already returns, and §6 makes any added field a version increment. A QR recipient needs it not at all: their key is in the payload rather than wrapped, so there is no AAD to reconstruct. _Stated 13 September 2026 because the API document had to ask, and a reader could not tell from §1 whether the omission was a decision._
+**The payload does NOT carry `recipient_id`, and that is deliberate.** A passphrase recipient needs it — it is inside the wrap AAD (`"vitrina-wrap-v1" ‖ recipient_id`, encryption spec §6.2), so no unwrap is possible without it — and they get it from the key-material route that hands back the wrapped blob, which they must call anyway. Adding it here would duplicate a value the relay already returns, and §6 makes any added field a version increment. Since 19 October 2026 a QR recipient needs it too — their wrap's AAD is `"vitrina-invite-wrap-v1" ‖ recipient_id` (encryption spec §6.1) — and gets it from the same route. _Stated 13 September 2026 because the API document had to ask, and a reader could not tell from §1 whether the omission was a decision._
 
 The recipient receives the link (or scans a QR of it) **and, separately, a 5-word passphrase**. The client fetches the wrapped key, salt, and Argon2id parameters from the relay, derives the KEK, and unwraps `K_album` per encryption spec §6.2.
 
 Passphrases are system-generated, minimum 5 words, from a vetted wordlist in the recipient’s language, chosen per invite (encryption spec §6.3, brief §15.2). See encryption spec §6.3 — user-chosen passphrases are forbidden, and the reason is not paternalism.
 
-**Security note:** this mode is weaker than direct mode **against database theft**, because the relay stores a wrapped copy of `K_album` and can attack it offline given a weak passphrase. It is _stronger_ against a forwarded invite, because the relay participates in every unwrap and therefore has a lever direct mode does not — see encryption spec §6.5 and §8 below. Direct mode remains the default and the owner-facing UI SHOULD present passphrase mode as the fallback, but not on the grounds that it is weaker in every respect.
+**Security note:** this mode is weaker than direct mode **against database theft**, because its wrapping is under a passphrase-derived key the relay could attack offline given a weak passphrase, where direct mode's is under a random key. It is _stronger_ against a forwarded invite, because the link alone opens nothing — see encryption spec §6.5 and §8 below. Direct mode remains the default and the owner-facing UI SHOULD present passphrase mode as the fallback, but not on the grounds that it is weaker in every respect.
 
 ---
 
@@ -122,6 +122,7 @@ Native clients inherit every obligation in §2.2, with one addition: iOS and And
 - A client encountering an unknown `v` MUST refuse and display a clear "this invite needs a newer version" message. It MUST NOT guess.
 - Adding a field is a version increment.
 - Payload version is independent of envelope version (encryption spec §8). They may diverge.
+- **Version 1 was redefined once, on 19 October 2026**: `key` changed from `K_album` to `K_invite` (encryption spec §6.1). That was a version-1 change rather than a version 2 only because no invite had been issued outside development; invites created before it no longer open. It is the last time version 1 changes.
 
 ---
 
@@ -148,9 +149,9 @@ The question is whether an invite can be restricted to one person, so that a rec
 `token` and `key` are independent secrets (§1.1), and only one of them is the relay's to control:
 
 - **The token can be limited.** The relay stores its hash, and can refuse to serve ciphertext to a second redeemer.
-- **The key cannot be un-given.** In direct mode `K_album` is inside the QR. Anyone who photographs that code holds it permanently, and no server behaviour retracts it.
+- **The key unwraps nothing without the relay.** Since 19 October 2026 the QR carries `K_invite`, not `K_album` (encryption spec §6.1), and the relay serves the wrapping only to an unrevoked token. A photographed QR is therefore retractable. What cannot be un-given is `K_album` once a recipient has unwrapped it, which lives only in the memory of their session.
 
-So single-use redemption prevents further recipients from **fetching** ciphertext. It does not prevent them **decrypting** ciphertext they obtained some other way. In practice they are locked out; the guarantee is server-enforced, not mathematical, exactly as with revocation (encryption spec §6.4).
+So single-use redemption prevents further recipients from **fetching** ciphertext or the wrapping. It does not prevent someone who already holds `K_album` from **decrypting** ciphertext they obtained some other way. In practice they are locked out; the guarantee is server-enforced, not mathematical, exactly as with revocation (encryption spec §6.4).
 
 ### 8.2 The buildable shape
 
@@ -168,7 +169,7 @@ It also cuts against a property §3 deliberately values: a printed QR with no ex
 
 ### 8.4 The asymmetry that decides the mechanism
 
-Direct mode cannot gate redemption at the moment of decryption, because the relay never sees the key. Passphrase mode can, because the client must fetch the wrapped blob and the relay therefore participates in every unwrap (encryption spec §6.5).
+Both modes can gate redemption at the moment of unwrapping, because the client must fetch its wrapping and the relay therefore participates in every unwrap (encryption spec §6.5). Until 19 October 2026 only passphrase mode could. The asymmetry that remains is the link: a passphrase link alone opens nothing, a QR alone opens the album.
 
 If invite sharing ever becomes the primary concern, that asymmetry — not a preference for QR codes — is what should drive the choice of default.
 
