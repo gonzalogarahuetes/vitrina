@@ -11,6 +11,8 @@
  *     /login and /owner/key only), the MasterKey and every AlbumKey (O-open).
  *   - An owner 401 from any route, in any state: clear storage, free every
  *     handle, go to sign-in (flows §1.1).
+ *   - The open album (album.ts) is part of O-open: it holds no key of its
+ *     own, borrows its album's AlbumKey, and is disposed with everything else.
  *   - A WASM trap: device failed. Nothing is freed, because the instance is
  *     poisoned and must not be touched (envelope.ts). The token is kept, so a
  *     reload comes back to unlock.
@@ -23,7 +25,10 @@ import { uuidToBytes } from "$lib/ids";
 import type { AlbumKey, MasterKey, OwnerKeyFunctions, OwnerKek, OwnerKeyMaterial } from "$lib/keys/owner-types";
 import type { SessionStore } from "$lib/session/owner-session";
 import { decodeBase64urlRange } from "@vitrina/shared";
+import type { Picture } from "$lib/recipient/render";
+import { AlbumLeft, OwnerAlbum, type AlbumScreen } from "./album";
 import { ownerApi, type AlbumRow, type OwnerApi } from "./api";
+import type { Imaging } from "./prepare";
 import { checkPassword, codePoints } from "./policy";
 
 // ── Screens ──────────────────────────────────────────────────────────────
@@ -97,6 +102,7 @@ export type Screen =
       readonly create: CreatePhase;
       readonly signingOut: LogoutScope | null;
     }
+  | AlbumScreen
   | { readonly kind: "signed-out-partial"; readonly scope: LogoutScope; readonly retrying: boolean };
 
 export type Expiry = { readonly endsAt: Date; readonly ending: boolean };
@@ -126,6 +132,12 @@ export type Deps = {
   readonly now: () => Date;
   /** setTimeout, cancellable. */
   readonly setTimer: (ms: number, fn: () => void) => () => void;
+  /** Decoding and canvas re-encoding for upload (prepare.ts; imaging.ts in the browser). */
+  readonly imaging: Imaging;
+  /** createImageBitmap(new Blob([bytes])) in the browser: no URL is made for a decrypted image. */
+  readonly decodeImage: (bytes: Uint8Array) => Promise<Picture>;
+  /** crypto.randomUUID() in the browser: the media id, which is the envelopes' asset_id. */
+  readonly newMediaId: () => string;
 };
 
 /** How long before expires_at the warning shows (flows §3.12). */
@@ -172,6 +184,10 @@ export class OwnerSession {
   private kek: OwnerKek | null = null;
   private master: MasterKey | null = null;
   private readonly albumKeys = new Map<string, AlbumKey>();
+  /** The open album, if any. Holds decrypted pictures and envelopes, never a key of its own. */
+  private album: OwnerAlbum | null = null;
+  /** The album list as last shown, to go back to. */
+  private albumList: readonly AlbumView[] = [];
 
   /** Bumped whenever key state is reset. An operation from an older epoch is stale. */
   private epoch = 0;
@@ -203,12 +219,20 @@ export class OwnerSession {
   }
 
   private set(screen: Screen): void {
+    if (screen.kind === "albums") this.albumList = screen.albums;
     this.emit({ screen });
+  }
+
+  private closeAlbum(): void {
+    const a = this.album;
+    this.album = null;
+    a?.dispose();
   }
 
   // ── Key state: the only places it is dropped ───────────────────────────
 
   private freeHandles(): void {
+    this.closeAlbum();
     if (this.deps.poison.poisoned) {
       // A trapped instance must not be touched. Drop the references only.
       this.kek = null;
@@ -792,6 +816,106 @@ export class OwnerSession {
       // Newest first, as GET /v1/albums orders them.
       this.set({ ...now, albums: [{ id, mediaCount: 0, title, failed: null }, ...now.albums], create: "closed" });
     });
+  }
+
+  // ── §3.4 The owner's album, §3.6 upload, §3.7 remove (album.ts) ─────────
+
+  /** From the list. An album whose key would not open cannot be opened; one whose title would not still can. */
+  openAlbum(id: string): void {
+    const s = this.state.screen;
+    if (s.kind !== "albums" || s.phase !== "ready" || s.signingOut !== null || s.create === "creating") return;
+    const view = s.albums.find((a) => a.id === id);
+    const albumKey = this.albumKeys.get(id);
+    const token = this.token;
+    if (view === undefined || view.failed === "key" || albumKey === undefined || token === null) return;
+    const epoch = this.epoch;
+    const d = this.deps;
+    this.closeAlbum();
+    const album: OwnerAlbum = new OwnerAlbum(
+      {
+        api: this.api,
+        token,
+        envelope: d.envelope,
+        albumKey,
+        imaging: d.imaging,
+        decodeImage: d.decodeImage,
+        newMediaId: d.newMediaId,
+        now: d.now,
+        sleep: d.sleep,
+        nextFrames: d.nextFrames,
+        setTimer: d.setTimer,
+        // Each attempt checks the album is still open, so a request waiting out offline or a 429 is not resent after leaving.
+        call: <T>(op: () => Promise<T>): Promise<T> => this.call(epoch, (): Promise<T> => (this.album === album ? op() : Promise.reject(new Stale()))),
+        isStale: (e) => e instanceof Stale,
+        guarded: (task) => this.guarded(epoch, task),
+        screen: () => (this.state.screen.kind === "album" ? this.state.screen : null),
+        show: (screen) => this.set(screen),
+        gone: () => this.leaveAlbum(true),
+      },
+      id,
+    );
+    this.album = album;
+    this.set({ kind: "album", id, title: view.title, phase: "loading", items: [], viewer: null, confirm: null, erasurePending: 0, leaving: false });
+    album.start();
+  }
+
+  /**
+   * Back to the list. With a photo still on its way, ask first: leaving stops
+   * it, and what it leaves on the server shows as pending or failed (flows §3.6).
+   */
+  leaveAlbum(force = false): void {
+    const s = this.state.screen;
+    const a = this.album;
+    if (s.kind !== "album" || a === null || s.confirm?.removing === true) return;
+    if (a.busy && !force) return a.askLeave(true);
+    const count = s.items.filter((i) => i.status !== null).length;
+    this.closeAlbum();
+    const albums = this.albumList.map((v) => (v.id === s.id ? { ...v, mediaCount: count } : v));
+    this.set({ kind: "albums", phase: "ready", albums, create: "closed", signingOut: null });
+  }
+
+  /** Every album action goes to the open album, and only while its screen is showing. */
+  private inAlbum(f: (a: OwnerAlbum) => void): void {
+    const a = this.album;
+    if (a === null || this.state.screen.kind !== "album") return;
+    try {
+      f(a);
+    } catch (e) {
+      if (e instanceof EnvelopeUnavailable || this.deps.poison.poisoned) return this.deviceFailed();
+      // The album was left underneath the call: nothing to do. Anything else is a bug, and surfaces.
+      if (!(e instanceof AlbumLeft || e instanceof Stale)) throw e;
+    }
+  }
+
+  stayInAlbum(): void {
+    this.inAlbum((a) => a.askLeave(false));
+  }
+  addPhotos(files: readonly File[]): void {
+    this.inAlbum((a) => a.add(files));
+  }
+  resendPhoto(key: string): void {
+    this.inAlbum((a) => a.resend(key));
+  }
+  dismissPhoto(key: string): void {
+    this.inAlbum((a) => a.dismiss(key));
+  }
+  retryThumb(key: string): void {
+    this.inAlbum((a) => a.retryThumb(key));
+  }
+  openViewer(key: string): void {
+    this.inAlbum((a) => a.openViewer(key));
+  }
+  closeViewer(): void {
+    this.inAlbum((a) => a.closeViewer());
+  }
+  askRemove(key: string): void {
+    this.inAlbum((a) => a.askRemove(key));
+  }
+  cancelRemove(): void {
+    this.inAlbum((a) => a.cancelRemove());
+  }
+  confirmRemove(): void {
+    this.inAlbum((a) => a.confirmRemove());
   }
 
   // ── §3.11 Logout ───────────────────────────────────────────────────────

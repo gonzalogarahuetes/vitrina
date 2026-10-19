@@ -26,7 +26,8 @@
       // Capped at 2: a hundred cells at 3x is real memory on a phone (brief §11).
       const dpr = Math.min(2, window.devicePixelRatio || 1);
       c.width = c.height = Math.round(size * dpr);
-      const ctx = c.getContext("2d");
+      // sRGB, as the JPEGs were encoded (owner/imaging.ts).
+      const ctx = c.getContext("2d", { colorSpace: "srgb" });
       try {
         if (ctx !== null) drawCell(ctx, thumb.picture, size, dpr, lines);
       } catch {

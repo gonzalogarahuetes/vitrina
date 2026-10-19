@@ -1,7 +1,7 @@
 /*
  * English copy, keyed by slot name. Recipient path: the ⟦copy: …⟧ slots of
  * flows §2 and §4, the prototype's extra slots, and open.newer-version. Owner
- * path: the slots of flows §3.1–§3.5, §3.11 and §3.12, the Main (unlock),
+ * path: the slots of flows §3.1–§3.7, §3.11 and §3.12, the Main (unlock),
  * Signup and Signin boards' extra slots, and signin.unavailable. Each owner
  * slot carries its rule above it.
  *
@@ -178,6 +178,81 @@ export const en = {
   "album.create.busy": "Creating the album…",
   "album.create.failed": "The album couldn't be created. Try again.",
 
+  "albums.open.a11y": (title: string) => `Open ${title}`,
+  "albums.open.untitled.a11y": "Open this album",
+
+  // ── The owner's album (flows §3.4, §3.6, §3.7) ────────────────────────────
+  // Album-wide rules: an item is "done" only on the server's ready (api-sketch
+  // §9.7), so nothing says "uploaded" before it. Nothing claims a photo cannot
+  // be copied (brief §3). Failures carry no reason string (api-sketch §9.8).
+
+  "album.loading": "Opening the album…",
+  "album.back": "Back to your albums",
+  /** Flows §3.4: no rule beyond brief §3. */
+  "album.empty": "No photos in this album yet.",
+  "album.add": "Add photos",
+  /** Flows §3.6, brief §3 "We promise": may say location and camera details are removed before anything leaves the device. */
+  "upload.stripped": "Location and camera details are removed on this device before anything is sent.",
+  /** Flows §3.6, #14: may say a viewing-size copy is sent. Must not claim this prevents copying (brief §3). */
+  "upload.downscale": "A viewing-size copy of each photo is sent, not the original file.",
+  "album.photo.a11y": (i: number, n: number) => `Photo ${i} of ${n}. Opens larger.`,
+
+  // Per item, while this device moves it (flows §3.6's drawn states).
+  "upload.queued": "Waiting its turn",
+  "upload.preparing": "Preparing on this device…",
+  "upload.encrypting": "Encrypting…",
+  "upload.uploading": "Sending…",
+  /** Sent; not done until the server says ready (#9). */
+  "upload.waiting": "Waiting for the server to confirm…",
+
+  // Per item, as the server reports it.
+  /** pending, not on this device and not yet old: started somewhere and not finished. */
+  "media.pending": "Started, not finished yet",
+  "media.processing": "Still arriving",
+  /** Flows §3.6 upload.failed: retry or remove, no reason string (api-sketch §9.8). This tab still holds it. */
+  "upload.failed": "This photo didn't finish uploading. Send it again, or remove it.",
+  /** The same, after a reload: nothing is left to re-send (flows §3.6), so the remedy is removal. */
+  "upload.failed.gone": "This photo didn't finish uploading. Remove it, then add it again.",
+  /**
+   * Flows §3.4 album.stalled and §3.6 upload.stalled: states how long the item
+   * has been stuck and offers removal. No guess at the cause (api-sketch §9.8).
+   */
+  "upload.stalled": (howLong: string, since: string) => `This photo has been stuck for ${howLong}, since ${since}. You can remove it.`,
+  "upload.resend": "Send again",
+
+  // Failed on this device: nothing about it was sent.
+  /** #17: stripping could not be confirmed, so it was not sent. Says what was not sent, not why the check failed. */
+  "upload.not-stripped": "This photo wasn't sent: this device couldn't confirm its location and camera details were removed.",
+  "upload.not-prepared": "This photo couldn't be prepared on this device, so nothing was sent.",
+  "upload.refused": "The server didn't accept this photo, so nothing was stored.",
+  "upload.dismiss": "Dismiss",
+
+  "album.leaving": "A photo is still being added. If you leave now, it stops, and anything already sent shows here as unfinished.",
+  "album.leaving.go": "Leave anyway",
+  "album.leaving.stay": "Stay",
+
+  "media.remove": "Remove",
+  "remove.title": "Remove this photo?",
+  "remove.checking": "Checking when this album was last opened…",
+  /** Flows §3.7: never ready, so nobody could have retrieved it. */
+  "remove.never-ready": "It never finished uploading, so nobody could have opened it.",
+  /** Flows §3.7: conveys exactly this. Uses "opened" only (api-sketch §11.6). */
+  "remove.unopened": "No one has opened this album since you added it.",
+  /** Flows §3.7: stops future access only. Must not imply that what was retrieved is withdrawn (brief §8). */
+  "remove.opened": "Removing it stops anyone opening it from now on. It can't undo anything someone has already seen.",
+  "remove.confirm": "Remove",
+  "remove.cancel": "Keep it",
+  "remove.busy": "Removing…",
+  /**
+   * Flows §3.7 remove.pending: hidden from everyone now; its stored copy has
+   * not been erased yet. Must not promise when or whether erasure completes,
+   * say "under way", or imply anything runs after this screen closes.
+   */
+  "remove.pending": (n: number) =>
+    n === 1
+      ? "A photo you removed is hidden from everyone now. Its stored copy hasn't been erased yet."
+      : `${n} photos you removed are hidden from everyone now. Their stored copies haven't been erased yet.`,
+
   /** Flows §3.11. */
   "logout.device": "Sign out on this device",
   /** Flows §3.11, api-sketch §7.5: ends every session, including this one. */
@@ -205,6 +280,23 @@ export function watermarkDate(d: Date): string {
 /** When a session ends, for session.ending: "Thu 29 Oct, 12:00", in the device's time zone. */
 export function sessionEndTime(d: Date): string {
   return new Intl.DateTimeFormat("en-GB", { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }).format(d);
+}
+
+/** For upload.stalled: "about 3 hours", "about 1 day". Rounded, never below a minute. */
+export function stuckFor(ms: number): string {
+  const minutes = Math.max(1, Math.round(ms / 60_000));
+  if (minutes < 60) return minutes === 1 ? "about a minute" : `about ${minutes} minutes`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return hours === 1 ? "about an hour" : `about ${hours} hours`;
+  const days = Math.round(hours / 24);
+  return days === 1 ? "about a day" : `about ${days} days`;
+}
+
+/** For upload.stalled: "14:05" today, otherwise "Thu 15 Oct, 14:05", in the device's time zone. */
+export function stuckSince(d: Date, now: Date): string {
+  const sameDay = d.toDateString() === now.toDateString();
+  const opts: Intl.DateTimeFormatOptions = sameDay ? { hour: "2-digit", minute: "2-digit" } : { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" };
+  return new Intl.DateTimeFormat("en-GB", opts).format(d);
 }
 
 /** The countdown for credential.paused: "about 12 minutes", "45 seconds". Rounded up, never "0". */
