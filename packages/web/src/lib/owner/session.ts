@@ -80,6 +80,7 @@ export type Screen =
       readonly kind: "signin";
       readonly phase: SigninPhase;
       readonly notice: SigninNotice;
+      /** The address the form is created with (a prefill), not what is typed in it. Constant during an attempt. */
       readonly email: string;
       /** While `paused`: when submitting may resume, in ms on the device's clock. Null otherwise. */
       readonly pausedUntil: number | null;
@@ -430,7 +431,19 @@ export class OwnerSession {
     if (s.kind !== "signin" || s.phase === "busy" || s.phase === "deriving" || s.phase === "paused") return;
     if (email.trim() === "" || password === "") return;
     const epoch = this.epoch;
-    const screen = (phase: SigninPhase, pausedUntil: number | null = null): Screen => ({ kind: "signin", phase, notice: null, email, pausedUntil });
+    // `email` on the screen is the address the form is CREATED with, and
+    // +page.svelte re-creates the form when it changes. So it stays as it was
+    // for the whole attempt: writing the typed address here re-created the
+    // form on the first submit and emptied the password field before anything
+    // had happened. The form keeps what was typed itself.
+    const formEmail = s.email;
+    const screen = (phase: SigninPhase, pausedUntil: number | null = null): Screen => ({
+      kind: "signin",
+      phase,
+      notice: null,
+      email: formEmail,
+      pausedUntil,
+    });
     this.set(screen("busy"));
 
     this.guarded(epoch, async () => {
