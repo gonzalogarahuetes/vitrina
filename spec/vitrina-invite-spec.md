@@ -60,13 +60,13 @@ This is the highest-consequence, lowest-visibility mistake available in this cod
 ### 2.2 Client obligations on load
 
 1. Parse the fragment
-2. Derive keys and hold them **in memory only**
+2. Hold every key the fragment leads to — `K_album` above all — **in memory only**
 3. Immediately call `history.replaceState` to strip the fragment from the visible URL
-4. Never write `key` to `localStorage`, `sessionStorage`, IndexedDB, or a cookie
+4. Never write `key` to `localStorage`, IndexedDB, a cookie, or any storage that outlives the tab. **One exception, decided 20 October 2026:** the web client may keep the fragment's own contents — token, album, and `key` if present — in `sessionStorage`, so that a reload of the same tab can continue (`vitrina-client-flows.md` §4.7). That storage is per tab and does not survive closing it, measured on the target phones (`scripts/tab-reload-test/RESULTS.md`), and since §1's `key` is `K_invite`, what it holds opens nothing once the invite is revoked. Nothing derived from the fragment is ever stored.
 
 Step 3 is cosmetic against a determined party — the fragment is already in browser history and possibly in the clipboard — but it stops the key being shoulder-surfed from an address bar, screenshotted along with the page, or copied when a grandparent shares "the link that worked."
 
-**Consequence to design around:** because the key is memory-only, a page refresh loses access and requires re-scanning or re-opening the invite. That is a real usability cost for the least technical users we have. Whether to offer an explicit, opt-in "remember on this device" that persists the key to IndexedDB is an **open decision** — it trades the strongest property we have for the convenience of the audience who needs convenience most. Do not resolve it by accident.
+**Consequence to design around:** a reload of the same tab continues (step 4's exception), but closing the tab loses access, and reopening needs the invite again. That is a real usability cost for the least technical users we have. Whether to offer an explicit, opt-in "remember on this device" that persists the key to IndexedDB is an **open decision** — it trades the strongest property we have for the convenience of the audience who needs convenience most. Do not resolve it by accident.
 
 ---
 
