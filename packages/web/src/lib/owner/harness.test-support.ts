@@ -21,6 +21,8 @@ import type {
 } from "$lib/keys/owner-types";
 import { sessionStore } from "$lib/session/owner-session";
 import { encodeBase64url, OWNER_KDF_V1 } from "@vitrina/shared";
+import { fakeJpeg } from "./jpeg.test-support";
+import type { Dims, Imaging } from "./prepare";
 import { OwnerSession, type Deps, type State } from "./session";
 
 export const ORIGIN = "https://api.vitrina.test";
@@ -50,6 +52,11 @@ const open = (ct: Uint8Array): string => {
 export const titleBlob = (title: string): string => encodeBase64url(Uint8Array.from([...seal(title), ...new Uint8Array(40)]));
 const trimPadding = (s: string): string => s.replace(/\u0000+$/, "");
 
+const KINDS: Record<number, string> = { 1: "Asset", 2: "Thumb", 3: "Meta" };
+
+/** What the fake envelope holds inside a sealed object: the plaintext after the kind byte and the id. */
+export const unsealed = (ct: Uint8Array): Uint8Array => ct.slice(18);
+
 export class FakeHandle {
   __wbg_ptr = 1;
   freed = 0;
@@ -65,23 +72,58 @@ export class FakeHandle {
 export function fakeEnvelope() {
   const calls: string[] = [];
   const trapOn = new Set<string>();
+  /** Every plaintext handed to an encrypt call, by reference, so a test can see it was zeroed afterwards. */
+  const plaintexts: Uint8Array[] = [];
   const check = (name: string, key: unknown) => {
     calls.push(name);
     if (trapOn.has(name)) throw new WebAssembly.RuntimeError("unreachable");
     if (!(key instanceof FakeHandle) || key.freed > 0) throw new Error("null pointer passed to rust");
   };
+  // Asset, thumbnail and metadata envelopes: a kind byte, the 16-byte id, then the plaintext.
+  // Opening checks both, so a thumbnail opened as an asset, or under another id, fails.
+  const sealObject = (kind: number) => (key: unknown, id: Uint8Array, plain: Uint8Array) => {
+    check(`encrypt${KINDS[kind]}`, key);
+    plaintexts.push(plain);
+    return Uint8Array.from([MARK, kind, ...id, ...plain]);
+  };
+  const openObject = (kind: number) => (key: unknown, id: Uint8Array, ct: Uint8Array) => {
+    check(`decrypt${KINDS[kind]}`, key);
+    if (ct[0] !== MARK || ct[1] !== kind || id.some((b, i) => ct[2 + i] !== b)) {
+      throw Object.assign(new Error("authentication failed"), { name: "EnvelopeError", code: "AuthenticationFailed" });
+    }
+    return ct.slice(18);
+  };
   const module = {
+    encryptAsset: sealObject(1),
+    encryptThumb: sealObject(2),
+    encryptMeta: sealObject(3),
+    decryptAsset: openObject(1),
+    decryptThumb: openObject(2),
+    decryptMeta: openObject(3),
     decryptAlbumTitle: (key: unknown, _id: Uint8Array, blob: Uint8Array) => (check("decryptAlbumTitle", key), trimPadding(open(blob))),
     encryptAlbumTitle: (key: unknown, _id: Uint8Array, title: string) => (check("encryptAlbumTitle", key), Uint8Array.from([...seal(title), ...new Uint8Array(40)])),
   };
   const { envelope, poison } = guard(module);
-  return { envelope: envelope as unknown as Envelope, poison, calls, trapOn };
+  return { envelope: envelope as unknown as Envelope, poison, calls, trapOn, plaintexts };
 }
 
 // ── The fake relay, behind the real API client ────────────────────────────
 
-export type Sent = { url: string; method: string; headers: Record<string, string>; body: string };
-export type Reply = { status: number; json?: unknown; headers?: Record<string, string> } | "network";
+export type Sent = { url: string; method: string; headers: Record<string, string>; body: string; bytes: Uint8Array | null };
+export type Reply = { status: number; json?: unknown; bytes?: Uint8Array; headers?: Record<string, string> } | "network";
+
+export type MediaFixture = {
+  id: string;
+  album: string;
+  status: "pending" | "processing" | "ready" | "failed";
+  created_at: string;
+  updated_at: string;
+  metadata: string;
+  asset: Uint8Array | null;
+  thumbnail: Uint8Array | null;
+};
+
+export type RecipientLogFixture = { recipient_id: string; last_opened_at: string | null };
 
 export type AlbumFixture = { id: string; title: string; wrapped_key: string; wrap_nonce: string; media_count: number; created_at: string };
 
@@ -111,11 +153,80 @@ export function relay() {
   const override = (path: string, ...replies: Reply[]) => overrides.set(path, [...(overrides.get(path) ?? []), ...replies]);
   const err = (status: number, code: string, headers: Record<string, string> = {}): Reply => ({ status, json: { code, message: "x" }, headers });
   const created = new Set<string>();
+  const media = new Map<string, MediaFixture>();
+  const accessLog: RecipientLogFixture[] = [];
+  /** id → how many more status reports say `processing` for a row that is in fact complete. */
+  const delayReady = new Map<string, number>();
+  const reported = (m: MediaFixture) => {
+    const n = delayReady.get(m.id) ?? 0;
+    if (m.status !== "ready" || n === 0) return statusBody(m);
+    delayReady.set(m.id, n - 1);
+    return { ...statusBody(m), status: "processing", byte_size: null };
+  };
+  let clock = "2026-10-15T12:00:00Z";
+  const statusBody = (m: MediaFixture) => ({
+    id: m.id,
+    album_id: m.album,
+    kind: "photo",
+    status: m.status,
+    byte_size: m.status === "ready" ? (m.asset?.length ?? 0) + (m.thumbnail?.length ?? 0) : null,
+    created_at: m.created_at,
+    updated_at: m.updated_at,
+  });
 
-  function answer(method: string, path: string, body: string): Reply {
+  function mediaRoute(method: string, path: string, body: string, bytes: Uint8Array | null): Reply | null {
+    let m: RegExpExecArray | null;
+    if ((m = /^\/v1\/albums\/([0-9a-f-]{36})$/.exec(path)) && method === "GET") {
+      const id = m[1] as string;
+      const a = albums.find((x) => x.id === id);
+      if (a === undefined) return err(404, "NOT_FOUND");
+      const rows = [...media.values()].filter((x) => x.album === id);
+      return { status: 200, json: { id, title: a.title, created_at: a.created_at, media: rows.map((r) => ({ id: r.id, kind: "photo", status: r.status, created_at: r.created_at })) } };
+    }
+    if ((m = /^\/v1\/albums\/([0-9a-f-]{36})\/metadata$/.exec(path)) && method === "GET") {
+      const rows = [...media.values()].filter((x) => x.album === m?.[1] && x.status === "ready");
+      return { status: 200, json: { metadata: rows.map((r) => ({ media_id: r.id, envelope: r.metadata })) } };
+    }
+    if ((m = /^\/v1\/albums\/([0-9a-f-]{36})\/access-log$/.exec(path)) && method === "GET") {
+      return { status: 200, json: { recipients: accessLog.map((r) => ({ ...r, label: "x".repeat(60), revoked_at: null, album_opens: 1, media_opened: 0 })) } };
+    }
+    if ((m = /^\/v1\/albums\/([0-9a-f-]{36})\/media$/.exec(path)) && method === "POST") {
+      const b = JSON.parse(body) as { id: string; kind: string; metadata: string };
+      if (media.has(b.id)) return err(409, "CONFLICT");
+      const row: MediaFixture = { id: b.id, album: m[1] as string, status: "pending", created_at: clock, updated_at: clock, metadata: b.metadata, asset: null, thumbnail: null };
+      media.set(b.id, row);
+      return { status: 201, json: { id: b.id, status: "pending", created_at: clock } };
+    }
+    if ((m = /^\/v1\/media\/([0-9a-f-]{36})\/(asset|thumbnail)$/.exec(path))) {
+      const row = media.get(m[1] as string);
+      if (row === undefined) return err(404, "NOT_FOUND");
+      const variant = m[2] as "asset" | "thumbnail";
+      if (method === "GET") return row.status === "ready" && row[variant] !== null ? { status: 200, bytes: row[variant] as Uint8Array } : err(404, "NOT_FOUND");
+      if (method !== "PUT") return null;
+      if (row.status === "ready") return err(409, "CONFLICT");
+      row[variant] = bytes;
+      row.updated_at = clock;
+      row.status = row.asset !== null && row.thumbnail !== null ? "ready" : "processing";
+      return { status: 200, json: reported(row) };
+    }
+    if ((m = /^\/v1\/media\/([0-9a-f-]{36})$/.exec(path))) {
+      const row = media.get(m[1] as string);
+      if (row === undefined) return err(404, "NOT_FOUND");
+      if (method === "GET") return { status: 200, json: reported(row) };
+      if (method === "DELETE") {
+        media.delete(row.id);
+        return { status: 204 };
+      }
+    }
+    return null;
+  }
+
+  function answer(method: string, path: string, body: string, bytes: Uint8Array | null): Reply {
     const key = `${method} ${path}`;
     const queued = overrides.get(key);
     if (queued !== undefined && queued.length > 0) return queued.shift() as Reply;
+    const routed = mediaRoute(method, path, body, bytes);
+    if (routed !== null) return routed;
     switch (key) {
       case "POST /v1/signup":
         return { status: 201, json: { id: "11111111-1111-4111-8111-111111111111", created_at: "2026-10-15T12:00:00Z", token: TOKEN, expires_at: EXPIRES } };
@@ -148,17 +259,33 @@ export function relay() {
     new Headers(init.headers).forEach((v, k) => (headers[k] = v));
     const method = init.method ?? "GET";
     const body = typeof init.body === "string" ? init.body : "";
-    sent.push({ url: input, method, headers, body });
+    const bytes = init.body instanceof Uint8Array ? Uint8Array.from(init.body) : null;
+    sent.push({ url: input, method, headers, body, bytes });
     events.push(`request ${method} ${url.pathname}`);
-    const r = answer(method, url.pathname, body);
+    const r = answer(method, url.pathname, body, bytes);
     if (r === "network") throw new TypeError("Failed to fetch");
     const h = new Headers(r.headers);
-    if (r.status === 204) return new Response(null, { status: 204, headers: h });
+    if (r.status === 204 || r.status === 202) return new Response(null, { status: r.status, headers: h });
+    if (r.bytes !== undefined) return new Response(Uint8Array.from(r.bytes), { status: r.status, headers: h });
     h.set("content-type", "application/json");
     return new Response(JSON.stringify(r.json), { status: r.status, headers: h });
   }) as unknown as typeof fetch;
 
-  return { sent, events, albums, override, err, created, client: createApiClient(ORIGIN, fetchImpl) };
+  return {
+    sent,
+    events,
+    albums,
+    media,
+    accessLog,
+    delayReady,
+    override,
+    err,
+    created,
+    setClock: (t: string) => {
+      clock = t;
+    },
+    client: createApiClient(ORIGIN, fetchImpl),
+  };
 }
 
 // ── Storage: the real session store over a recording Storage ──────────────
@@ -262,7 +389,38 @@ export function fakeKeys(opts: FakeKeyOptions, events: string[]) {
 
 // ── The harness ───────────────────────────────────────────────────────────
 
-export function harness(opts: FakeKeyOptions & { stored?: Record<string, string>; blocklist?: string[] } = {}) {
+export const MEDIA_IDS = ["a1000000-0000-4000-8000-000000000001", "a2000000-0000-4000-8000-000000000002", "a3000000-0000-4000-8000-000000000003"] as const;
+
+export class FakePicture {
+  closed = 0;
+  readonly width = 100;
+  readonly height = 75;
+  constructor(readonly bytes: number) {}
+  close(): void {
+    this.closed++;
+  }
+}
+
+/** An Imaging whose every JPEG is a clean, structurally valid stream of the size asked for. */
+export function okImaging(oriented: Dims = { width: 4032, height: 3024 }): Imaging & { log: string[] } {
+  const log: string[] = [];
+  return {
+    log,
+    decode: async (_f, r) => {
+      log.push("decode");
+      const d =
+        r === null
+          ? oriented
+          : "width" in r
+            ? { width: r.width, height: Math.round((oriented.height * r.width) / oriented.width) }
+            : { width: Math.round((oriented.width * r.height) / oriented.height), height: r.height };
+      return { ...d, close: () => void log.push("close") };
+    },
+    encode: async (_b, size) => (log.push(`encode ${size.width}x${size.height}`), new Blob([fakeJpeg(size.width, size.height)], { type: "image/jpeg" })),
+  };
+}
+
+export function harness(opts: FakeKeyOptions & { stored?: Record<string, string>; blocklist?: string[]; imaging?: Imaging | ((events: string[]) => Imaging) } = {}) {
   const r = relay();
   const env = fakeEnvelope();
   const k = fakeKeys(opts, r.events);
@@ -273,6 +431,8 @@ export function harness(opts: FakeKeyOptions & { stored?: Record<string, string>
   let framesAwaited = 0;
   let now = NOW;
   const ids = [NEW_ALBUM, ALBUM_C];
+  const mediaIds = [...MEDIA_IDS];
+  const pictures: FakePicture[] = [];
 
   const deps: Deps = {
     client: r.client,
@@ -301,6 +461,14 @@ export function harness(opts: FakeKeyOptions & { stored?: Record<string, string>
         t.cancelled = true;
       };
     },
+    imaging: typeof opts.imaging === "function" ? opts.imaging(r.events) : (opts.imaging ?? okImaging()),
+    decodeImage: async (bytes) => {
+      if (bytes.length === 0 || bytes[0] === 0x00) throw new Error("not an image");
+      const p = new FakePicture(bytes.length);
+      pictures.push(p);
+      return p;
+    },
+    newMediaId: () => mediaIds.shift() ?? "00000000-0000-4000-8000-0000000000ff",
   };
 
   const session = new OwnerSession(deps);
@@ -321,6 +489,7 @@ export function harness(opts: FakeKeyOptions & { stored?: Record<string, string>
     setNow: (d: Date) => {
       now = d;
     },
+    pictures,
     screen: () => session.current.screen,
   };
 }

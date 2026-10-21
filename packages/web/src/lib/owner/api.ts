@@ -8,6 +8,14 @@
  *   GET  /v1/owner/key       §8.3   the wrapped K_master
  *   GET  /v1/albums          §9.2   every album and its wrapping
  *   POST /v1/albums          §9.2   create: id, title, wrapping
+ *   GET  /v1/albums/{id}                  §9.4   statuses
+ *   GET  /v1/albums/{id}/metadata         §9.5   metadata envelopes (ready only)
+ *   POST /v1/albums/{id}/media            §9.6   create: id, kind, metadata envelope
+ *   PUT  /v1/media/{id}/asset|thumbnail   §9.7   the envelopes, octet-stream
+ *   GET  /v1/media/{id}                   §9.8   status, updated_at
+ *   DELETE /v1/media/{id}                 §9.11  204 erased · 202 pending
+ *   GET  /v1/media/{id}/thumbnail|asset   §11.3, §11.2
+ *   GET  /v1/albums/{id}/access-log       §11.7  last_opened_at per recipient
  *   POST /v1/logout          §7.5   no body, no Content-Type
  *   POST /v1/logout/all      §7.5   no body, no Content-Type
  *
@@ -19,8 +27,9 @@
  * can be wiped. Zeroing the caller's Uint8Array is all the platform allows
  * (api-sketch §8.4).
  */
-import type { ApiClient } from "$lib/api/client";
+import { NetworkFailure, UnexpectedResponse, type ApiClient } from "$lib/api/client";
 import type { AlbumWrapping, LoginParams, OwnerKeyMaterial } from "$lib/keys/owner-types";
+import { isAlbumDetails, isAlbumMetadata, type MediaStatus } from "$lib/recipient/api";
 import { encodeBase64url, type KdfParameters } from "@vitrina/shared";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -64,6 +73,53 @@ export const isAlbumList = (b: unknown): b is { albums: AlbumRow[] } =>
   isObj(b) && Array.isArray(b["albums"]) && b["albums"].every(isAlbumRow);
 
 const isCreated = (b: unknown): b is { id: string; created_at: string } => isObj(b) && isStr(b["id"]) && isStr(b["created_at"]);
+
+const STATUSES: readonly unknown[] = ["pending", "processing", "ready", "failed"];
+
+/** §9.8's status object, which §9.7's uploads also return. */
+export type MediaStatusBody = {
+  readonly id: string;
+  readonly album_id: string;
+  readonly kind: string;
+  readonly status: MediaStatus;
+  readonly byte_size: number | null;
+  readonly created_at: string;
+  readonly updated_at: string;
+};
+
+export const isMediaStatus = (b: unknown): b is MediaStatusBody =>
+  isObj(b) &&
+  isStr(b["id"]) &&
+  UUID.test(b["id"]) &&
+  isStr(b["album_id"]) &&
+  isStr(b["kind"]) &&
+  STATUSES.includes(b["status"]) &&
+  (b["byte_size"] === null || isInt(b["byte_size"])) &&
+  isTime(b["created_at"]) &&
+  isTime(b["updated_at"]);
+
+const isCreatedMedia = (b: unknown): b is { id: string; status: MediaStatus; created_at: string } =>
+  isObj(b) && isStr(b["id"]) && STATUSES.includes(b["status"]) && isTime(b["created_at"]);
+
+export type AccessLogSummary = { readonly recipients: readonly { readonly last_opened_at: string | null }[] };
+
+const isAccessLog = (b: unknown): b is AccessLogSummary =>
+  isObj(b) && Array.isArray(b["recipients"]) && b["recipients"].every((r) => isObj(r) && (r["last_opened_at"] === null || isTime(r["last_opened_at"])));
+
+function assertUuid(id: string): string {
+  // The last check before an id becomes part of a URL path.
+  if (!UUID.test(id)) throw new TypeError("not a uuid");
+  return id;
+}
+
+async function bytes(res: Response): Promise<Uint8Array<ArrayBuffer>> {
+  try {
+    return new Uint8Array(await res.arrayBuffer());
+  } catch {
+    // The connection dropped mid-body: the same state as no response at all.
+    throw new NetworkFailure("body interrupted");
+  }
+}
 
 export type SignupBody = {
   readonly email: string;
@@ -125,6 +181,50 @@ export function ownerApi(client: ApiClient) {
         isCreated,
       );
     },
+    // ── The owner's album (flows §3.4, §3.6, §3.7) ─────────────────────────
+
+    /** §9.4. Every row, whatever its status. Writes no log. */
+    album: (token: string, albumId: string) => client.json({ method: "GET", path: `/v1/albums/${assertUuid(albumId)}`, token }, isAlbumDetails),
+    /** §9.5. `ready` rows only. An owner's fetch writes no log (§11.6). */
+    metadata: (token: string, albumId: string) =>
+      client.json({ method: "GET", path: `/v1/albums/${assertUuid(albumId)}/metadata`, token }, isAlbumMetadata),
+    /** §11.3. Never logs. */
+    thumbnail: async (token: string, mediaId: string) =>
+      bytes(await client.request({ method: "GET", path: `/v1/media/${assertUuid(mediaId)}/thumbnail`, token })),
+    /** §11.2, whole object from byte 0. Called only when the viewer shows this photo. */
+    asset: async (token: string, mediaId: string) =>
+      bytes(await client.request({ method: "GET", path: `/v1/media/${assertUuid(mediaId)}/asset`, token, range: "bytes=0-" })),
+    /** §9.6. The id is the client's and the envelope's `asset_id`; the metadata envelope is ciphertext. */
+    createMedia: (token: string, albumId: string, mediaId: string, metadata: Uint8Array) =>
+      client.json(
+        {
+          method: "POST",
+          path: `/v1/albums/${assertUuid(albumId)}/media`,
+          token,
+          json: { id: assertUuid(mediaId), kind: "photo", metadata: encodeBase64url(metadata) },
+        },
+        isCreatedMedia,
+      ),
+    /**
+     * §9.7. `application/octet-stream`, set by the client for a byte body;
+     * the browser sets `Content-Length` from the array, which fetch cannot
+     * stream without it, so the 411 path is unreachable from here.
+     */
+    upload: (token: string, mediaId: string, variant: "asset" | "thumbnail", envelope: Uint8Array<ArrayBuffer>) =>
+      client.json({ method: "PUT", path: `/v1/media/${assertUuid(mediaId)}/${variant}`, token, body: envelope }, isMediaStatus),
+    /** §9.8. */
+    mediaStatus: (token: string, mediaId: string) => client.json({ method: "GET", path: `/v1/media/${assertUuid(mediaId)}`, token }, isMediaStatus),
+    /** §9.11. `204` erased, `202` hidden with erasure pending. A `404` arrives as an ApiFailure. */
+    removeMedia: async (token: string, mediaId: string): Promise<"erased" | "pending"> => {
+      const res = await client.request({ method: "DELETE", path: `/v1/media/${assertUuid(mediaId)}`, token });
+      if (res.status === 204) return "erased";
+      if (res.status === 202) return "pending";
+      throw new UnexpectedResponse(res.status);
+    },
+    /** §11.7's summary. Only `last_opened_at` is read here (flows §3.7); labels stay ciphertext. */
+    accessLog: (token: string, albumId: string) =>
+      client.json({ method: "GET", path: `/v1/albums/${assertUuid(albumId)}/access-log`, token }, isAccessLog),
+
     /** No body, so no Content-Type: a JSON Content-Type with no body is a 400 (api-sketch §7.5). */
     logout: async (token: string): Promise<void> => {
       await client.request({ method: "POST", path: "/v1/logout", token });

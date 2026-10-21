@@ -56,7 +56,8 @@
     const dpr = window.devicePixelRatio || 1;
     c.width = Math.round(s.w * dpr);
     c.height = Math.round(s.h * dpr);
-    const ctx = c.getContext("2d");
+    // sRGB, as the JPEGs were encoded (owner/imaging.ts).
+    const ctx = c.getContext("2d", { colorSpace: "srgb" });
     try {
       if (ctx !== null) drawViewer(ctx, pic, s, dpr, blur ? FIT : v, lines, blur);
     } catch {
