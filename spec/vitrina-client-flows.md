@@ -38,7 +38,7 @@
 | Passphrase | `P-locked` | token from the fragment; the wrapping from `GET /v1/recipient/key` | passphrase entry       |
 | Passphrase | `P-open`   | token, `K_album`                                         | onboarding, grid, viewer |
 
-**Terminal screens, not key states:** _revoked_ (`403 ACCESS_REVOKED`) and _not recognised_ (`401`), both in §4.6. Either can be reached from any state that holds a token, and both free `K_album`. A passphrase recipient who has lost the token also lands on the dead page. Where recipient state survives a reload is open (§4.7).
+**Terminal screens, not key states:** _revoked_ (`403 ACCESS_REVOKED`) and _not recognised_ (`401`), both in §4.6. Either can be reached from any state that holds a token, and both free `K_album`. A passphrase recipient who has lost the token also lands on the dead page. A reload of the same tab continues; closing it does not (§4.7).
 
 ## 2. The derivation wait
 
@@ -243,7 +243,7 @@
 
 ### 4.1 Open link
 
-1. **Read the fragment, then strip it** with `history.replaceState` (invite spec §2.2) before anything else runs, including the router: SvelteKit's own navigation would otherwise copy the URL, fragment included, into `history.state`, which the browser saves with the session. Its interaction with storage is pending (§4.7).
+1. **Read the fragment, then strip it** with `history.replaceState` (invite spec §2.2) before anything else runs, including the router: SvelteKit's own navigation would otherwise copy the URL, fragment included, into `history.state`, which the browser saves with the session. Before stripping, its contents go into the tab's `sessionStorage` (§4.7).
 2. **Parse it.** Missing or malformed → dead page (§4.7). A well-formed `v` other than 1 → the newer-version screen (invite spec §6).
 3. **Branch:** `key` present → `Q-held`; `key` absent → `P-locked` (§4.2).
 4. **QR:** call `GET /v1/recipient/key` and unwrap `K_album` under `K_invite` (encryption spec §6.1; no derivation wait, there is no Argon2id), zeroing `K_invite` afterwards → `Q-held`. A failed unwrap means a damaged link → dead page. Then `GET /v1/recipient` and decrypt the label for the watermark. `403` → revoked; `401` → not recognised (§4.6).
@@ -323,25 +323,24 @@
 ⟦copy: revoked — this album is no longer shared with you. Must give no reason, and must not imply that anything already retrieved is gone (brief §8; encryption spec §6.4). The remedy is the person who invited you⟧
 ⟦copy: notrecognised — this invitation does not work. Ask the person who sent it⟧
 
-### 4.7 Recipient reload — ⟪PENDING⟫
+### 4.7 Recipient reload
 
-**Drawn: the state. Open: the mechanism.** A real-phone test is under way (`scripts/tab-reload-test/`).
+**Decided 20 October 2026**, on the real-phone test in `scripts/tab-reload-test/RESULTS.md`: on every entry path tested, on both target phones, the fragment reached the page and `sessionStorage` survived an ordinary reload; it did **not** survive closing a tab and reopening it, which came back empty every time. A true tab discard never happened on either phone, so that case is unmeasured.
 
-| After a reload or a discarded tab | Preferred mechanism                          | Fallback                  |
-| --------------------------------- | -------------------------------------------- | ------------------------- |
-| QR                                | `Q-held`, after unwrapping again with `K_invite` restored from tab-scoped storage | `Q-held`, from the fragment |
-| Passphrase                        | `P-locked`: the token is restored, the passphrase is asked again | `P-locked`                |
-| Tab closed                        | dead page                                    | dead page                 |
+| After                       | QR                                                                 | Passphrase                                              |
+| --------------------------- | ------------------------------------------------------------------ | ------------------------------------------------------- |
+| A reload of the same tab    | `Q-held`: the stored `K_invite` unwraps again (§4.1 step 4)         | `P-locked`: the token is restored, the passphrase asked again |
+| Closing the tab, reopening it | dead page                                                        | dead page                                               |
 
-- **Preferred:** on first load, copy the fragment's contents into `sessionStorage` (tab-scoped), then call `replaceState`. A reload or a discarded tab reads them back. As written today, invite spec §2.2 step 4 forbids writing `key` to `sessionStorage`.
-- **Fallback, if storage does not survive a discard:** never strip the fragment. The cost is exposure through the share sheet, bookmarks and tab sync.
-- **Under both mechanisms, no recipient comes back holding `K_album`**: it was never in the fragment, for either kind. What a QR recipient's tab keeps is `K_invite`, which unwraps nothing once the invite is revoked.
+- **On first load**, after reading the fragment and before stripping it (§4.1 step 1), its contents — token, album, and `K_invite` for a QR invite — go into `sessionStorage`, one entry, through one module. Invite spec §2.2 step 4 permits exactly this and nothing more. **`K_album` is never stored**, for either kind; it is unwrapped again after every reload.
+- **Revoked or not recognised (§4.6) clears the entry** as well as freeing the keys. A revoked QR invite's stored `K_invite` would unwrap nothing anyway, because the relay refuses the wrapping (encryption spec §6.4).
+- **The fragment is always stripped.** The fallback that kept the key in the URL is not needed, and is not built.
 
 **The dead page** is reached when the tab was closed, the fragment is missing or malformed, or a bookmark holds no invite. It knows nothing: titles and labels are ciphertext, and there is no key. All it can offer is to open the invitation link again.
 
 ⟦copy: dead — open your invitation link again. Nothing else is known⟧
 
-Invite spec §2.2's "remember on this device" is still open and is not touched here.
+Invite spec §2.2's "remember on this device" — anything that survives closing the tab — is still open and is not touched here.
 
 ### 4.8 Return visit
 
