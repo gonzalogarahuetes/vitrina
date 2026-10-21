@@ -26,7 +26,10 @@ import { createRecipientRepository } from '../packages/server/dist/adapters/driv
  *   4. UQ_recipients_token_hash makes the lookup unambiguous, asserted by
  *      watching a duplicate insert fail rather than by trusting the schema;
  *   5. label is ciphertext since 003, and the database refuses one under the
- *      41-byte floor (CHK_recipients_label_len) while setting no ceiling.
+ *      41-byte floor (CHK_recipients_label_len) while setting no ceiling;
+ *   6. since 006 every row has a wrapping and only passphrase rows a KDF
+ *      (CHK_recipients_wrap_columns), at the lengths encryption spec §6.1
+ *      and §6.2 fix (CHK_recipients_kdf_wrap_kind).
  *
  * The fixtures above are inserted with SQL so the lookup tests stand apart
  * from create. Create, scope and revoke (§7.7, §7.8) follow at the foot of
@@ -72,12 +75,15 @@ async function insertAlbum(id) {
 	)
 }
 
-/** A QR recipient: the six passphrase columns stay NULL (§6.2, CK constraint). */
+/**
+ * A QR recipient: a wrapping and no KDF (encryption spec §6.1, since 006).
+ * Fill bytes stand in for K_album under K_invite; the relay cannot tell.
+ */
 async function insertRecipient({ id, token, albumId, label = bytes(0x61, 50) }, revokedAt = null) {
 	await pool.query(
-		`INSERT INTO recipients (id, album_id, kind, label, token_hash, revoked_at)
-		 VALUES ($1, $2, 'qr', $3, $4, $5)`,
-		[id, albumId, label, tokenHash(token), revokedAt], // label: ciphertext since 003
+		`INSERT INTO recipients (id, album_id, kind, label, token_hash, revoked_at, wrapped, wrap_nonce)
+		 VALUES ($1, $2, 'qr', $3, $4, $5, $6, $7)`,
+		[id, albumId, label, tokenHash(token), revokedAt, bytes(0x57, 48), bytes(0x4e, 24)], // label: ciphertext since 003
 	)
 }
 
@@ -231,6 +237,7 @@ const newQr = (overrides = {}) => ({
 	kind: 'qr',
 	label: Buffer.from([0x00, 0xff, ...bytes(0x6c, 46), 0xff, 0x00]), // 50, NUL at both ends
 	tokenHash: tokenHash(randomBytes(32)),
+	wrap: { wrapped: bytes(0x57, 48), wrapNonce: bytes(0x4e, 24) },
 	...overrides,
 })
 
@@ -253,16 +260,9 @@ async function rowOf(id) {
 	return rows[0]
 }
 
-const PASSPHRASE_COLUMNS = [
-	'wrapped',
-	'wrap_nonce',
-	'kdf_salt',
-	'kdf_memory_kib',
-	'kdf_iterations',
-	'kdf_parallelism',
-]
+const KDF_COLUMNS = ['kdf_salt', 'kdf_memory_kib', 'kdf_iterations', 'kdf_parallelism']
 
-test('create: a QR recipient lands in recipients, with no wrap columns', async () => {
+test('create: a QR recipient lands in recipients, with its wrapping and no KDF', async () => {
 	const recipient = newQr()
 	const created = await repository.create(recipient)
 
@@ -276,7 +276,11 @@ test('create: a QR recipient lands in recipients, with no wrap columns', async (
 	assert.equal(hex(row.label), hex(recipient.label), 'label is bytea, byte for byte')
 	assert.equal(hex(row.token_hash), hex(recipient.tokenHash))
 	assert.equal(row.revoked_at, null)
-	for (const column of PASSPHRASE_COLUMNS) {
+	// The seven-column insert since 006. A placeholder off by one lands the
+	// nonce in `wrapped` and the CHECK refuses it; this pins each in its place.
+	assert.equal(hex(row.wrapped), hex(recipient.wrap.wrapped))
+	assert.equal(hex(row.wrap_nonce), hex(recipient.wrap.wrapNonce))
+	for (const column of KDF_COLUMNS) {
 		assert.equal(row[column], null, `${column} is set on a QR row`)
 	}
 	assert.equal(row.created_at.toISOString(), created.createdAt.toISOString())
@@ -478,6 +482,9 @@ const wrapAsHex = (wrap) => ({
 	params: { ...wrap.params },
 })
 
+/** What findWrapById answers for a passphrase row created with `wrap`. */
+const passphraseAnswer = (wrap) => ({ kind: 'passphrase', ...wrapAsHex(wrap) })
+
 test('findWrapById: returns what create stored, every column in its place', async () => {
 	const recipient = newPassphrase()
 	recipient.wrap = { ...recipient.wrap, params: UNUSUAL_PARAMS }
@@ -486,10 +493,10 @@ test('findWrapById: returns what create stored, every column in its place', asyn
 	const wrap = await repository.findWrapById(recipient.id)
 
 	assert.ok(wrap, 'no wrapping for a passphrase row that was created')
-	assert.deepEqual(wrapAsHex(wrap), wrapAsHex(recipient.wrap))
+	assert.deepEqual({ kind: wrap.kind, ...wrapAsHex(wrap) }, passphraseAnswer(recipient.wrap))
 	// Exactly the wrapping: a widened SELECT (`label`, `token_hash`) is a
 	// decision made here, not drift — the same guard as the grant's shape.
-	assert.deepEqual(Object.keys(wrap).sort(), ['kdfSalt', 'params', 'wrapNonce', 'wrapped'])
+	assert.deepEqual(Object.keys(wrap).sort(), ['kdfSalt', 'kind', 'params', 'wrapNonce', 'wrapped'])
 	assert.deepEqual(Object.keys(wrap.params).sort(), ['iterations', 'memoryKib', 'parallelism'])
 })
 
@@ -511,14 +518,22 @@ test('findWrapById: each id gets its own row, not the album\'s first', async () 
 	assert.deepEqual(wrapAsHex(await repository.findWrapById(b.id)), wrapAsHex(b.wrap))
 })
 
-test('findWrapById: a qr row is null, not an object of nulls', async () => {
-	// §10.1's 404. Without `kind = 'passphrase'` the row matches and the
-	// adapter returns { wrapped: null, … }, which the route would encode.
-	const recipient = newQr()
+test('findWrapById: a qr row returns its wrapping, tagged qr, with no KDF key at all', async () => {
+	/*
+	 * Since 006 — until then this was null, and §10.1 answered 404. Exact
+	 * keys: an adapter that mapped the passphrase shape for both kinds would
+	 * return { kdfSalt: null, params: { … null } }, which the route encodes.
+	 */
+	const recipient = newQr({ wrap: { wrapped: bytes(0x37, 48), wrapNonce: bytes(0x2e, 24) } })
 	await repository.create(recipient)
 
-	assert.equal(await repository.findWrapById(recipient.id), null)
-	assert.equal(await repository.findWrapById(live.id), null, 'the SQL-inserted qr fixture')
+	const wrap = await repository.findWrapById(recipient.id)
+
+	assert.deepEqual(Object.keys(wrap).sort(), ['kind', 'wrapNonce', 'wrapped'])
+	assert.equal(wrap.kind, 'qr')
+	assert.equal(hex(wrap.wrapped), hex(recipient.wrap.wrapped))
+	assert.equal(hex(wrap.wrapNonce), hex(recipient.wrap.wrapNonce))
+	assert.equal((await repository.findWrapById(live.id)).kind, 'qr', 'the SQL-inserted qr fixture')
 })
 
 test('findWrapById: an unknown id is null, not an error', async () => {
@@ -538,6 +553,85 @@ test('findWrapById: a revoked row still returns its wrapping', async () => {
 
 	assert.deepEqual(wrapAsHex(await repository.findWrapById(recipient.id)), wrapAsHex(recipient.wrap))
 })
+
+/*
+ * 006's two constraints — schema §3. Raw inserts rather than `create`, so
+ * the database is what refuses, not the adapter's choice of columns.
+ */
+
+async function insertRaw(columns) {
+	const row = {
+		id: randomUUID(),
+		album_id: ALBUM_B,
+		label: bytes(0x61, 50),
+		token_hash: tokenHash(randomBytes(32)),
+		...columns,
+	}
+	const names = Object.keys(row)
+	await pool.query(
+		`INSERT INTO recipients (${names.join(', ')}) VALUES (${names.map((_, i) => `$${i + 1}`).join(', ')})`,
+		Object.values(row),
+	)
+}
+
+const QR_ROW = { kind: 'qr', wrapped: bytes(0x57, 48), wrap_nonce: bytes(0x4e, 24) }
+const PASSPHRASE_ROW = {
+	kind: 'passphrase',
+	wrapped: bytes(0x77, 48),
+	wrap_nonce: bytes(0x6e, 24),
+	kdf_salt: bytes(0x73, 16),
+	kdf_memory_kib: 16384,
+	kdf_iterations: 2,
+	kdf_parallelism: 1,
+}
+
+const refusedBy = (constraint) => (error) => error.code === '23514' && error.constraint === constraint
+
+test('006: both well-formed rows are accepted', async () => {
+	// The floor for the refusals below: each differs from one of these by one column.
+	await insertRaw(QR_ROW)
+	await insertRaw(PASSPHRASE_ROW)
+})
+
+for (const [kind, base] of [['qr', QR_ROW], ['passphrase', PASSPHRASE_ROW]]) {
+	for (const column of ['wrapped', 'wrap_nonce']) {
+		test(`006: a ${kind} row without ${column} is refused`, async () => {
+			// The qr half is the one 001's constraint required, and 006 inverts.
+			await assert.rejects(
+				() => insertRaw({ ...base, [column]: null }),
+				refusedBy('CHK_recipients_wrap_columns'),
+			)
+		})
+	}
+}
+
+for (const column of KDF_COLUMNS) {
+	test(`006: a qr row carrying ${column} is refused`, async () => {
+		await assert.rejects(
+			() => insertRaw({ ...QR_ROW, [column]: PASSPHRASE_ROW[column] }),
+			refusedBy('CHK_recipients_wrap_columns'),
+		)
+	})
+
+	test(`006: a passphrase row without ${column} is refused`, async () => {
+		await assert.rejects(
+			() => insertRaw({ ...PASSPHRASE_ROW, [column]: null }),
+			refusedBy('CHK_recipients_wrap_columns'),
+		)
+	})
+}
+
+for (const [kind, base] of [['qr', QR_ROW], ['passphrase', PASSPHRASE_ROW]]) {
+	for (const [column, length] of [['wrapped', 47], ['wrapped', 49], ['wrap_nonce', 23], ['wrap_nonce', 25]]) {
+		test(`006: a ${kind} row with a ${length}-byte ${column} is refused`, async () => {
+			// The qr half is new: before 006 the length check began `kind = 'qr' OR`.
+			await assert.rejects(
+				() => insertRaw({ ...base, [column]: bytes(0x41, length) }),
+				refusedBy('CHK_recipients_kdf_wrap_kind'),
+			)
+		})
+	}
+}
 
 // findDetailsById — api-sketch §11.4. The route tests run against a fake, so
 // only this file checks the SELECT, its column mapping and its null.

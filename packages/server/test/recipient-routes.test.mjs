@@ -15,16 +15,16 @@ import { describe, it } from "node:test";
 import { b64, buildPr2Server, nonCanonical, sha256 } from "./support/pr2-graph.mjs";
 
 const INT4_MAX = 2147483647;
-const WRAP_FIELDS = [
-  "wrapped",
-  "wrap_nonce",
-  "kdf_salt",
-  "kdf_memory_kib",
-  "kdf_iterations",
-  "kdf_parallelism",
-];
+/** Both kinds since 006 (encryption spec §6.1, §6.2). */
+const WRAP_FIELDS = ["wrapped", "wrap_nonce"];
 
-/** A QR body, plus the raw token the client would put in the invite. */
+/** Passphrase only: a qr wrapping is under K_invite, with no KDF. */
+const KDF_FIELDS = ["kdf_salt", "kdf_memory_kib", "kdf_iterations", "kdf_parallelism"];
+
+/**
+ * A QR body, plus the raw token the client would put in the invite. The
+ * wrapping is opaque here: K_album under K_invite, which the relay never sees.
+ */
 function qrBody(overrides = {}) {
   const token = randomBytes(32);
   return {
@@ -34,6 +34,8 @@ function qrBody(overrides = {}) {
       kind: "qr",
       label: b64(0x6c, 60), // ciphertext under K_label since 003; opaque here
       token_hash: sha256(token).toString("base64url"),
+      wrapped: b64(0x57, 48),
+      wrap_nonce: b64(0x4e, 24),
       ...overrides,
     },
   };
@@ -80,7 +82,7 @@ function assertBareError(response, status, code) {
 }
 
 describe("POST /v1/albums/{album_id}/recipients — §7.7", () => {
-  it("creates a QR recipient: 201, the client's id, and no wrap stored", async () => {
+  it("creates a QR recipient: 201, the client's id, and its wrapping with no KDF", async () => {
     const { app, parent, albumId, recipients } = await setup();
     const { body } = qrBody();
 
@@ -94,7 +96,10 @@ describe("POST /v1/albums/{album_id}/recipients — §7.7", () => {
     const row = recipients.rows.get(body.id);
     assert.equal(row.kind, "qr");
     assert.equal(row.albumId, albumId, "the album comes from the path");
-    assert.equal(row.wrap, undefined, "a QR row carries wrap material");
+    // Exactly the two wrap fields: a KDF field on a qr row is a `kind` lie.
+    assert.deepEqual(Object.keys(row.wrap).sort(), ["wrapNonce", "wrapped"]);
+    assert.equal(Buffer.from(row.wrap.wrapped).toString("base64url"), body.wrapped);
+    assert.equal(Buffer.from(row.wrap.wrapNonce).toString("base64url"), body.wrap_nonce);
     assert.equal(Buffer.from(row.label).toString("base64url"), body.label);
     assert.equal(Buffer.from(row.tokenHash).toString("base64url"), body.token_hash);
   });
@@ -117,6 +122,22 @@ describe("POST /v1/albums/{album_id}/recipients — §7.7", () => {
 
   describe("the two CHECKs, mirrored rather than trusted", () => {
     for (const field of WRAP_FIELDS) {
+      for (const make of [qrBody, passphraseBody]) {
+        const kind = make === qrBody ? "QR" : "passphrase";
+        it(`requires ${field} on a ${kind} recipient`, async () => {
+          // Both kinds since 006. The qr half is the one a pre-006 schema
+          // fails: it accepted a qr body with no wrapping at all.
+          const { app, parent, albumId, recipients } = await setup();
+          const { body } = make();
+          delete body[field];
+
+          assertBareError(await create(app, parent.auth, albumId, body), 400, "VALIDATION_FAILED");
+          assert.equal(recipients.rows.size, 0);
+        });
+      }
+    }
+
+    for (const field of KDF_FIELDS) {
       it(`refuses ${field} on a QR recipient`, async () => {
         // Rejected, not stripped: `additionalProperties: false` only strips,
         // so the schema needs a `not` (§7.7, "forbidden for qr").
@@ -181,13 +202,19 @@ describe("POST /v1/albums/{album_id}/recipients — §7.7", () => {
 
     it("refuses padding, the standard alphabet, hex, and the wrong length", async () => {
       // wrapped and wrap_nonce have no spare bits (48 and 24 divide by three),
-      // so these are the spellings that can still be wrong.
+      // so these are the spellings that can still be wrong — on both kinds.
       const { app, parent, albumId } = await setup();
       const std = Buffer.alloc(48, 0xfb).toString("base64"); // carries + and /
       const cases = [
         passphraseBody({ wrapped: std }),
         passphraseBody({ wrap_nonce: `${b64(0x6e, 24)}=` }),
         passphraseBody({ wrap_nonce: b64(0x6e, 23) }),
+        qrBody({ wrapped: std }),
+        qrBody({ wrapped: b64(0x57, 47) }),
+        qrBody({ wrapped: b64(0x57, 49) }),
+        qrBody({ wrap_nonce: `${b64(0x4e, 24)}=` }),
+        qrBody({ wrap_nonce: b64(0x4e, 23) }),
+        qrBody({ wrap_nonce: b64(0x4e, 25) }),
         qrBody({ token_hash: sha256(randomBytes(32)).toString("hex") }),
         qrBody({ token_hash: `${sha256(randomBytes(32)).toString("base64url")}=` }),
       ];

@@ -8,6 +8,11 @@
  *
  * Discharges §6.2's four PR 4 rows except the route-table walk's outbound
  * half, which is route-table.test.mjs's.
+ *
+ * Both kinds since 006 (encryption spec §6.1): a qr recipient fetches K_album
+ * wrapped under K_invite, and gets `kind` and no KDF fields. Until then this
+ * route answered a qr token `404`, and a revoked one `404` too; both cases
+ * are replaced below by the `200` and the `403` that hold now.
  */
 
 import assert from "node:assert/strict";
@@ -16,15 +21,19 @@ import { describe, it } from "node:test";
 
 import { b64, buildPr2Server, sha256 } from "./support/pr2-graph.mjs";
 
-const RESPONSE_FIELDS = [
+const PASSPHRASE_FIELDS = [
   "id",
   "kdf_iterations",
   "kdf_memory_kib",
   "kdf_parallelism",
   "kdf_salt",
+  "kind",
   "wrap_nonce",
   "wrapped",
 ];
+
+/** No KDF field at all — absent, not null (§10.1). */
+const QR_FIELDS = ["id", "kind", "wrap_nonce", "wrapped"];
 
 /** A server, a signed-in owner, and one of their albums. */
 async function setup() {
@@ -38,7 +47,7 @@ async function setup() {
  * A recipient created through §7.7, returning the body posted and the bearer
  * header its invite would produce. Passphrase rows use parameters above 002's
  * floors and distinct from each other, so a response that swapped two
- * integers, or returned a constant, cannot match.
+ * integers, or returned a constant, cannot match. Both kinds post a wrapping.
  */
 async function recipient({ app, parent, albumId }, kind, fill = 0x70) {
   const token = randomBytes(32);
@@ -47,11 +56,11 @@ async function recipient({ app, parent, albumId }, kind, fill = 0x70) {
     kind,
     label: b64(0x6c, 60),
     token_hash: sha256(token).toString("base64url"),
+    wrapped: b64(fill, 48),
+    wrap_nonce: b64(fill + 1, 24),
   };
   if (kind === "passphrase") {
     Object.assign(body, {
-      wrapped: b64(fill, 48),
-      wrap_nonce: b64(fill + 1, 24),
       kdf_salt: b64(fill + 2, 16),
       kdf_memory_kib: 20480,
       kdf_iterations: 5,
@@ -91,7 +100,7 @@ function assertBareError(response, status, code) {
 
 describe("GET /v1/recipient/key — §10.1", () => {
   describe("a passphrase recipient", () => {
-    it("gets 200 with exactly §7.7's six wrap fields and its own id, as posted", async () => {
+    it("gets 200 with exactly §7.7's six wrap fields, its kind and its own id, as posted", async () => {
       const ctx = await setup();
       const { body, auth } = await recipient(ctx, "passphrase");
 
@@ -100,6 +109,7 @@ describe("GET /v1/recipient/key — §10.1", () => {
       assert.equal(response.statusCode, 200, response.body);
       assert.deepEqual(response.json(), {
         id: body.id,
+        kind: "passphrase",
         kdf_salt: body.kdf_salt,
         kdf_memory_kib: body.kdf_memory_kib,
         kdf_iterations: body.kdf_iterations,
@@ -109,15 +119,15 @@ describe("GET /v1/recipient/key — §10.1", () => {
       });
     });
 
-    it("gets no label, album_id, kind or created_at (§10.3)", async () => {
-      // `label` is §11.4's — a QR recipient needs it too and cannot call here.
-      // Exact keys, so any widening fails, not only these four names.
+    it("gets no label, album_id or created_at (§10.3)", async () => {
+      // `label` is §11.4's, where every recipient reads it for the watermark.
+      // Exact keys, so any widening fails, not only these three names.
       const ctx = await setup();
       const { auth } = await recipient(ctx, "passphrase");
 
       const response = await fetchKey(ctx.app, auth);
 
-      assert.deepEqual(Object.keys(response.json()).sort(), RESPONSE_FIELDS);
+      assert.deepEqual(Object.keys(response.json()).sort(), PASSPHRASE_FIELDS);
     });
 
     it("carries Cache-Control: no-store (§8.3's rule)", async () => {
@@ -130,7 +140,55 @@ describe("GET /v1/recipient/key — §10.1", () => {
     });
   });
 
+  describe("a QR recipient (encryption spec §6.1, since 006)", () => {
+    it("gets 200 with its kind, its id and the wrapping it posted — and no KDF field", async () => {
+      // K_album under K_invite. Exact equality, so a KDF field present as
+      // null, or a constant `kind`, fails here.
+      const ctx = await setup();
+      const { body, auth } = await recipient(ctx, "qr");
+
+      const response = await fetchKey(ctx.app, auth);
+
+      assert.equal(response.statusCode, 200, response.body);
+      assert.deepEqual(response.json(), {
+        id: body.id,
+        kind: "qr",
+        wrapped: body.wrapped,
+        wrap_nonce: body.wrap_nonce,
+      });
+      assert.deepEqual(Object.keys(response.json()).sort(), QR_FIELDS);
+    });
+
+    it("carries Cache-Control: no-store (§8.3's rule)", async () => {
+      const ctx = await setup();
+      const { auth } = await recipient(ctx, "qr");
+
+      const response = await fetchKey(ctx.app, auth);
+
+      assert.equal(response.statusCode, 200, response.body);
+      assert.equal(response.headers["cache-control"], "no-store");
+    });
+  });
+
   describe("the caller's own row, and only that (§6.2)", () => {
+    it("a QR and a passphrase recipient on one album each get their own kind and wrapping", async () => {
+      // A lookup keyed on album, or a `kind` read from anywhere but the row,
+      // answers both the same.
+      const ctx = await setup();
+      const qr = await recipient(ctx, "qr", 0x30);
+      const passphrase = await recipient(ctx, "passphrase", 0x50);
+
+      const a = (await fetchKey(ctx.app, qr.auth)).json();
+      const b = (await fetchKey(ctx.app, passphrase.auth)).json();
+
+      assert.deepEqual([a.id, a.kind, a.wrapped], [qr.body.id, "qr", qr.body.wrapped]);
+      assert.deepEqual(
+        [b.id, b.kind, b.wrapped],
+        [passphrase.body.id, "passphrase", passphrase.body.wrapped],
+      );
+    });
+
+
     it("two passphrase recipients on one album each get their own wrapping and id", async () => {
       const ctx = await setup();
       const first = await recipient(ctx, "passphrase", 0x30);
@@ -168,44 +226,30 @@ describe("GET /v1/recipient/key — §10.1", () => {
     }
   });
 
-  describe("§7.3's ladder, recipient branch — four tokens, four answers", () => {
-    it("a QR recipient gets 404, no details", async () => {
-      const ctx = await setup();
-      const { auth } = await recipient(ctx, "qr");
+  describe("§7.3's ladder, recipient branch", () => {
+    for (const [kind, fields] of [
+      ["passphrase", ["wrapped", "wrap_nonce", "kdf_salt"]],
+      ["qr", ["wrapped", "wrap_nonce"]],
+    ]) {
+      it(`a revoked ${kind} recipient gets 403, and no wrapping anywhere in the body`, async () => {
+        /*
+         * The case that matters (§10.1): the wrapping is the one piece of
+         * ciphertext whose continued availability lets a revoked holder of
+         * either kind of invite finish an unwrap they had not started. For qr
+         * this is new with 006: before it there was no wrapping to withhold.
+         */
+        const ctx = await setup();
+        const { body, auth } = await recipient(ctx, kind);
+        await revoke(ctx, body.id);
 
-      assertBareError(await fetchKey(ctx.app, auth), 404, "NOT_FOUND");
-    });
+        const response = await fetchKey(ctx.app, auth);
 
-    it("a revoked passphrase recipient gets 403, and no wrapping anywhere in the body", async () => {
-      /*
-       * The case that matters (§10.1): the blob is the one piece of
-       * ciphertext whose continued availability lets a revoked passphrase
-       * holder finish an unwrap they had not started.
-       */
-      const ctx = await setup();
-      const { body, auth } = await recipient(ctx, "passphrase");
-      await revoke(ctx, body.id);
-
-      const response = await fetchKey(ctx.app, auth);
-
-      assertBareError(response, 403, "ACCESS_REVOKED");
-      for (const field of ["wrapped", "wrap_nonce", "kdf_salt"]) {
-        assert.ok(!response.body.includes(body[field]), `${field} reached a 403`);
-      }
-    });
-
-    it("a revoked QR recipient gets 404, not 403 — step 3 before step 4", async () => {
-      /*
-       * A decision, pinned: get-recipient-key.ts reads the wrap before it
-       * checks revocation, so "no key material" answers first. Reordering
-       * the two answers 403 here, and must be done on purpose.
-       */
-      const ctx = await setup();
-      const { body, auth } = await recipient(ctx, "qr");
-      await revoke(ctx, body.id);
-
-      assertBareError(await fetchKey(ctx.app, auth), 404, "NOT_FOUND");
-    });
+        assertBareError(response, 403, "ACCESS_REVOKED");
+        for (const field of fields) {
+          assert.ok(!response.body.includes(body[field]), `${field} reached a 403`);
+        }
+      });
+    }
 
     it("an unknown token gets 401", async () => {
       const ctx = await setup();
@@ -256,8 +300,12 @@ describe("every response carrying a wrapped blob is no-store (§8.3, §6.2)", ()
     ["GET /v1/owner/key (§8.3)", (ctx) => fetchKey(ctx.app, ctx.parent.auth, "/v1/owner/key")],
     ["GET /v1/albums (§9.2)", (ctx) => fetchKey(ctx.app, ctx.parent.auth, "/v1/albums")],
     [
-      "GET /v1/recipient/key (§10.1)",
+      "GET /v1/recipient/key (§10.1), passphrase",
       async (ctx) => fetchKey(ctx.app, (await recipient(ctx, "passphrase")).auth),
+    ],
+    [
+      "GET /v1/recipient/key (§10.1), qr",
+      async (ctx) => fetchKey(ctx.app, (await recipient(ctx, "qr")).auth),
     ],
   ];
 

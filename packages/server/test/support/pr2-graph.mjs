@@ -162,14 +162,14 @@ function inMemoryRecipients(albums) {
       return row.revokedAt;
     },
     /**
-     * §10.1. The adapter's `kind = 'passphrase'`: a qr row and an absent one
-     * are both null. Unfiltered on revocation, as the adapter is — step 4 is
-     * the use case's, and a fake that withheld revoked rows would let a use
+     * §10.1. Every row has a wrapping since 006, tagged with its kind; only an
+     * absent row is null. Unfiltered on revocation, as the adapter is — step 4
+     * is the use case's, and a fake that withheld revoked rows would let a use
      * case that skipped it pass.
      */
     async findWrapById(recipientId) {
       const row = rows.get(recipientId);
-      return row?.kind === "passphrase" ? row.wrap : null;
+      return row ? { kind: row.kind, ...row.wrap } : null;
     },
     // §11.4. Unfiltered on revocation, as the adapter must be; the projection
     // is the port's five fields, so a use case cannot lean on a sixth.

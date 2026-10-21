@@ -52,8 +52,9 @@ export type ApplicationErrorCode =
   | "DUPLICATE_RECIPIENT"
   /**
    * §7.8's `404`: absent or not the caller's, indistinguishably — as albums.
-   * Also §10.1's: the caller's own row has no wrapping (a qr recipient), so
-   * the resource does not exist.
+   * Also §10.1's, for a caller whose own row is absent — unreachable in
+   * practice since `006`, when qr rows gained a wrapping and stopped
+   * answering here.
    */
   | "RECIPIENT_NOT_FOUND";
 

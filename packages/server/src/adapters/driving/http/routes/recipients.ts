@@ -40,30 +40,35 @@ export function recipientsRoutes(deps: RecipientsRoutesDeps) {
 
         const body = request.body;
 
-        let newRecipient: NewRecipient = {
+        const base = {
           id: body.id,
           albumId: request.params.album_id,
-          kind: "qr",
           label: decodeRangeOr400(body.label, 41, 1024),
           tokenHash: decodeOr400(body.token_hash, 32),
         };
+        // Both kinds since 006: K_album under K_invite (qr, encryption spec
+        // §6.1) or under the passphrase KEK (§6.2). Same lengths for both.
+        const wrapping = {
+          wrapped: decodeOr400(body.wrapped, 48),
+          wrapNonce: decodeOr400(body.wrap_nonce, 24),
+        };
 
-        if (body.kind === "passphrase") {
-          newRecipient = {
-            ...newRecipient,
-            kind: "passphrase",
-            wrap: {
-              wrapped: decodeOr400(body.wrapped, 48),
-              wrapNonce: decodeOr400(body.wrap_nonce, 24),
-              kdfSalt: decodeOr400(body.kdf_salt, 16),
-              params: {
-                iterations: body.kdf_iterations,
-                memoryKib: body.kdf_memory_kib,
-                parallelism: body.kdf_parallelism,
-              },
-            },
-          };
-        }
+        const newRecipient: NewRecipient =
+          body.kind === "qr"
+            ? { ...base, kind: "qr", wrap: wrapping }
+            : {
+                ...base,
+                kind: "passphrase",
+                wrap: {
+                  ...wrapping,
+                  kdfSalt: decodeOr400(body.kdf_salt, 16),
+                  params: {
+                    iterations: body.kdf_iterations,
+                    memoryKib: body.kdf_memory_kib,
+                    parallelism: body.kdf_parallelism,
+                  },
+                },
+              };
 
         const created = await deps.useCases.createRecipient({
           ownerId: caller.ownerId,

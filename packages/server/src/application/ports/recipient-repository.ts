@@ -14,7 +14,7 @@
 import type { Argon2idParameters } from "./kdf.js";
 
 /**
- * Narrower than the row, as `OwnerKdfRow` is. The six passphrase columns are
+ * Narrower than the row, as `OwnerKdfRow` is. The six wrap columns are
  * §10.1's and PR 5's; `kind` and `label` are PR 4's and §11.4's. Each gets its
  * own method rather than widening what every request loads.
  */
@@ -30,21 +30,41 @@ export type RecipientGrant = {
   readonly revokedAt: Date | null;
 };
 
-/** Passphrase mode's wrapping (encryption spec §6.2). Ciphertext, never key material (#16). */
-export type RecipientWrap = {
-  /** 48 bytes: K_album (32) + Poly1305 tag (16), under a KEK the relay never sees. */
+/**
+ * A qr recipient's wrapping (encryption spec §6.1): K_album under K_invite,
+ * which the invite carries and the relay never sees. Ciphertext, never key
+ * material (#16). No KDF — K_invite is uniformly random and used directly.
+ */
+export type InviteWrap = {
+  /** 48 bytes: K_album (32) + Poly1305 tag (16). */
   readonly wrapped: Uint8Array;
   /** 24 bytes. The field that gets forgotten (§7.7). */
   readonly wrapNonce: Uint8Array;
+};
+
+/**
+ * A passphrase recipient's wrapping (encryption spec §6.2): K_album under a
+ * KEK the relay never sees, and the public parameters that derive it.
+ */
+export type PassphraseWrap = InviteWrap & {
   /** 16 bytes. */
   readonly kdfSalt: Uint8Array;
   readonly params: Argon2idParameters;
 };
 
 /**
- * A union, not six optional fields: it mirrors `CK_recipients_passphrase_columns`
- * rather than trusting it. With optionals, `{ kind: "qr", wrapped }` compiles
- * and the database is the first thing to catch it — as a 500.
+ * §10.1's answer: a recipient's wrapping, tagged with the kind that says which
+ * unwrap the client runs. Every row has one since `006` (schema §3).
+ */
+export type RecipientWrap =
+  | ({ readonly kind: "qr" } & InviteWrap)
+  | ({ readonly kind: "passphrase" } & PassphraseWrap);
+
+/**
+ * A union, not four optional KDF fields: it mirrors `CHK_recipients_wrap_columns`
+ * rather than trusting it. With optionals, `{ kind: "qr", kdfSalt }` compiles,
+ * and a passphrase row without its salt reaches the database to be caught as
+ * a 500.
  */
 export type NewRecipient = {
   /** Client-generated, no server default — it is inside the wrap AAD (§7.7). */
@@ -59,8 +79,8 @@ export type NewRecipient = {
   /** 32 bytes: SHA-256 of the raw token, computed by the client (§7.4). */
   readonly tokenHash: Uint8Array;
 } & (
-  | { readonly kind: "qr" }
-  | { readonly kind: "passphrase"; readonly wrap: RecipientWrap }
+  | { readonly kind: "qr"; readonly wrap: InviteWrap }
+  | { readonly kind: "passphrase"; readonly wrap: PassphraseWrap }
 );
 
 export type CreatedRecipient = {
@@ -129,17 +149,19 @@ export interface RecipientRepository {
   revoke(recipientId: string): Promise<Date>;
 
   /**
-   * §10.1. A passphrase row's wrapping, exactly as `create` stored it.
-   * Ciphertext and its public parameters only — the relay holds no passphrase,
-   * KEK or `K_album` to return alongside it (§4.1's outbound half, #16).
+   * §10.1. A row's wrapping, of either kind, exactly as `create` stored it.
+   * Ciphertext and its public parameters only — the relay holds no
+   * `K_invite`, passphrase, KEK or `K_album` to return alongside it (§4.1's
+   * outbound half, #16).
    *
    * `recipientId` comes from the grant §7.3 step 1 resolved, NEVER from the
    * request: there is no id in §10.1's path, and that absence is the scope
    * check. A caller passing a path or body value here rebuilds the
    * enumeration the flat route exists to remove.
    *
-   * `null` for a qr row AND for an absent one. The caller maps both to the same
-   * `404` — a qr row has no key material, so the resource does not exist.
+   * `null` only for an absent row. Until `006` it was also `null` for a qr
+   * row, which held no wrapping; every row holds one now (schema §3), and a
+   * row whose columns contradict its `kind` is a throw, not a `null`.
    *
    * Does NOT filter on `revoked_at`, as `findGrantByTokenHash` does not:
    * revocation is §7.3 step 4 and the use case's. The wrapping must not reach

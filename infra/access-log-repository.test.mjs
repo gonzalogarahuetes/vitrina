@@ -36,8 +36,8 @@ before(async () => {
 		[ALBUM, OWNER_EMAIL, bytes(0x51, 60), bytes(0x42, 48), bytes(0x43, 24)],
 	)
 	await pool.query(
-		`INSERT INTO recipients (id, album_id, kind, label, token_hash) VALUES ($1, $2, 'qr', $3, $4)`,
-		[RECIPIENT, ALBUM, bytes(0x61, 50), createHash('sha256').update(RECIPIENT).digest()],
+		`INSERT INTO recipients (id, album_id, kind, label, token_hash, wrapped, wrap_nonce) VALUES ($1, $2, 'qr', $3, $4, $5, $6)`,
+		[RECIPIENT, ALBUM, bytes(0x61, 50), createHash('sha256').update(RECIPIENT).digest(), bytes(0x57, 48), bytes(0x4e, 24)],
 	)
 	await pool.query(
 		`INSERT INTO media (id, album_id, kind, status, metadata) VALUES ($1, $2, 'photo', 'ready', $3)`,
@@ -116,9 +116,9 @@ const OTHER_PHOTO = randomUUID()
 
 async function addRecipient(id, albumId, createdAt, revokedAt = null) {
 	await pool.query(
-		`INSERT INTO recipients (id, album_id, kind, label, token_hash, created_at, revoked_at)
-		 VALUES ($1, $2, 'qr', $3, $4, $5, $6)`,
-		[id, albumId, bytes(0x61, 50), createHash('sha256').update(id).digest(), createdAt, revokedAt],
+		`INSERT INTO recipients (id, album_id, kind, label, token_hash, created_at, revoked_at, wrapped, wrap_nonce)
+		 VALUES ($1, $2, 'qr', $3, $4, $5, $6, $7, $8)`,
+		[id, albumId, bytes(0x61, 50), createHash('sha256').update(id).digest(), createdAt, revokedAt, bytes(0x57, 48), bytes(0x4e, 24)],
 	)
 }
 const addRow = (recipientId, event, mediaId, at) =>

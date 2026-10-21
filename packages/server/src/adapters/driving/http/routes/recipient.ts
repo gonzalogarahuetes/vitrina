@@ -48,14 +48,22 @@ export function ownRecipientRoutes(deps: RecipientRoutesDeps) {
           grant: caller.grant,
         });
 
-        return reply.code(200).send({
+        const wrapping = {
           id: recipientId,
+          kind: wrap.kind,
+          wrapped: encodeBase64url(wrap.wrapped),
+          wrap_nonce: encodeBase64url(wrap.wrapNonce),
+        };
+
+        // A qr answer carries no KDF fields at all — absent, not null.
+        if (wrap.kind === "qr") return reply.code(200).send(wrapping);
+
+        return reply.code(200).send({
+          ...wrapping,
           kdf_salt: encodeBase64url(wrap.kdfSalt),
           kdf_memory_kib: wrap.params.memoryKib,
           kdf_iterations: wrap.params.iterations,
           kdf_parallelism: wrap.params.parallelism,
-          wrapped: encodeBase64url(wrap.wrapped),
-          wrap_nonce: encodeBase64url(wrap.wrapNonce),
         });
       },
     );

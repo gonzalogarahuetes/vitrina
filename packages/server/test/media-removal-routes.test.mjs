@@ -193,7 +193,7 @@ async function recipient({ app, parent }, albumId) {
     method: "POST",
     url: `/v1/albums/${albumId}/recipients`,
     headers: parent.auth,
-    payload: { id: randomUUID(), kind: "qr", label: b64(0x6c, 60), token_hash: sha256(token).toString("base64url") },
+    payload: { id: randomUUID(), kind: "qr", label: b64(0x6c, 60), token_hash: sha256(token).toString("base64url"), wrapped: b64(0x77, 48), wrap_nonce: b64(0x6e, 24) },
   });
   assert.equal(created.statusCode, 201, created.body);
   return { authorization: `Bearer ${token.toString("base64url")}` };
