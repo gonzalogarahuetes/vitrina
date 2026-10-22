@@ -55,7 +55,6 @@ export const parseInvite: ParseInvite = (hash: string) => {
 
   const a = piecesMap.get("a");
   const t = piecesMap.get("t");
-  const k = piecesMap.get("k");
   if (!a || !t) return { ok: false, error: { kind: "malformed" } };
 
   try {
@@ -68,7 +67,7 @@ export const parseInvite: ParseInvite = (hash: string) => {
             mode: "qr",
             albumId: decodedA,
             token: t,
-            key: decodeBase64url(piecesMap.get("k")!, 32),
+            inviteKey: decodeBase64url(piecesMap.get("k")!, 32),
           },
         }
       : {
