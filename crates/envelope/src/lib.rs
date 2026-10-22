@@ -41,5 +41,6 @@ pub use owner_wrap::{
     OwnerWrapError, WrappedMaster, derive_owner_credential, unwrap_master_key, wrap_master_key,
 };
 pub use wrap::{
-    InvalidParams, WrapError, WrapParams, WrappedKey, unwrap_album_key, wrap_album_key,
+    InvalidParams, WrapError, WrapParams, WrappedKey, normalize_passphrase, unwrap_album_key,
+    wrap_album_key,
 };

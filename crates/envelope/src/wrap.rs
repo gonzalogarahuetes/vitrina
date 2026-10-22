@@ -76,7 +76,7 @@ impl From<AeadError> for WrapError {
     }
 }
 
-pub(crate) fn normalize_passphrase(s: &str) -> String {
+pub fn normalize_passphrase(s: &str) -> String {
     let folded: String = s
         .nfkd()
         // Canonical_Combining_Class, not is_combining_mark: that one is
@@ -84,6 +84,9 @@ pub(crate) fn normalize_passphrase(s: &str) -> String {
         // and are vowels rather than decoration. §6.3.
         .filter(|c| canonical_combining_class(*c) == 0)
         .flat_map(|c| c.to_lowercase())
+        // §6.3 step 3: the two lowercase sigmas converge, so ΓΑΤΑΣ and γάτας
+        // normalise alike whatever a platform's lowercase mapping chose.
+        .map(|c| if c == '\u{03C2}' { '\u{03C3}' } else { c })
         .collect();
     folded.split_whitespace().collect::<Vec<_>>().join(" ")
 }
@@ -369,6 +372,12 @@ mod tests {
     #[test]
     fn folds_diacritics_to_base_letters() {
         assert_eq!(normalize_passphrase("pap\u{00E1}"), "papa")
+    }
+
+    #[test]
+    fn final_sigma_is_normalized() {
+        assert_eq!(normalize_passphrase("ΓΑΤΑΣ"), normalize_passphrase("γάτας"));
+        assert_eq!(normalize_passphrase("ΓΑΤΑΣ"), normalize_passphrase("γατασ"));
     }
 
     #[test]
