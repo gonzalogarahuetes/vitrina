@@ -9,6 +9,7 @@
     "build": "pnpm -r --if-present build",
     "check:forbidden": "./scripts/check-forbidden-constructions.sh",
     "check:citations": "node scripts/check-spec-citations.mjs",
+    "check:vectors": "node scripts/check-vectors.mjs",
     "infra:up": "docker compose up -d",
     "infra:down": "docker compose down",
     "infra:wait": "./scripts/wait-for-oneshot.sh createbucket && ./scripts/wait-for-oneshot.sh migrate",
@@ -31,6 +32,7 @@
   "devDependencies": {
     "@aws-sdk/client-s3": "^3.1106.0",
     "@aws-sdk/s3-request-presigner": "^3.1106.0",
+    "@noble/ciphers": "2.4.0",
     "pg": "^8.23.0"
   }
 }

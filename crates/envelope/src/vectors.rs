@@ -8,18 +8,20 @@ use crate::blob::encrypt_cipher_with_nonce;
 use crate::chunk::decrypt_chunk;
 use crate::envelope::encrypt_with_header;
 use crate::header::{Header, HeaderError};
+use crate::invite_wrap::{invite_wrap_aad, wrap_with_nonce as invite_wrap_with_nonce};
 use crate::keys::{cipher_for, keyed_blake2b_256};
 use crate::owner_wrap::{OWNER_KEK_LABEL, OWNER_PROOF_LABEL, wrap_master_key_with_nonce};
 use crate::test_fixtures::{
-    ALBUM_ID, ALBUM_WRAP_NONCE, ASSET_ID, BASE_NONCE, K_ALBUM, K_MASTER, OWNER_PASSWORD,
-    OWNER_SALT, OWNER_WRAP_NONCE, album_key, hex,
+    ALBUM_ID, ALBUM_WRAP_NONCE, ASSET_ID, BASE_NONCE, INVITE_WRAP_NONCE, K_ALBUM, K_INVITE,
+    K_MASTER, OWNER_PASSWORD, OWNER_SALT, OWNER_WRAP_NONCE, album_key, hex,
 };
 use crate::wrap::{derive_kek, normalize_passphrase, wrap_aad, wrap_with_salt_and_nonce};
 use crate::{
-    AlbumId, AlbumKey, AssetId, CHUNK_SIZE, EnvelopeError, MasterKey, MasterWrappedKey,
-    RecipientId, Salt, WrapError, WrapParams, WrappedKey, WrappedMaster, decrypt_album_title,
-    decrypt_asset, decrypt_recipient_label, derive_owner_credential, unwrap_album_key,
-    unwrap_album_key_with_master, unwrap_master_key,
+    AlbumId, AlbumKey, AssetId, CHUNK_SIZE, EnvelopeError, InviteKey, InviteWrappedKey, MasterKey,
+    MasterWrappedKey, RecipientId, Salt, WrapError, WrapParams, WrappedKey, WrappedMaster,
+    decrypt_album_title, decrypt_asset, decrypt_recipient_label, derive_owner_credential,
+    unwrap_album_key, unwrap_album_key_with_invite, unwrap_album_key_with_master,
+    unwrap_master_key,
 };
 use argon2::{Algorithm, Argon2, AssociatedData, ParamsBuilder, Version};
 use base64::Engine;
@@ -97,6 +99,7 @@ struct VectorFile {
     owner_wrap: Vec<OwnerWrapVector>,
     album_title: Vec<TitleVector>,
     recipient_label: Vec<LabelVector>,
+    invite_wrap: Vec<InviteWrapVector>,
     protocol: Protocol,
 }
 
@@ -216,6 +219,20 @@ struct LabelVector {
     blob: String,
 }
 
+/// §9 category 20: `K_album` under `K_invite`, bound to `recipient_id` (§6.1).
+/// No salt and no params, as category 16: `K_invite` is random and used
+/// directly. `recipient_id` is §9.1 vector 5's.
+#[derive(Serialize, Deserialize)]
+struct InviteWrapVector {
+    category: u8,
+    name: String,
+    k_album: String,
+    k_invite: String,
+    recipient_id: String,
+    wrap_nonce: String,
+    wrapped: String,
+}
+
 /// §9.1's protocol vectors, keyed by name in §9.1's order. Every field is
 /// mandatory on purpose: deleting a group then fails at the parser for
 /// every consumer, not only in the crate's own test run. Not `Option`.
@@ -229,6 +246,7 @@ struct Protocol {
     wrap_salt_length: Vec<SaltLengthVector>,
     passphrase_spacing_mark: PassphraseVector,
     album_wrap_aad: AlbumWrapAadVector,
+    invite_wrap_aad: InviteWrapAadVector,
 }
 
 /// vitrina-schema.md §6: the hash is over the 32 raw bytes, never the string.
@@ -291,6 +309,14 @@ struct WrapAadVector {
 struct AlbumWrapAadVector {
     vector: u8,
     album_id: String,
+    aad: String,
+}
+
+/// §9.1 vector 9: vector 5's shape for §6.1's 38-byte invite-wrap AAD.
+#[derive(Serialize, Deserialize)]
+struct InviteWrapAadVector {
+    vector: u8,
+    recipient_id: String,
     aad: String,
 }
 
@@ -542,6 +568,28 @@ fn album_wrap_vectors() -> Vec<AlbumWrapVector> {
         k_master: hex(&K_MASTER),
         album_id: hex(&ALBUM_ID),
         wrap_nonce: hex(&ALBUM_WRAP_NONCE),
+        wrapped: hex(&wrapped),
+    }]
+}
+
+/// The fixtures are invite_wrap.rs's, so this entry coincides with its
+/// KNOWN_ANSWER_WRAPPED, which was cross-checked against @noble/ciphers before
+/// this category was generated. The nonce is fixed here and drawn fresh in production.
+fn invite_wrap_vectors() -> Vec<InviteWrapVector> {
+    let wrapped: [u8; 48] = invite_wrap_with_nonce(
+        &album_key(),
+        &InviteKey::from_bytes(K_INVITE),
+        &RecipientId::from_bytes(RECIPIENT_ID),
+        &INVITE_WRAP_NONCE,
+    )
+    .unwrap();
+    vec![InviteWrapVector {
+        category: 20,
+        name: "K_album under K_invite, bound to recipient_id (§6.1)".to_string(),
+        k_album: hex(&K_ALBUM),
+        k_invite: hex(&K_INVITE),
+        recipient_id: hex(&RECIPIENT_ID),
+        wrap_nonce: hex(&INVITE_WRAP_NONCE),
         wrapped: hex(&wrapped),
     }]
 }
@@ -845,6 +893,11 @@ fn protocol() -> Protocol {
             album_id: hex(&ALBUM_ID),
             aad: hex(&album_wrap_aad(&AlbumId::from_bytes(ALBUM_ID))),
         },
+        invite_wrap_aad: InviteWrapAadVector {
+            vector: 9,
+            recipient_id: hex(&RECIPIENT_ID),
+            aad: hex(&invite_wrap_aad(&RecipientId::from_bytes(RECIPIENT_ID))),
+        },
     }
 }
 
@@ -1034,6 +1087,7 @@ fn build() -> VectorFile {
         owner_wrap: owner_wrap_vectors(),
         album_title: album_title_vectors(),
         recipient_label: recipient_label_vectors(),
+        invite_wrap: invite_wrap_vectors(),
         protocol: protocol(),
     }
 }
@@ -1244,6 +1298,37 @@ fn verify_album_wrap(v: &AlbumWrapVector, reference: &EnvelopeVector) {
         .unwrap()),
         reference.plaintext,
         "category 16: the unwrapped key opens category 1"
+    );
+}
+
+/// Category 20 (§6.1), on category 16's pattern: the wrap direction as a value
+/// inside the crate, then the unwrapped key proven by opening category 1.
+fn verify_invite_wrap(v: &InviteWrapVector, reference: &EnvelopeVector) {
+    assert_eq!(v.category, 20);
+    assert_ne!(v.k_invite, v.k_album, "K_invite is not K_album");
+    let invite: InviteKey = InviteKey::from_bytes(unhex_array(&v.k_invite));
+    let recipient_id: RecipientId = RecipientId::from_bytes(unhex_array(&v.recipient_id));
+    let wrap_nonce: [u8; 24] = unhex_array(&v.wrap_nonce);
+
+    let got: [u8; 48] =
+        invite_wrap_with_nonce(&album_from(&v.k_album), &invite, &recipient_id, &wrap_nonce)
+            .unwrap();
+    assert_eq!(hex(&got), v.wrapped, "category 20: wrap");
+
+    let stored: InviteWrappedKey =
+        InviteWrappedKey::try_from_parts(&unhex(&v.wrapped), &wrap_nonce).unwrap();
+    let unwrapped: AlbumKey =
+        unwrap_album_key_with_invite(&stored, &invite, &recipient_id).expect("category 20: unwrap");
+    assert_eq!(reference.category, 1);
+    assert_eq!(
+        hex(&decrypt_asset(
+            &unwrapped,
+            &AssetId::from_bytes(unhex_array(&reference.asset_id)),
+            &unhex(&reference.object),
+        )
+        .unwrap()),
+        reference.plaintext,
+        "category 20: the unwrapped key opens category 1"
     );
 }
 
@@ -1473,6 +1558,19 @@ fn verify_protocol(p: &Protocol) {
         )))),
         aw.aad
     );
+
+    let iw = &p.invite_wrap_aad;
+    assert_eq!(iw.vector, 9);
+    assert_eq!(
+        iw.recipient_id, p.wrap_aad.recipient_id,
+        "§9.1: vector 9's recipient_id is vector 5's"
+    );
+    assert_eq!(
+        hex(&invite_wrap_aad(&RecipientId::from_bytes(unhex_array(
+            &iw.recipient_id
+        )))),
+        iw.aad
+    );
 }
 
 #[test]
@@ -1534,6 +1632,13 @@ fn committed_vectors_verify() {
     assert_eq!(
         file.recipient_label[0].recipient_id, file.protocol.wrap_aad.recipient_id,
         "category 19's recipient_id is §9.1 vector 5's"
+    );
+
+    assert_eq!(file.invite_wrap.len(), 1);
+    verify_invite_wrap(&file.invite_wrap[0], &file.envelope[0]);
+    assert_eq!(
+        file.invite_wrap[0].recipient_id, file.protocol.wrap_aad.recipient_id,
+        "category 20's recipient_id is §9.1 vector 5's"
     );
 
     verify_protocol(&file.protocol);
@@ -1601,6 +1706,7 @@ fn envelope_entries(f: &VectorFile) -> Vec<Entry> {
     v.extend(f.owner_wrap.iter().map(|e| (e.category, None)));
     v.extend(f.album_title.iter().map(|e| (e.category, None)));
     v.extend(f.recipient_label.iter().map(|e| (e.category, None)));
+    v.extend(f.invite_wrap.iter().map(|e| (e.category, None)));
     v
 }
 
@@ -1626,6 +1732,7 @@ fn protocol_entries(p: &Protocol) -> Vec<Entry> {
     );
     v.push((p.passphrase_spacing_mark.vector, None));
     v.push((p.album_wrap_aad.vector, None));
+    v.push((p.invite_wrap_aad.vector, None));
     v
 }
 
