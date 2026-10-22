@@ -12,6 +12,12 @@
  * more keys (flows §1.1, brief §12):
  *   vitrina:owner:token      — 43 characters of base64url
  *   vitrina:owner:expires_at — RFC 3339 UTC with a trailing Z
+ * On recipient pages, and only when the caller names the fragment
+ * (`{ recipientInvite }`), one more (flows §4.7, invite spec §2.2 step 4):
+ *   vitrina:recipient:invite — exactly that fragment, as the link carried it.
+ * It is the one place a secret may be, and only there, only that value: the
+ * secret search skips it and nothing else, so K_invite under any other key,
+ * or a different value under this one, is still found.
  * Nothing else may exist anywhere.
  *
  * One finding per place at most, naming the place. A place holding a secret
@@ -39,10 +45,13 @@ const SCROLL = "sveltekit:scroll";
 const SNAPSHOT = "sveltekit:snapshot";
 const OWNER_TOKEN = "vitrina:owner:token";
 const OWNER_EXPIRES = "vitrina:owner:expires_at";
+const RECIPIENT_INVITE = "vitrina:recipient:invite";
 
 export type AllowOptions = {
   /** An owner page: the owner token and its expiry are permitted in sessionStorage. */
   readonly owner?: boolean;
+  /** A recipient page: this exact fragment is permitted under vitrina:recipient:invite. */
+  readonly recipientInvite?: string | undefined;
 };
 
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
@@ -72,7 +81,7 @@ function historyStateIsSvelteKitOnly(state: unknown): boolean {
 }
 
 /** A place in storage: what it is called, what is wrong with its shape (if anything), and what to search. */
-type Place = { readonly where: string; readonly problem: string | null; readonly content: string };
+type Place = { readonly where: string; readonly problem: string | null; readonly content: string; readonly mayHoldSecrets?: boolean };
 
 function places(dump: StorageDump, secrets: readonly string[], opts: AllowOptions): Place[] {
   const holds = (text: string) => secrets.some((s) => s !== "" && text.includes(s));
@@ -87,7 +96,14 @@ function places(dump: StorageDump, secrets: readonly string[], opts: AllowOption
     else if (opts.owner === true && key === OWNER_TOKEN) problem = /^[A-Za-z0-9_-]{43}$/.test(value) ? null : "is not a token";
     else if (opts.owner === true && key === OWNER_EXPIRES)
       problem = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/.test(value) ? null : "is not an RFC 3339 UTC time";
-    else problem = "is not permitted";
+    else if (opts.recipientInvite !== undefined && key === RECIPIENT_INVITE) {
+      // The permitted entry: exactly the fragment, which carries K_invite by design.
+      if (value === opts.recipientInvite) {
+        out.push({ where, problem: null, content: key + "\u0000" + value, mayHoldSecrets: true });
+        continue;
+      }
+      problem = "is not the invite's fragment";
+    } else problem = "is not permitted";
     out.push({ where, problem, content: key + "\u0000" + value });
   }
 
@@ -115,7 +131,7 @@ function places(dump: StorageDump, secrets: readonly string[], opts: AllowOption
 export function storageViolations(dump: StorageDump, secrets: readonly string[] = [], opts: AllowOptions = {}): string[] {
   const findings: string[] = [];
   for (const place of places(dump, secrets, opts)) {
-    const hits = secrets.flatMap((s, i) => (s !== "" && place.content.includes(s) ? [`#${i}`] : []));
+    const hits = place.mayHoldSecrets === true ? [] : secrets.flatMap((s, i) => (s !== "" && place.content.includes(s) ? [`#${i}`] : []));
     if (hits.length > 0) findings.push(`${place.where} holds secret ${hits.join(", ")}`);
     else if (place.problem !== null) findings.push(`${place.where} ${place.problem}`);
   }

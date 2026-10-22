@@ -39,25 +39,33 @@ describe("no SvelteKit snapshot in any route", () => {
   }, 30_000);
 });
 
-describe("sessionStorage only in src/lib/session/owner-session.ts (flows §1.1)", () => {
-  const STORAGE = /Nothing is stored on this device except the owner token/;
+describe("sessionStorage only in the owner's and the recipient's session modules (flows §1.1, §4.7)", () => {
+  const STORAGE = /Nothing is stored on this device except, in sessionStorage, the owner token/;
   const uses = ['sessionStorage.setItem("k", "v");', 'window.sessionStorage.setItem("k", "v");', 'globalThis.sessionStorage.getItem("k");'];
+  const MODULES = ["src/lib/session/owner-session.ts", "src/lib/session/recipient-session.ts"];
 
   for (const code of uses) {
-    for (const filePath of ["src/lib/owner/session.ts", "src/routes/+page.svelte", "src/lib/recipient/entry.ts", "src/lib/session/other.ts"]) {
+    // entry.ts calls the recipient module and must not reach past it; other.ts
+    // is the next file someone adds beside the two, which the exception must
+    // not cover by directory.
+    for (const filePath of ["src/lib/owner/session.ts", "src/routes/+page.svelte", "src/routes/v/+page.svelte", "src/lib/recipient/entry.ts", "src/lib/recipient/session.ts", "src/lib/session/other.ts"]) {
       it(`refuses \`${code}\` in ${filePath}`, async () => {
         const source = filePath.endsWith(".svelte") ? `<script lang="ts">\n${code}\n</script>\n` : code;
         expect(await messages(source, filePath)).toEqual(expect.arrayContaining([expect.stringMatching(STORAGE)]));
       }, 30_000);
     }
-    it(`allows \`${code}\` in the session module`, async () => {
-      expect((await messages(code, "src/lib/session/owner-session.ts")).filter((m) => STORAGE.test(m))).toEqual([]);
-    }, 30_000);
+    for (const module of MODULES) {
+      it(`allows \`${code}\` in ${module}`, async () => {
+        expect((await messages(code, module)).filter((m) => STORAGE.test(m))).toEqual([]);
+      }, 30_000);
+    }
   }
 
-  it("refuses localStorage even in the session module", async () => {
-    expect(await messages('localStorage.setItem("k", "v");', "src/lib/session/owner-session.ts")).toEqual(
-      expect.arrayContaining([expect.stringMatching(STORAGE)]),
-    );
-  }, 30_000);
+  for (const module of MODULES) {
+    for (const code of ['localStorage.setItem("k", "v");', 'indexedDB.open("k");', 'document.cookie = "k=v";']) {
+      it(`refuses \`${code}\` even in ${module}`, async () => {
+        expect(await messages(code, module)).toEqual(expect.arrayContaining([expect.stringMatching(STORAGE)]));
+      }, 30_000);
+    }
+  }
 });

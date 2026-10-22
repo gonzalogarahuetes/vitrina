@@ -25,7 +25,9 @@ import { Client } from 'pg'
  * a database that holds an album, because it replaces plaintext columns the
  * relay cannot encrypt, and its refusal rolls back whole. Likewise 005 fails on
  * a database already holding metadata under its floor, rather than adding the
- * constraint NOT VALID around it.
+ * constraint NOT VALID around it, and 006 refuses a database holding any QR
+ * recipient, whose invite it cannot convert, while passing passphrase rows
+ * through untouched.
  *
  * Property 3 runs against a scratch database created here, so it never
  * touches the stack's real one. It tampers with the *recorded* hash rather
@@ -41,6 +43,8 @@ const GUARD_DB = 'vitrina_migrations_guard_test'
 const GUARD_URL = withDatabase(DATABASE_URL, GUARD_DB)
 const FLOOR_DB = 'vitrina_migrations_floor_test'
 const FLOOR_URL = withDatabase(DATABASE_URL, FLOOR_DB)
+const QR_DB = 'vitrina_migrations_qr_test'
+const QR_URL = withDatabase(DATABASE_URL, QR_DB)
 
 const RUNNER = fileURLToPath(new URL('../packages/server/scripts/migrate.mjs', import.meta.url))
 const MIGRATIONS_DIR = new URL('../packages/server/migrations/', import.meta.url)
@@ -109,7 +113,7 @@ before(async () => {
 	// CREATE DATABASE cannot run inside a transaction; a bare query is fine.
 	// DROP first so a crashed previous run does not poison this one.
 	await withClient(DATABASE_URL, async (client) => {
-		for (const db of [SCRATCH_DB, GUARD_DB, FLOOR_DB]) {
+		for (const db of [SCRATCH_DB, GUARD_DB, FLOOR_DB, QR_DB]) {
 			await client.query(`DROP DATABASE IF EXISTS ${db}`)
 			await client.query(`CREATE DATABASE ${db}`)
 		}
@@ -118,7 +122,7 @@ before(async () => {
 
 after(async () => {
 	await withClient(DATABASE_URL, async (client) => {
-		for (const db of [SCRATCH_DB, GUARD_DB, FLOOR_DB]) {
+		for (const db of [SCRATCH_DB, GUARD_DB, FLOOR_DB, QR_DB]) {
 			await client.query(`DROP DATABASE IF EXISTS ${db}`)
 		}
 	})
@@ -242,5 +246,97 @@ test('005 refuses a database holding metadata under 81 bytes, and applies nothin
 		assert.equal(constraints.length, 0)
 		const { rows: media } = await client.query('SELECT octet_length(metadata) AS n FROM media')
 		assert.deepEqual(media, [{ n: 80 }])
+	})
+})
+
+test('006 refuses a database holding a QR recipient, applies nothing, and passes passphrase rows through', async () => {
+	/*
+	 * Migrate to 005, hold one QR and one passphrase recipient in their pre-006
+	 * shapes, then let the runner meet 006. Built without a directory-override
+	 * knob: migrate fully, forget 006, and put 005's constraints back, so the
+	 * table is what 006 meets on a real pre-006 database.
+	 */
+	const first = await runMigrator(QR_URL)
+	assert.equal(first.code, 0, first.stderr)
+
+	const qrId = '00000000-0000-4000-8000-0000000000a1'
+	const passphraseId = '00000000-0000-4000-8000-0000000000a2'
+
+	await withClient(QR_URL, async (client) => {
+		await client.query('DELETE FROM schema_migrations WHERE version >= 6')
+		await client.query('ALTER TABLE recipients DROP CONSTRAINT "CHK_recipients_wrap_columns"')
+		await client.query('ALTER TABLE recipients DROP CONSTRAINT "CHK_recipients_kdf_wrap_kind"')
+		// 001's and 002's, verbatim in effect: all six NULL for qr.
+		await client.query(`ALTER TABLE recipients ADD CONSTRAINT "CK_recipients_passphrase_columns" CHECK (
+			num_nonnulls(wrapped, wrap_nonce, kdf_salt, kdf_memory_kib, kdf_iterations, kdf_parallelism)
+			= CASE kind WHEN 'passphrase' THEN 6 ELSE 0 END)`)
+		await client.query(`ALTER TABLE recipients ADD CONSTRAINT "CHK_recipients_kdf_wrap_kind" CHECK (
+			kind = 'qr' OR (octet_length(kdf_salt) = 16 AND octet_length(wrap_nonce) = 24
+			AND octet_length(wrapped) = 48 AND kdf_memory_kib >= 16384 AND kdf_iterations >= 2
+			AND kdf_parallelism >= 1))`)
+
+		const {
+			rows: [owner],
+		} = await client.query(
+			"INSERT INTO owners (email, auth_hash) VALUES ('qr@vitrina.test', $1) RETURNING id",
+			[Buffer.alloc(32)],
+		)
+		const {
+			rows: [album],
+		} = await client.query(
+			'INSERT INTO albums (id, owner_id, title, wrapped_key, wrap_nonce) VALUES (gen_random_uuid(), $1, $2, $3, $4) RETURNING id',
+			[owner.id, Buffer.alloc(41), Buffer.alloc(48), Buffer.alloc(24)],
+		)
+		await client.query(
+			"INSERT INTO recipients (id, album_id, kind, label, token_hash) VALUES ($1, $2, 'qr', $3, $4)",
+			[qrId, album.id, Buffer.alloc(41), Buffer.alloc(32, 1)],
+		)
+		await client.query(
+			`INSERT INTO recipients (id, album_id, kind, label, token_hash, wrapped, wrap_nonce,
+			   kdf_salt, kdf_memory_kib, kdf_iterations, kdf_parallelism)
+			 VALUES ($1, $2, 'passphrase', $3, $4, $5, $6, $7, 16384, 2, 1)`,
+			[passphraseId, album.id, Buffer.alloc(41), Buffer.alloc(32, 2), Buffer.alloc(48, 7), Buffer.alloc(24, 8), Buffer.alloc(16, 9)],
+		)
+	})
+
+	const refused = await runMigrator(QR_URL)
+	assert.equal(refused.code, 1)
+	assert.match(refused.stderr, /006_\w+\.sql: 006 cannot run on a database that holds QR recipients/)
+
+	// Rolled back whole: 006 unrecorded, the old constraint still in place,
+	// and the QR row untouched rather than "fixed".
+	await withClient(QR_URL, async (client) => {
+		const { rows: versions } = await client.query('SELECT max(version) AS v FROM schema_migrations')
+		assert.equal(versions[0].v, 5)
+		const { rows: constraints } = await client.query(
+			"SELECT conname FROM pg_constraint WHERE conrelid = 'recipients'::regclass AND contype = 'c' ORDER BY conname",
+		)
+		assert.ok(constraints.some((c) => c.conname === 'CK_recipients_passphrase_columns'))
+		assert.ok(!constraints.some((c) => c.conname === 'CHK_recipients_wrap_columns'))
+		const { rows: qr } = await client.query('SELECT wrapped, wrap_nonce FROM recipients WHERE id = $1', [qrId])
+		assert.deepEqual(qr, [{ wrapped: null, wrap_nonce: null }])
+	})
+
+	// With the QR row gone, as a reset development volume would be, 006
+	// applies, and the passphrase row survives byte for byte under both new
+	// constraints — validated on ADD, not NOT VALID.
+	await withClient(QR_URL, (client) => client.query('DELETE FROM recipients WHERE id = $1', [qrId]))
+
+	const applied = await runMigrator(QR_URL)
+	assert.equal(applied.code, 0, applied.stderr)
+
+	await withClient(QR_URL, async (client) => {
+		const { rows: constraints } = await client.query(
+			"SELECT conname, convalidated FROM pg_constraint WHERE conrelid = 'recipients'::regclass AND conname LIKE '%wrap%' ORDER BY conname",
+		)
+		assert.deepEqual(constraints, [
+			{ conname: 'CHK_recipients_kdf_wrap_kind', convalidated: true },
+			{ conname: 'CHK_recipients_wrap_columns', convalidated: true },
+		])
+		const { rows } = await client.query(
+			"SELECT encode(wrapped, 'hex') AS w, encode(kdf_salt, 'hex') AS s FROM recipients WHERE id = $1",
+			[passphraseId],
+		)
+		assert.deepEqual(rows, [{ w: '07'.repeat(48), s: '09'.repeat(16) }])
 	})
 })

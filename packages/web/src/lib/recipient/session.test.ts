@@ -4,8 +4,8 @@ import type { UnwrapError } from "$lib/keys/types";
 import {
   ALBUM_ID,
   FakePicture,
-  KEY,
-  KEY_B64,
+  INVITE_KEY,
+  INVITE_KEY_B64,
   PASSPHRASE,
   PASSPHRASE_WORDS,
   PASS_FRAGMENT,
@@ -13,6 +13,7 @@ import {
   TOKEN,
   harness,
   media,
+  memoryStore,
   seal,
   paths,
   settle,
@@ -20,6 +21,7 @@ import {
 } from "./harness.test-support";
 import { captureInvite, takeCapturedInvite } from "./entry";
 import { encodeBase64url } from "@vitrina/shared";
+import { uuidToBytes } from "$lib/ids";
 
 const METADATA = `/v1/albums/${ALBUM_ID}/metadata`;
 const assetsOf = (sent: readonly Sent[]) => paths(sent).filter((p) => p.endsWith("/asset"));
@@ -34,6 +36,12 @@ async function toGrid(h: ReturnType<typeof harness>, fragment = QR_FRAGMENT) {
   expect(h.screen().kind).toBe("onboarding");
   h.session.enterGrid();
   await settle();
+}
+
+/** A QR invite whose K_invite bytes the test keeps a handle on, to see them zeroed. */
+function heldInvite() {
+  const held = Uint8Array.from(INVITE_KEY);
+  return { held, invite: { mode: "qr" as const, albumId: uuidToBytes(ALBUM_ID), token: TOKEN, inviteKey: held } };
 }
 
 const albumScreen = (h: ReturnType<typeof harness>) => {
@@ -55,7 +63,7 @@ describe("the fragment is read, then stripped, then — only then — requests",
         replaced.push({ state, url });
       },
     };
-    captureInvite({ pathname: "/v/", search: "", hash: QR_FRAGMENT }, history);
+    captureInvite({ pathname: "/v/", search: "", hash: QR_FRAGMENT }, history, memoryStore());
     expect(h.events).toEqual(["strip"]);
     h.session.start(takeCapturedInvite());
     await settle();
@@ -67,8 +75,8 @@ describe("the fragment is read, then stripped, then — only then — requests",
     expect(replaced).toEqual([{ state: { "sveltekit:history": 1 }, url: "/v/" }]);
   });
 
-  it("is handed over once: a second take, like a reload, is the dead page", async () => {
-    captureInvite({ pathname: "/v/", search: "", hash: QR_FRAGMENT }, { state: null, replaceState: () => undefined });
+  it("is handed over once: a second take is empty, and empty is the dead page", async () => {
+    captureInvite({ pathname: "/v/", search: "", hash: QR_FRAGMENT }, { state: null, replaceState: () => undefined }, memoryStore());
     expect(takeCapturedInvite()).toBe(QR_FRAGMENT);
     const h = harness();
     h.session.start(takeCapturedInvite());
@@ -79,17 +87,194 @@ describe("the fragment is read, then stripped, then — only then — requests",
 
   it("leaves other paths alone", () => {
     let calls = 0;
-    captureInvite({ pathname: "/", search: "", hash: "#x" }, { state: null, replaceState: () => void calls++ });
+    const store = memoryStore(QR_FRAGMENT);
+    captureInvite({ pathname: "/", search: "", hash: "#x" }, { state: null, replaceState: () => void calls++ }, store);
     expect(calls).toBe(0);
     expect(takeCapturedInvite()).toBe("");
+    expect(store.writes).toEqual([]);
   });
 });
 
-/** Every spelling of the album key and the passphrase that could leak. */
+// ── Flows §4.7: a reload of the same tab continues ────────────────────────
+
+describe("the tab keeps a valid fragment, and only a valid one (flows §4.7)", () => {
+  const strip = { state: null, replaceState: () => undefined };
+
+  it("stores a QR fragment exactly as read, after stripping it", () => {
+    const store = memoryStore();
+    const order: string[] = [];
+    captureInvite({ pathname: "/v/", search: "", hash: QR_FRAGMENT }, { state: null, replaceState: () => void order.push("strip") }, {
+      ...store,
+      write: (f: string) => {
+        order.push("store");
+        store.write(f);
+      },
+    });
+    expect(order).toEqual(["strip", "store"]);
+    expect(store.writes).toEqual([QR_FRAGMENT]);
+    expect(takeCapturedInvite()).toBe(QR_FRAGMENT);
+  });
+
+  it("stores a passphrase fragment too: the token and album, no key", () => {
+    const store = memoryStore();
+    captureInvite({ pathname: "/v/", search: "", hash: PASS_FRAGMENT }, strip, store);
+    expect(store.writes).toEqual([PASS_FRAGMENT]);
+    expect(store.value()).not.toContain("k=");
+    takeCapturedInvite();
+  });
+
+  for (const [what, fragment] of [
+    ["a malformed fragment", "#v=1&a=nope"],
+    ["a newer-version fragment", "#v=2&x=y"],
+    ["a fragment with an unknown field", `${PASS_FRAGMENT}&x=1`],
+  ] as const) {
+    it(`never stores ${what}, and still hands it to the session`, () => {
+      const store = memoryStore();
+      captureInvite({ pathname: "/v/", search: "", hash: fragment }, strip, store);
+      expect(store.writes).toEqual([]);
+      expect(takeCapturedInvite()).toBe(fragment);
+    });
+  }
+
+  it("on a reload — no fragment — hands over the stored one", () => {
+    captureInvite({ pathname: "/v/", search: "", hash: "" }, strip, memoryStore(QR_FRAGMENT));
+    expect(takeCapturedInvite()).toBe(QR_FRAGMENT);
+  });
+
+  it("on a reload with nothing stored, hands over nothing: the dead page", async () => {
+    captureInvite({ pathname: "/v/", search: "", hash: "" }, strip, memoryStore());
+    const h = harness();
+    h.session.start(takeCapturedInvite());
+    await settle();
+    expect(h.screen()).toEqual({ kind: "dead" });
+    expect(h.sent).toEqual([]);
+  });
+
+  it("a QR reload unwraps again: back on onboarding, through /recipient/key, with the stored K_invite", async () => {
+    captureInvite({ pathname: "/v/", search: "", hash: "" }, strip, memoryStore(QR_FRAGMENT));
+    const h = harness();
+    h.session.start(takeCapturedInvite());
+    await settle();
+    expect(h.screen()).toEqual({ kind: "onboarding" });
+    expect(paths(h.sent).slice(0, 2)).toEqual(["/v1/recipient/key", "/v1/recipient"]);
+    expect(h.invitesOpened).toHaveLength(1);
+  });
+
+  it("a passphrase reload asks for the words again", async () => {
+    captureInvite({ pathname: "/v/", search: "", hash: "" }, strip, memoryStore(PASS_FRAGMENT));
+    const h = harness();
+    h.album.kind = "passphrase";
+    h.session.start(takeCapturedInvite());
+    await settle();
+    expect(h.screen()).toEqual({ kind: "passphrase", phase: "ready" });
+  });
+});
+
+describe("which screens forget the stored invite (flows §4.6, §4.7)", () => {
+  const cases: [string, (h: ReturnType<typeof harness>) => void, string, number][] = [
+    ["revoked", (h) => h.override("/v1/recipient/key", h.err(403, "ACCESS_REVOKED")), "revoked", 1],
+    ["not recognised", (h) => h.override("/v1/recipient/key", h.err(401, "UNAUTHENTICATED")), "not-recognised", 1],
+    ["the dead page (a damaged link)", () => undefined, "dead", 1],
+    ["device failed keeps it: a reload may recover", () => undefined, "device-failed", 0],
+  ];
+  for (const [what, arrange, screen, forgotten] of cases) {
+    it(what, async () => {
+      const outcome = screen === "dead" ? "damaged-link" : screen === "device-failed" ? "could-not-derive" : "ok";
+      const h = harness({ inviteOpen: outcome });
+      arrange(h);
+      h.session.start(QR_FRAGMENT);
+      await settle();
+      expect(h.screen()).toEqual({ kind: screen });
+      expect(h.forgotten()).toBe(forgotten);
+    });
+  }
+
+  it("the newer-version screen and a malformed link forget it too", async () => {
+    for (const f of ["#v=2&x=y", "#v=1&a=nope"]) {
+      const h = harness();
+      h.session.start(f);
+      await settle();
+      expect(h.forgotten()).toBe(1);
+    }
+  });
+
+  it("an offline wait forgets nothing", async () => {
+    const h = harness();
+    h.override("/v1/recipient/key", "network");
+    h.session.start(QR_FRAGMENT);
+    await settle();
+    expect(h.session.current.offline).toBe(true);
+    expect(h.forgotten()).toBe(0);
+  });
+});
+
+// ── Flows §4.1 step 4: QR fetches the wrapping and unwraps under K_invite ─
+
+describe("the QR open (encryption spec §6.1)", () => {
+  it("fetches /recipient/key first, unwraps with the fragment's K_invite and the response, then /recipient", async () => {
+    const h = harness();
+    h.session.start(QR_FRAGMENT);
+    await settle();
+    expect(paths(h.sent).slice(0, 2)).toEqual(["/v1/recipient/key", "/v1/recipient"]);
+    expect(h.invitesOpened).toEqual([
+      { inviteKey: Array.from(INVITE_KEY), material: { id: "0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d", kind: "qr", wrapped: "w".repeat(64), wrap_nonce: "n".repeat(32) } },
+    ]);
+    expect(h.screen()).toEqual({ kind: "onboarding" });
+  });
+
+  for (const [error, screen] of [
+    ["damaged-link", "dead"],
+    ["unusable-material", "not-recognised"],
+    ["could-not-derive", "device-failed"],
+  ] as const) {
+    it(`${error} → ${screen}, with K_invite zeroed and no further request`, async () => {
+      const h = harness({ inviteOpen: error });
+      h.session.start(QR_FRAGMENT);
+      await settle();
+      expect(h.screen()).toEqual({ kind: screen });
+      expect(Array.from(h.zeroedAt[0] ?? [])).toEqual(new Array(32).fill(0));
+      expect(paths(h.sent)).toEqual(["/v1/recipient/key"]);
+    });
+  }
+
+  it("a revoked QR invite is the revoked screen, and K_invite is zeroed without ever being used", async () => {
+    const { invite, held } = heldInvite();
+    const h = harness({ invite });
+    h.override("/v1/recipient/key", h.err(403, "ACCESS_REVOKED"));
+    h.session.start(QR_FRAGMENT);
+    await settle();
+    expect(h.screen()).toEqual({ kind: "revoked" });
+    expect(h.invitesOpened).toEqual([]);
+    expect(Array.from(held)).toEqual(new Array(32).fill(0));
+  });
+
+  it("an offline wait before the unwrap keeps K_invite intact, and the retry opens it", async () => {
+    const h = harness();
+    h.override("/v1/recipient/key", "network");
+    h.session.start(QR_FRAGMENT);
+    await settle();
+    expect(h.invitesOpened).toEqual([]);
+    h.session.retryOffline();
+    await settle();
+    expect(h.invitesOpened.map((o) => o.inviteKey)).toEqual([Array.from(INVITE_KEY)]);
+    expect(h.screen()).toEqual({ kind: "onboarding" });
+  });
+
+  it("a QR answer with a KDF field is not the API's shape: retryable, never unwrapped", async () => {
+    const h = harness();
+    h.override("/v1/recipient/key", { status: 200, json: { id: "0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d", kind: "qr", wrapped: "w".repeat(64), wrap_nonce: "n".repeat(32), kdf_salt: "s".repeat(22) } });
+    h.session.start(QR_FRAGMENT);
+    await settle();
+    expect(h.session.current.offline).toBe(true);
+    expect(h.invitesOpened).toEqual([]);
+  });
+});
+
+/** Every spelling of K_invite and the passphrase that could leak. */
 function keySpellings(): string[] {
-  const std = KEY_B64.replace(/-/g, "+").replace(/_/g, "/");
-  const hex = Array.from(KEY, (b) => b.toString(16).padStart(2, "0")).join("");
-  return [KEY_B64, std, hex, hex.toUpperCase(), JSON.stringify(Array.from(KEY)), Array.from(KEY).join(","), String.fromCharCode(...KEY), `k=${KEY_B64}`, PASSPHRASE, encodeURIComponent(PASSPHRASE), "tortilla"];
+  const std = INVITE_KEY_B64.replace(/-/g, "+").replace(/_/g, "/");
+  const hex = Array.from(INVITE_KEY, (b) => b.toString(16).padStart(2, "0")).join("");
+  return [INVITE_KEY_B64, std, hex, hex.toUpperCase(), JSON.stringify(Array.from(INVITE_KEY)), Array.from(INVITE_KEY).join(","), String.fromCharCode(...INVITE_KEY), `k=${INVITE_KEY_B64}`, PASSPHRASE, encodeURIComponent(PASSPHRASE), "tortilla"];
 }
 
 function assertNoKeyMaterial(sent: readonly Sent[]) {
@@ -139,13 +324,13 @@ describe("invite spec §7 item 3: no request carries key material in its URL, he
   });
 
   it("would catch the leak it exists for: a ? where the # belongs", () => {
-    const leaked: Sent = { url: `https://api.vitrina.test/v/?k=${KEY_B64}`, method: "GET", headers: { authorization: `Bearer ${TOKEN}` }, body: "" };
+    const leaked: Sent = { url: `https://api.vitrina.test/v/?k=${INVITE_KEY_B64}`, method: "GET", headers: { authorization: `Bearer ${TOKEN}` }, body: "" };
     expect(() => assertNoKeyMaterial([leaked])).toThrow();
   });
 });
 
 describe("invite spec §7 item 7: after load, the key is in no persistent browser storage", () => {
-  it("writes to none of them, over the whole path", async () => {
+  it("writes the one sessionStorage entry flows §4.7 allows, and nothing else, over the whole path", async () => {
     const writes: string[] = [];
     const rec = (name: string) => (...args: unknown[]) => void writes.push(`${name} ${JSON.stringify(args)}`);
     const storage = (name: string) => ({ setItem: rec(`${name}.setItem`), getItem: () => null, removeItem: rec(`${name}.removeItem`), clear: rec(`${name}.clear`), key: () => null, length: 0 });
@@ -174,6 +359,7 @@ describe("invite spec §7 item 7: after load, the key is in no persistent browse
     let historyState: unknown = { "sveltekit:history": 1 };
     try {
       const h = harness();
+      // The real store over the stubbed sessionStorage: the one write it may make.
       captureInvite({ pathname: "/v/", search: "", hash: QR_FRAGMENT }, {
         get state() {
           return historyState;
@@ -187,7 +373,9 @@ describe("invite spec §7 item 7: after load, the key is in no persistent browse
       await settle();
       h.session.dispose();
 
-      expect(writes).toEqual([]);
+      // Flows §4.7's one entry, the fragment as read (K_invite, never K_album),
+      // and nothing else in any storage.
+      expect(writes).toEqual([`sessionStorage.setItem ${JSON.stringify(["vitrina:recipient:invite", QR_FRAGMENT])}`]);
       expect(cookie).toBe("");
       expect(g["name"]).toBe("");
       const persisted = JSON.stringify(historyState);
@@ -199,7 +387,7 @@ describe("invite spec §7 item 7: after load, the key is in no persistent browse
     }
   });
 
-  it("zeroes the key bytes the invite carried once the handle exists", async () => {
+  it("zeroes K_invite's bytes once the unwrap has run", async () => {
     const h = harness();
     h.session.start(QR_FRAGMENT);
     await settle();
@@ -216,7 +404,7 @@ describe("the metadata call is the album open", () => {
     h.session.start(QR_FRAGMENT);
     await settle();
     expect(h.screen().kind).toBe("onboarding");
-    expect(paths(h.sent)).toEqual(["/v1/recipient", `/v1/albums/${ALBUM_ID}`]);
+    expect(paths(h.sent)).toEqual(["/v1/recipient/key", "/v1/recipient", `/v1/albums/${ALBUM_ID}`]);
     h.session.enterGrid();
     h.session.enterGrid();
     await settle();
@@ -362,11 +550,22 @@ describe("not recognised", () => {
     expect(h.keys[0]?.freed).toBe(1);
   });
 
-  it("is a 404 from /recipient/key (a QR row's token on a passphrase link)", async () => {
+  it("is a QR row's token on a passphrase link: /recipient/key answers kind qr", async () => {
     const h = harness();
     h.session.start(PASS_FRAGMENT);
     await settle();
     expect(h.screen()).toEqual({ kind: "not-recognised" });
+  });
+
+  it("is a passphrase row's token on a QR link: never unwrapped with K_invite, which is zeroed", async () => {
+    const { invite, held } = heldInvite();
+    const h = harness({ invite });
+    h.album.kind = "passphrase";
+    h.session.start(QR_FRAGMENT);
+    await settle();
+    expect(h.screen()).toEqual({ kind: "not-recognised" });
+    expect(h.invitesOpened).toEqual([]);
+    expect(Array.from(held)).toEqual(new Array(32).fill(0));
   });
 
   it("is a 401 mid-grid", async () => {
@@ -458,7 +657,7 @@ describe("the dead page and the newer-version screen", () => {
     expect(h.sent).toEqual([]);
   });
 
-  it("a label that will not open under a QR key is a damaged link", async () => {
+  it("a label that will not open after a successful unwrap is corrupted data: the dead page", async () => {
     const h = harness();
     h.override("/v1/recipient", { status: 200, json: { id: "0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d", album_id: ALBUM_ID, label: "AAAA", kind: "qr", created_at: "x" } });
     h.session.start(QR_FRAGMENT);

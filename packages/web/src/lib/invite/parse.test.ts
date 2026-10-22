@@ -7,7 +7,8 @@ import { encodeBase64url } from "@vitrina/shared";
 import { describe, expect, it } from "vitest";
 import { parseInvite } from "./parse";
 
-const b64 = (bytes: number, fill: number) => encodeBase64url(new Uint8Array(bytes).fill(fill));
+const b64 = (bytes: number, fill: number) =>
+  encodeBase64url(new Uint8Array(bytes).fill(fill));
 const A = b64(16, 1);
 const T = b64(32, 2);
 const K = b64(32, 3);
@@ -46,17 +47,29 @@ describe("parseInvite", () => {
     ["v=-1", `#v=-1&a=${A}&t=${T}`, "malformed"],
     ["v=1.0", `#v=1.0&a=${A}&t=${T}`, "malformed"],
     ["an empty v", `#v=&a=${A}&t=${T}`, "malformed"],
-    ["v=2 with fields v1 does not know", "#v=2&anything=else", "unsupported-version"],
+    [
+      "v=2 with fields v1 does not know",
+      "#v=2&anything=else",
+      "unsupported-version",
+    ],
     ["v=10", `#v=10&a=${A}&t=${T}`, "unsupported-version"],
     /*
      * v is found before ANY v1 grammar is applied (invite spec §6: refuse with
      * a clear message, never guess). A v2 may change the syntax itself, so
      * none of v1's structural rules may turn a v2 invite into the dead page.
      */
-    ["v=2 with a piece that has no =", "#v=2&anything-without-equals", "unsupported-version"],
+    [
+      "v=2 with a piece that has no =",
+      "#v=2&anything-without-equals",
+      "unsupported-version",
+    ],
     ["v=2 with an empty piece", "#v=2&&x=1", "unsupported-version"],
     ["v=2 with a % elsewhere", "#v=2&x=%41", "unsupported-version"],
-    ["v=2 with duplicate keys elsewhere", "#v=2&x=1&x=2", "unsupported-version"],
+    [
+      "v=2 with duplicate keys elsewhere",
+      "#v=2&x=1&x=2",
+      "unsupported-version",
+    ],
     ["v=2 last", "#x=1&v=2", "unsupported-version"],
     ["a % inside v itself", `#v=%31&a=${A}&t=${T}`, "malformed"],
 
@@ -70,8 +83,16 @@ describe("parseInvite", () => {
     ["a one character short", `#v=1&a=${A.slice(1)}&t=${T}`, "malformed"],
     ["a one character long", `#v=1&a=${A}A&t=${T}`, "malformed"],
     ["t one character short", `#v=1&a=${A}&t=${T.slice(1)}`, "malformed"],
-    ["k one character short", `#v=1&a=${A}&t=${T}&k=${K.slice(1)}`, "malformed"],
-    ["a non-canonical t (spare bits set)", `#v=1&a=${A}&t=${T.slice(0, 42)}B`, "malformed"],
+    [
+      "k one character short",
+      `#v=1&a=${A}&t=${T}&k=${K.slice(1)}`,
+      "malformed",
+    ],
+    [
+      "a non-canonical t (spare bits set)",
+      `#v=1&a=${A}&t=${T.slice(0, 42)}B`,
+      "malformed",
+    ],
     ["a padded t", `#v=1&a=${A}&t=${T}=`, "malformed"],
     ["standard base64's +", `#v=1&a=${A}&t=${T.slice(0, 42)}+`, "malformed"],
   ];
@@ -84,10 +105,11 @@ describe("parseInvite", () => {
 
   it("returns the token as the text it was sent as, and the decoded bytes", () => {
     const r = parseInvite(`#v=1&a=${A}&t=${T}&k=${K}`);
-    if (!r.ok || r.invite.mode !== "qr") throw new Error("expected a QR invite");
+    if (!r.ok || r.invite.mode !== "qr")
+      throw new Error("expected a QR invite");
     expect(r.invite.token).toBe(T);
     expect(Array.from(r.invite.albumId)).toEqual(new Array(16).fill(1));
-    expect(Array.from(r.invite.key)).toEqual(new Array(32).fill(3));
+    expect(Array.from(r.invite.inviteKey)).toEqual(new Array(32).fill(3));
   });
 
   it("puts nothing from the fragment into an error", () => {

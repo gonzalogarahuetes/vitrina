@@ -6,18 +6,23 @@
  * What changes key state, and nothing else does:
  *   - 403 ACCESS_REVOKED, anywhere → revoked: K_album freed, every decrypted
  *     image closed, title and label dropped.
- *   - recipient 401 (and 404 from /recipient/key) → not recognised, the same.
+ *   - recipient 401, or a /recipient/key answer of the other kind than the
+ *     link's → not recognised, the same.
  *   - a WASM trap → device failed, the same minus free(): the instance is
  *     poisoned and is not touched again (envelope.ts).
  * A network failure is an offline state that frees, clears and closes nothing
  * (flows §0); 429 waits for Retry-After.
+ *
+ * Revoked, not recognised, the dead page and the newer-version screen also
+ * forget the tab's stored invite (flows §4.6, §4.7); device failed keeps it,
+ * because a reload may recover from a trap.
  */
 import { ApiFailure, NetworkFailure, UnexpectedResponse, type ApiClient } from "$lib/api/client";
 import { en, watermarkDate } from "$lib/copy/en";
 import { EnvelopeUnavailable, type Envelope, type Poison } from "$lib/envelope";
 import { uuidFromBytes, uuidToBytes } from "$lib/ids";
 import type { ParseInvite } from "$lib/invite/types";
-import type { AlbumKey, OpenDirectKey, OpenPassphraseKey, RecipientKeyMaterial } from "$lib/keys/types";
+import type { AlbumKey, OpenInviteKey, OpenPassphraseKey, PassphraseKeyMaterial, RecipientKeyMaterial } from "$lib/keys/types";
 import { decodeBase64urlRange } from "@vitrina/shared";
 import { recipientApi, type AlbumDetails, type RecipientApi } from "./api";
 import type { Picture } from "./render";
@@ -67,8 +72,10 @@ export type Deps = {
   readonly envelope: Envelope;
   readonly poison: Poison;
   readonly parseInvite: ParseInvite;
-  readonly openDirectKey: OpenDirectKey;
+  readonly openInviteKey: OpenInviteKey;
   readonly openPassphraseKey: OpenPassphraseKey;
+  /** Clears the tab's stored invite (lib/session/recipient-session.ts; flows §4.7). */
+  readonly forgetInvite: () => void;
   /** createImageBitmap(new Blob([bytes])) in the browser: no URL is ever made. */
   readonly decodeImage: (bytes: Uint8Array) => Promise<Picture>;
   readonly sleep: (ms: number) => Promise<void>;
@@ -123,7 +130,12 @@ export class RecipientSession {
   private albumId: string | null = null;
   private albumIdBytes: Uint8Array | null = null;
   private albumKey: AlbumKey | null = null;
-  private material: RecipientKeyMaterial | null = null;
+  private material: PassphraseKeyMaterial | null = null;
+  /**
+   * K_invite's bytes from the fragment (QR only), held from parse until
+   * openInviteKey zeroes them. Never K_album: that one is only ever a handle.
+   */
+  private inviteKey: Uint8Array | null = null;
   private details: Promise<AlbumDetails> | null = null;
   /** The decrypted label and today's date, as the watermark's two lines. Dropped with the key. */
   private watermark: readonly string[] = [];
@@ -180,6 +192,8 @@ export class RecipientSession {
       a.viewer?.picture?.close();
     }
     this.material = null;
+    this.inviteKey?.fill(0);
+    this.inviteKey = null;
     this.watermark = [];
     this.details = null;
     this.api = null;
@@ -190,6 +204,7 @@ export class RecipientSession {
   private terminal(kind: "revoked" | "not-recognised" | "device-failed" | "dead" | "newer-version"): void {
     if (this.halted) return;
     this.halted = true;
+    if (kind !== "device-failed") this.deps.forgetInvite();
     // A trapped instance must not be touched, so the handle is not freed.
     this.dropKeyState(kind !== "device-failed" && !this.deps.poison.poisoned);
     this.online?.resolve();
@@ -289,28 +304,64 @@ export class RecipientSession {
     this.api = recipientApi(this.deps.client, invite.token);
 
     if (invite.mode === "qr") {
-      // openDirectKey zeroes invite.key, which makes the Invite object dead:
-      // nothing may keep `invite` (or `parsed`) past this line.
-      const opened = this.deps.openDirectKey(this.deps.envelope, invite.key);
-      if (!opened.ok) return this.terminal("device-failed");
-      this.albumKey = opened.albumKey;
-      this.guarded(() => this.enterOnboarding());
+      // Held until openInviteKey zeroes it; nothing else keeps `invite`.
+      this.inviteKey = invite.inviteKey;
+      this.guarded(() => this.openInvite());
     } else {
       this.set({ kind: "passphrase", phase: "loading" });
       this.guarded(() => this.fetchKeyMaterial());
     }
   }
 
+  /**
+   * GET /v1/recipient/key (api-sketch §10.1). Both kinds of recipient call it
+   * since 006; `kind` must match the link's shape, a `k` or none. A token whose
+   * row is the other kind is a link that does not belong to it: not
+   * recognised, never a guess at the other unwrap. Null once terminal.
+   */
+  private async fetchMaterial<K extends RecipientKeyMaterial["kind"]>(kind: K): Promise<Extract<RecipientKeyMaterial, { kind: K }> | null> {
+    const material = await this.call((api) => api.key());
+    if (material.kind !== kind) {
+      this.terminal("not-recognised");
+      return null;
+    }
+    return material as Extract<RecipientKeyMaterial, { kind: K }>;
+  }
+
+  // ── §4.1 step 4, QR: unwrap K_album under K_invite ─────────────────────────
+
+  /**
+   * No derivation wait: there is no Argon2id (encryption spec §6.1). A retry
+   * of this step after an offline wait fetches again with K_invite intact; it
+   * is only taken, and zeroed, by the one call to openInviteKey.
+   */
+  private async openInvite(): Promise<void> {
+    const material = await this.fetchMaterial("qr");
+    if (material === null) return;
+    const inviteKey = this.inviteKey;
+    if (inviteKey === null) throw new Halted();
+    this.inviteKey = null;
+    const opened = this.deps.openInviteKey(this.deps.envelope, inviteKey, material);
+    if (!opened.ok) {
+      switch (opened.error) {
+        case "damaged-link":
+          return this.terminal("dead");
+        case "unusable-material":
+          return this.terminal("not-recognised");
+        case "could-not-derive":
+          return this.terminal("device-failed");
+      }
+    }
+    this.albumKey = opened.albumKey;
+    this.guarded(() => this.enterOnboarding());
+  }
+
   // ── §4.2 Enter passphrase ──────────────────────────────────────────────────
 
   private async fetchKeyMaterial(): Promise<void> {
-    try {
-      this.material = await this.call((api) => api.key());
-    } catch (e) {
-      // A QR row's token on a passphrase-shaped link (api-sketch §10.1).
-      if (e instanceof ApiFailure && e.status === 404) return this.terminal("not-recognised");
-      throw e;
-    }
+    const material = await this.fetchMaterial("passphrase");
+    if (material === null) return;
+    this.material = material;
     this.set({ kind: "passphrase", phase: "ready" });
   }
 
@@ -367,7 +418,7 @@ export class RecipientSession {
       label = this.deps.envelope.decryptRecipientLabel(key, uuidToBytes(row.id), labelBlob);
     } catch (e) {
       if (e instanceof EnvelopeUnavailable) throw e;
-      // Under a QR link's key this means the key is not this album's.
+      // After a successful unwrap this is corrupted data (flows §4.4).
       return this.terminal("dead");
     }
     this.watermark = en.watermark(label, watermarkDate(this.deps.now()));

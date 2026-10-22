@@ -628,8 +628,8 @@ test("erase takes the media row's access_log rows with it, and nothing else", as
 	const other = await created('ready')
 	const recipient = randomUUID()
 	await pool.query(
-		`INSERT INTO recipients (id, album_id, kind, label, token_hash) VALUES ($1, $2, 'qr', $3, $4)`,
-		[recipient, ALBUM, bytes(0x61, 50), createHash('sha256').update(recipient).digest()],
+		`INSERT INTO recipients (id, album_id, kind, label, token_hash, wrapped, wrap_nonce) VALUES ($1, $2, 'qr', $3, $4, $5, $6)`,
+		[recipient, ALBUM, bytes(0x61, 50), createHash('sha256').update(recipient).digest(), bytes(0x57, 48), bytes(0x4e, 24)],
 	)
 	await pool.query(
 		`INSERT INTO access_log (recipient_id, media_id, event) VALUES

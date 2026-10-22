@@ -1,0 +1,499 @@
+use zeroize::Zeroizing;
+
+use crate::{
+    AlbumKey, RecipientId, WrongLength,
+    aead::{AeadError, aead_decrypt, aead_encrypt},
+    keys::{InviteKey, cipher_for},
+};
+
+pub(crate) const INVITE_WRAP_AAD_LABEL: &[u8; 22] = b"vitrina-invite-wrap-v1";
+
+#[derive(Debug, PartialEq)]
+pub enum InviteWrapError {
+    AuthenticationFailed,
+    UnexpectedWrappedLength,
+    RandomnessUnavailable,
+    UnexpectedKeyLength,
+}
+
+impl From<AeadError> for InviteWrapError {
+    /// Exhaustive on purpose: if `AeadError` gains a variant that isn't an
+    /// authentication failure, this must fail to compile.
+    fn from(e: AeadError) -> Self {
+        match e {
+            AeadError::AuthenticationFailed => InviteWrapError::AuthenticationFailed,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct InviteWrappedKey {
+    pub wrapped: [u8; 48],
+    pub wrap_nonce: [u8; 24],
+    // kdf_salt is missing on purpose here: there is no KDF here at all. K_invite is given, not derived, so there's nothing to salt.
+}
+
+impl InviteWrappedKey {
+    pub const WRAPPED_LEN: usize = 48;
+    pub const WRAP_NONCE_LEN: usize = 24;
+
+    pub fn try_from_parts(
+        wrapped: &[u8],
+        wrap_nonce: &[u8],
+    ) -> Result<InviteWrappedKey, WrongLength> {
+        let wrapped_bytes: [u8; Self::WRAPPED_LEN] =
+            wrapped.try_into().map_err(|_| WrongLength {
+                expected: Self::WRAPPED_LEN,
+                got: wrapped.len(),
+            })?;
+        let wrap_nonce_bytes: [u8; Self::WRAP_NONCE_LEN] =
+            wrap_nonce.try_into().map_err(|_| WrongLength {
+                expected: Self::WRAP_NONCE_LEN,
+                got: wrap_nonce.len(),
+            })?;
+        Ok(InviteWrappedKey {
+            wrapped: wrapped_bytes,
+            wrap_nonce: wrap_nonce_bytes,
+        })
+    }
+}
+
+pub(crate) fn invite_wrap_aad(recipient_id: &RecipientId) -> [u8; 38] {
+    let mut bytes_aad: [u8; 38] = [0u8; 38];
+
+    bytes_aad[..22].copy_from_slice(INVITE_WRAP_AAD_LABEL);
+    bytes_aad[22..].copy_from_slice(recipient_id.as_bytes());
+
+    bytes_aad
+}
+
+pub(crate) fn wrap_with_nonce(
+    album_key: &AlbumKey,
+    invite_key: &InviteKey,
+    recipient_id: &RecipientId,
+    wrap_nonce: &[u8; 24],
+) -> Result<[u8; 48], InviteWrapError> {
+    let cipher_invite_key = cipher_for(invite_key.as_bytes());
+    let aad: [u8; 38] = invite_wrap_aad(recipient_id);
+
+    aead_encrypt(
+        &cipher_invite_key,
+        wrap_nonce,
+        &aad,
+        album_key.expose_bytes(),
+    )
+    .try_into()
+    .map_err(|_| InviteWrapError::UnexpectedWrappedLength)
+}
+
+pub fn wrap_album_key_for_invite(
+    album_key: &AlbumKey,
+    invite_key: &InviteKey,
+    recipient_id: &RecipientId,
+) -> Result<InviteWrappedKey, InviteWrapError> {
+    let mut wrap_nonce = [0u8; 24];
+
+    getrandom::fill(&mut wrap_nonce).map_err(|_| InviteWrapError::RandomnessUnavailable)?;
+
+    let wrapped: [u8; 48] = wrap_with_nonce(album_key, invite_key, recipient_id, &wrap_nonce)?;
+    Ok(InviteWrappedKey {
+        wrapped,
+        wrap_nonce,
+    })
+}
+
+pub fn unwrap_album_key_with_invite(
+    wrapped: &InviteWrappedKey,
+    invite_key: &InviteKey,
+    recipient_id: &RecipientId,
+) -> Result<AlbumKey, InviteWrapError> {
+    let aad: [u8; 38] = invite_wrap_aad(recipient_id);
+    let cipher_invite_key = cipher_for(invite_key.as_bytes());
+
+    let plaintext: Zeroizing<Vec<u8>> = Zeroizing::new(aead_decrypt(
+        &cipher_invite_key,
+        &wrapped.wrap_nonce,
+        &aad,
+        &wrapped.wrapped,
+    )?);
+
+    let bytes: [u8; 32] = plaintext[..]
+        .try_into()
+        .map_err(|_| InviteWrapError::UnexpectedKeyLength)?;
+
+    Ok(AlbumKey::from_bytes(bytes))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        test_fixtures::{
+            INVITE_WRAP_AAD, INVITE_WRAP_NONCE, K_ALBUM, K_INVITE, RECIPIENT_ID, album_key, hex,
+            invite_key,
+        },
+        wrap::wrap_aad,
+    };
+    #[cfg(target_arch = "wasm32")]
+    use wasm_bindgen_test::wasm_bindgen_test as test;
+
+    fn wrapped_of_valid_length() -> [u8; InviteWrappedKey::WRAPPED_LEN] {
+        std::array::from_fn(|i| i as u8)
+    }
+
+    /// One byte different from `RECIPIENT_ID` — 3f2a91c7-8b4e-4d16-9f05-c2a7d81e6b35.
+    /// Still a valid UUIDv4: the version nibble and variant bits are untouched.
+    const OTHER_RECIPIENT_ID: [u8; 16] = [
+        0x3f, 0x2a, 0x91, 0xc7, 0x8b, 0x4e, 0x4d, 0x16, 0x9f, 0x05, 0xc2, 0xa7, 0xd8, 0x1e, 0x6b,
+        0x35,
+    ];
+
+    /// A second invite key, for the negative unwrap. Distinct from K_INVITE,
+    /// K_ALBUM, K_MASTER and every other 32-byte fixture, so a test that unwraps
+    /// with the wrong key fails because the key is wrong and not by coincidence.
+    #[rustfmt::skip]
+    const OTHER_K_INVITE: [u8; 32] = [
+        0x82, 0x11, 0xc2, 0x74, 0x1a, 0x0b, 0xb0, 0xc3, 0x64, 0x5c, 0x68, 0x01, 0xcc, 0xa9, 0xd0, 0x81,
+        0x04, 0xc2, 0x0a, 0xa5, 0xd8, 0xdd, 0x81, 0x36, 0x2e, 0x10, 0x6e, 0x29, 0x7d, 0x2e, 0x8f, 0x01,
+    ];
+
+    /// Generated by this crate and cross-checked against @noble/ciphers over the same key,
+    /// nonce, AAD and plaintext (§9.2 on what a self-generated value can catch). It pins
+    /// the composition so a later refactor cannot silently change the bytes.
+    const KNOWN_ANSWER_WRAPPED: &str = "64275c3c1b1085ac158e59c7bf831ffeb758137d7bf4c4b8e8edd5261fe5330b43dbaec50f9918db594b3f6a8a17852b";
+
+    fn wrapped_for(recipient_id: [u8; 16]) -> [u8; 48] {
+        wrap_with_nonce(
+            &album_key(),
+            &invite_key(),
+            &RecipientId::from_bytes(recipient_id),
+            &INVITE_WRAP_NONCE,
+        )
+        .unwrap()
+    }
+
+    // INVITE Wrap AAD Tests
+    // ----------------------------------------------------
+
+    #[test]
+    fn invite_label_equals_literal_bytes() {
+        assert_eq!(INVITE_WRAP_AAD_LABEL, b"vitrina-invite-wrap-v1");
+    }
+
+    #[test]
+    fn concatenated_invite_aad_matches_hex_literal() {
+        assert_eq!(
+            invite_wrap_aad(&RecipientId::from_bytes(RECIPIENT_ID)),
+            INVITE_WRAP_AAD
+        );
+    }
+
+    // Wrap With Nonce Tests
+    // ----------------------------------------------------
+    #[test]
+    fn matches_known_answer_wrapped() {
+        assert_eq!(hex(&wrapped_for(RECIPIENT_ID)), KNOWN_ANSWER_WRAPPED);
+    }
+
+    #[test]
+    fn creates_different_answer_wrapped_with_different_recipient_ids() {
+        assert_ne!(&wrapped_for(RECIPIENT_ID), &wrapped_for(OTHER_RECIPIENT_ID));
+    }
+
+    // Wrap Album Key for Invite Tests
+    // ----------------------------------------------------
+    #[test]
+    fn wraps_and_unwraps_correctly() {
+        let wrapped = wrap_album_key_for_invite(
+            &album_key(),
+            &invite_key(),
+            &RecipientId::from_bytes(RECIPIENT_ID),
+        )
+        .unwrap();
+
+        let unwrapped = unwrap_album_key_with_invite(
+            &wrapped,
+            &invite_key(),
+            &RecipientId::from_bytes(RECIPIENT_ID),
+        )
+        .unwrap();
+
+        assert_eq!(album_key().expose_bytes(), unwrapped.expose_bytes())
+    }
+
+    #[test]
+    fn generates_fresh_nonce_every_time() {
+        let wrapped_one = wrap_album_key_for_invite(
+            &album_key(),
+            &invite_key(),
+            &RecipientId::from_bytes(RECIPIENT_ID),
+        )
+        .unwrap();
+
+        let wrapped_two = wrap_album_key_for_invite(
+            &album_key(),
+            &invite_key(),
+            &RecipientId::from_bytes(RECIPIENT_ID),
+        )
+        .unwrap();
+        assert_ne!(wrapped_one.wrap_nonce, wrapped_two.wrap_nonce);
+    }
+
+    #[test]
+    fn rejects_unwrap_with_wrong_recipient_id() {
+        let wrapped = wrap_album_key_for_invite(
+            &album_key(),
+            &invite_key(),
+            &RecipientId::from_bytes(RECIPIENT_ID),
+        )
+        .unwrap();
+
+        assert_eq!(
+            unwrap_album_key_with_invite(
+                &wrapped,
+                &invite_key(),
+                &RecipientId::from_bytes(OTHER_RECIPIENT_ID),
+            )
+            .err(),
+            Some(InviteWrapError::AuthenticationFailed)
+        );
+    }
+
+    #[test]
+    fn rejects_unwrap_with_wrong_invite_key() {
+        let wrapped = wrap_album_key_for_invite(
+            &album_key(),
+            &invite_key(),
+            &RecipientId::from_bytes(RECIPIENT_ID),
+        )
+        .unwrap();
+
+        assert_eq!(
+            unwrap_album_key_with_invite(
+                &wrapped,
+                &InviteKey::from_bytes(OTHER_K_INVITE),
+                &RecipientId::from_bytes(RECIPIENT_ID),
+            )
+            .err(),
+            Some(InviteWrapError::AuthenticationFailed)
+        );
+    }
+
+    #[test]
+    fn rejects_unwrap_with_flipped_wrapped() {
+        let wrapped = wrap_album_key_for_invite(
+            &album_key(),
+            &invite_key(),
+            &RecipientId::from_bytes(RECIPIENT_ID),
+        )
+        .unwrap();
+
+        let mut tampered = wrapped.clone();
+        tampered.wrapped[0] ^= 1;
+
+        assert_eq!(
+            unwrap_album_key_with_invite(
+                &tampered,
+                &invite_key(),
+                &RecipientId::from_bytes(RECIPIENT_ID),
+            )
+            .err(),
+            Some(InviteWrapError::AuthenticationFailed)
+        );
+    }
+    #[test]
+    fn rejects_unwrap_with_flipped_nonce() {
+        let wrapped = wrap_album_key_for_invite(
+            &album_key(),
+            &invite_key(),
+            &RecipientId::from_bytes(RECIPIENT_ID),
+        )
+        .unwrap();
+
+        let mut tampered = wrapped.clone();
+        tampered.wrap_nonce[0] ^= 1;
+
+        assert_eq!(
+            unwrap_album_key_with_invite(
+                &tampered,
+                &invite_key(),
+                &RecipientId::from_bytes(RECIPIENT_ID),
+            )
+            .err(),
+            Some(InviteWrapError::AuthenticationFailed)
+        );
+    }
+
+    // InviteWrappedKey Length Tests
+    // ----------------------------------------------------
+    #[test]
+    fn builds_invite_wrapped_key_from_valid_parts() {
+        let bytes: [u8; InviteWrappedKey::WRAPPED_LEN] = std::array::from_fn(|i| i as u8);
+        assert_eq!(
+            InviteWrappedKey::try_from_parts(&bytes, &INVITE_WRAP_NONCE).unwrap(),
+            InviteWrappedKey {
+                wrapped: bytes,
+                wrap_nonce: INVITE_WRAP_NONCE,
+            }
+        );
+    }
+
+    #[test]
+    fn rejects_short_wrapped() {
+        let bytes: [u8; 40] = std::array::from_fn(|i| i as u8);
+        assert_eq!(
+            InviteWrappedKey::try_from_parts(&bytes, &INVITE_WRAP_NONCE).err(),
+            Some(WrongLength {
+                got: 40,
+                expected: 48
+            })
+        );
+    }
+
+    #[test]
+    fn rejects_long_wrapped() {
+        let bytes: [u8; 50] = std::array::from_fn(|i| i as u8);
+        assert_eq!(
+            InviteWrappedKey::try_from_parts(&bytes, &INVITE_WRAP_NONCE).err(),
+            Some(WrongLength {
+                got: 50,
+                expected: 48
+            })
+        );
+    }
+
+    #[test]
+    fn rejects_empty_wrapped() {
+        assert_eq!(
+            InviteWrappedKey::try_from_parts(&[], &INVITE_WRAP_NONCE).err(),
+            Some(WrongLength {
+                got: 0,
+                expected: 48
+            })
+        );
+    }
+
+    #[test]
+    fn rejects_short_wrap_nonce() {
+        let bytes: [u8; 20] = std::array::from_fn(|i| i as u8);
+        assert_eq!(
+            InviteWrappedKey::try_from_parts(&wrapped_of_valid_length(), &bytes,).err(),
+            Some(WrongLength {
+                got: 20,
+                expected: 24
+            })
+        );
+    }
+
+    #[test]
+    fn rejects_long_wrap_nonce() {
+        let bytes: [u8; 50] = std::array::from_fn(|i| i as u8);
+        assert_eq!(
+            InviteWrappedKey::try_from_parts(&wrapped_of_valid_length(), &bytes).err(),
+            Some(WrongLength {
+                got: 50,
+                expected: 24
+            })
+        );
+    }
+
+    #[test]
+    fn rejects_empty_wrap_nonce() {
+        assert_eq!(
+            InviteWrappedKey::try_from_parts(&wrapped_of_valid_length(), &[]).err(),
+            Some(WrongLength {
+                got: 0,
+                expected: 24
+            })
+        );
+    }
+
+    // Invite Key Tests
+    // ----------------------------------------------------
+
+    #[test]
+    fn generates_unique_invite_keys() {
+        assert_ne!(
+            InviteKey::generate().unwrap().as_bytes(),
+            InviteKey::generate().unwrap().as_bytes()
+        );
+    }
+
+    #[test]
+    fn generates_invite_key_e2e() {
+        let invite_k = InviteKey::generate().unwrap();
+        let wrapped = wrap_album_key_for_invite(
+            &album_key(),
+            &invite_k,
+            &RecipientId::from_bytes(RECIPIENT_ID),
+        )
+        .unwrap();
+
+        let unwrapped = unwrap_album_key_with_invite(
+            &wrapped,
+            &invite_k,
+            &RecipientId::from_bytes(RECIPIENT_ID),
+        )
+        .unwrap();
+
+        assert_eq!(album_key().expose_bytes(), unwrapped.expose_bytes())
+    }
+
+    // Cross-Domain Tests
+    // ----------------------------------------------------
+    #[test]
+    fn invite_wrapping_does_not_open_under_passphrase_aad() {
+        let recipient_id = RecipientId::from_bytes(RECIPIENT_ID);
+        let wrapped =
+            wrap_album_key_for_invite(&album_key(), &invite_key(), &recipient_id).unwrap();
+        assert_eq!(
+            unwrap_album_key_with_invite(&wrapped, &invite_key(), &recipient_id)
+                .unwrap()
+                .expose_bytes(),
+            &K_ALBUM
+        );
+        let aad: [u8; 31] = wrap_aad(&recipient_id);
+        let cipher_invite_key = cipher_for(invite_key().as_bytes());
+
+        assert_eq!(
+            aead_decrypt(
+                &cipher_invite_key,
+                &wrapped.wrap_nonce,
+                &aad,
+                &wrapped.wrapped,
+            )
+            .err(),
+            Some(AeadError::AuthenticationFailed)
+        );
+    }
+
+    #[test]
+    fn passphrase_aad_wrapping_does_not_open_under_invite_aad() {
+        let recipient_id = RecipientId::from_bytes(RECIPIENT_ID);
+        let cipher_invite_key = cipher_for(&K_INVITE);
+        let aad: [u8; 38] = invite_wrap_aad(&recipient_id);
+
+        let wrapped = aead_encrypt(
+            &cipher_invite_key,
+            &INVITE_WRAP_NONCE,
+            &wrap_aad(&recipient_id),
+            &K_ALBUM,
+        );
+
+        assert_eq!(
+            aead_decrypt(
+                &cipher_invite_key,
+                &INVITE_WRAP_NONCE,
+                &wrap_aad(&recipient_id),
+                &wrapped
+            )
+            .unwrap(),
+            &K_ALBUM
+        );
+
+        assert_eq!(
+            aead_decrypt(&cipher_invite_key, &INVITE_WRAP_NONCE, &aad, &wrapped,).err(),
+            Some(AeadError::AuthenticationFailed)
+        );
+    }
+}

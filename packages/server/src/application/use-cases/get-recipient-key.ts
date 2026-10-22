@@ -1,8 +1,10 @@
 /*
- * GET /v1/recipient/key — api-sketch §10.1. A passphrase recipient's wrapped
- * K_album and its public parameters, handed back so the client can derive the
- * KEK and unwrap. Returns WRAPPED, never unwrapped: the relay holds no
- * passphrase, KEK or K_album to return (§4.1's outbound half, #16).
+ * GET /v1/recipient/key — api-sketch §10.1. A recipient's wrapped K_album, of
+ * either kind, handed back so the client can unwrap it: under K_invite for a
+ * qr recipient (encryption spec §6.1), under a passphrase-derived KEK for a
+ * passphrase one (§6.2), with the KDF's public parameters. Returns WRAPPED,
+ * never unwrapped: the relay holds no K_invite, passphrase, KEK or K_album to
+ * return (§4.1's outbound half, #16).
  *
  * The input is the GRANT, not an id. Only `authenticateRecipient` produces
  * one, so the type is what makes "the caller's own row, and only that" true —
@@ -10,11 +12,16 @@
  * no grant, which keeps §7.1's schemes apart here as well as in the adapter.
  *
  * §7.3's ladder, recipient branch, steps 3 then 4:
- *   3. No wrapping for this caller (a qr row) → RECIPIENT_NOT_FOUND, a 404.
- *   4. Revoked → ALBUM_ACCESS_REVOKED, a 403.
- * So a revoked QR recipient gets 404 — a decision, pinned by
- * recipient-key-routes.test.mjs. Nothing is returned before step 4 runs; the
- * wrap is READ first, which is harmless, and RETURNED only after.
+ *   3. No row for this caller → RECIPIENT_NOT_FOUND, a 404. Unreachable in
+ *      practice: the grant came from the same table, and no route deletes a
+ *      recipient. Until 006 a qr row answered here too, holding no wrapping;
+ *      every row holds one now, so a revoked qr recipient gets 403 like any
+ *      other.
+ *   4. Revoked → ALBUM_ACCESS_REVOKED, a 403. The wrapping is the one piece
+ *      of ciphertext that lets a revoked holder of either kind of invite
+ *      finish an unwrap they had not started (§10.1).
+ * Nothing is returned before step 4 runs; the wrap is READ first, which is
+ * harmless, and RETURNED only after.
  *
  * Revocation comes from the grant step 1 resolved, not a second read — one
  * snapshot per request, as `resolveAlbumScope` does.
@@ -49,7 +56,7 @@ export function getRecipientKey(deps: GetRecipientKeyDeps) {
 
     if (!wrap) throw new ApplicationError("RECIPIENT_NOT_FOUND");
 
-    // Step 4, after step 3: a revoked QR recipient gets 404, not 403.
+    // Step 4, after step 3.
     if (input.grant.revokedAt !== null) {
       throw new ApplicationError("ALBUM_ACCESS_REVOKED");
     }

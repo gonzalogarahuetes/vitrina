@@ -8,20 +8,27 @@ import globals from "globals";
 import ts from "typescript-eslint";
 
 /*
- * The one module that may touch sessionStorage, not yet written. The decision
- * behind it: the owner token and its `expires_at` live in sessionStorage
- * (flows §1.1), nothing else is stored anywhere, and recipient storage is
- * pending a device test (flows §4.7). Moving this path is a decision; make it
- * here, out loud.
+ * The owner's module that may touch sessionStorage: the owner token and its
+ * `expires_at` (flows §1.1). Moving this path is a decision; make it here, out loud.
  */
 const SESSION_STORAGE_MODULE = "src/lib/session/owner-session.ts";
+
+/*
+ * The recipient's, and the only other one: the invite fragment, for a reload
+ * of the same tab (flows §4.7, invite spec §2.2 step 4, decided 20 October 2026
+ * on scripts/tab-reload-test/RESULTS.md). A separate module and a separate
+ * exception, not the owner's widened: the two hold different secrets for
+ * different people, and either one growing a second value must be visible here.
+ */
+const RECIPIENT_SESSION_MODULE = "src/lib/session/recipient-session.ts";
 
 /* The one module that may make a request. */
 const API_CLIENT_MODULE = "src/lib/api/client.ts";
 
 const STORAGE =
-  "Nothing is stored on this device except the owner token and its expiry, in sessionStorage, " +
-  `and only from ${SESSION_STORAGE_MODULE} (flows §1.1; invite spec §2.2).`;
+  "Nothing is stored on this device except, in sessionStorage, the owner token and its expiry " +
+  `(only from ${SESSION_STORAGE_MODULE}, flows §1.1) and the recipient's invite fragment ` +
+  `(only from ${RECIPIENT_SESSION_MODULE}, flows §4.7; invite spec §2.2).`;
 const NETWORK = `Every request goes through ${API_CLIENT_MODULE}: bearer auth, no cookies, no fragment in a URL.`;
 const SW = "No service worker: one caching responses defeats Cache-Control: no-store on ciphertext (brief §10).";
 
@@ -86,6 +93,7 @@ export default ts.config(
   },
   { files: ["**/*.ts", "**/*.js", "**/*.svelte"], rules: restrictions(undefined) },
   { files: [SESSION_STORAGE_MODULE], rules: restrictions("session") },
+  { files: [RECIPIENT_SESSION_MODULE], rules: restrictions("session") },
   {
     files: ["src/routes/**/*.svelte", "src/routes/**/*.ts", "src/routes/**/*.js"],
     rules: { "no-restricted-syntax": ["error", ...SNAPSHOT_EXPORTS.map((selector) => ({ selector, message: SNAPSHOT }))] },

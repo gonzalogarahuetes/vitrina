@@ -11,8 +11,8 @@ export type Invite =
       readonly albumId: Uint8Array;
       /** The 43-character canonical base64url text, sent as the bearer value unchanged. */
       readonly token: string;
-      /** 32 bytes of K_album. Zeroed by openDirectKey; dead afterwards. */
-      readonly key: Uint8Array;
+      /** 32 bytes of K_invite (encryption spec §6.1). Zeroed by openInviteKey; dead afterwards. */
+      readonly inviteKey: Uint8Array;
     }
   | {
       readonly mode: "passphrase";
@@ -28,7 +28,9 @@ export type InviteError =
   /** A well-formed `v` other than 1 → open.newer-version (invite spec §6). */
   | { readonly kind: "unsupported-version" };
 
-export type ParseResult = { readonly ok: true; readonly invite: Invite } | { readonly ok: false; readonly error: InviteError };
+export type ParseResult =
+  | { readonly ok: true; readonly invite: Invite }
+  | { readonly ok: false; readonly error: InviteError };
 
 /** `fragment` is location.hash exactly as the browser returns it, leading `#` included. Pure. */
 export type ParseInvite = (fragment: string) => ParseResult;

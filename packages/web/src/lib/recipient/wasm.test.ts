@@ -3,23 +3,27 @@
  * decryptRecipientLabel, decryptAlbumTitle, decryptMeta, decryptThumb and
  * decryptAsset with the right ids in the right places, or this fails.
  *
- * The AlbumKey handle is a FIXTURE built in setup, and the fake openDirectKey
- * returns it without reading the bytes it is given: opening the key is the
- * owner's function and is not exercised here.
+ * Since 006 the QR open is real too: the fixture K_album is wrapped under
+ * INVITE_KEY as an owner's client would (encryption spec §6.1), the relay
+ * serves that wrapping from /v1/recipient/key, and the owner's openInviteKey
+ * unwraps it with the bytes the invite carried. Nothing here reads K_album.
  */
 import { createApiClient } from "$lib/api/client";
 import { loadEnvelope } from "$lib/envelope";
 import { uuidToBytes } from "$lib/ids";
-import type { AlbumKey } from "$lib/keys/types";
+import { openInviteKey } from "$lib/keys/open";
 import { encodeBase64url } from "@vitrina/shared";
 import { describe, expect, it } from "vitest";
-import { ALBUM_ID, FakePicture, KEY, QR_FRAGMENT, RECIPIENT_ID, TOKEN, media, settle } from "./harness.test-support";
+import { ALBUM_ID, FakePicture, INVITE_KEY, QR_FRAGMENT, RECIPIENT_ID, TOKEN, media, settle } from "./harness.test-support";
 import { RecipientSession } from "./session";
 
 describe("the recipient path over the real envelope build", () => {
   it("opens label, title, metadata, thumbnails and a multi-chunk asset", async () => {
     const { envelope, poison } = await loadEnvelope();
-    const fixture = envelope.AlbumKey.fromBytes(Uint8Array.from(KEY));
+    const fixture = envelope.AlbumKey.generate();
+    const ownerInvite = envelope.InviteKey.fromBytes(Uint8Array.from(INVITE_KEY));
+    const wrapping = envelope.wrapAlbumKeyForInvite(fixture, ownerInvite, uuidToBytes(RECIPIENT_ID));
+    ownerInvite.free();
     const ids = [media(1).id, media(2).id];
     const text = (s: string) => new TextEncoder().encode(s);
     // Over 256 KiB, so the asset envelope has three chunks.
@@ -30,6 +34,7 @@ describe("the recipient path over the real envelope build", () => {
       [`/v1/media/${ids[1]}/asset`, envelope.encryptAsset(fixture, uuidToBytes(ids[1] ?? ""), big)],
     ]);
     const json: Record<string, unknown> = {
+      "/v1/recipient/key": { id: RECIPIENT_ID, kind: "qr", wrapped: encodeBase64url(wrapping.wrapped), wrap_nonce: encodeBase64url(wrapping.wrapNonce) },
       "/v1/recipient": {
         id: RECIPIENT_ID,
         album_id: ALBUM_ID,
@@ -62,8 +67,8 @@ describe("the recipient path over the real envelope build", () => {
       client: createApiClient("https://api.vitrina.test", fetchImpl),
       envelope,
       poison,
-      parseInvite: () => ({ ok: true, invite: { mode: "qr", albumId: uuidToBytes(ALBUM_ID), token: TOKEN, key: Uint8Array.from(KEY) } }),
-      openDirectKey: () => ({ ok: true, albumKey: fixture as unknown as AlbumKey }),
+      parseInvite: () => ({ ok: true, invite: { mode: "qr", albumId: uuidToBytes(ALBUM_ID), token: TOKEN, inviteKey: Uint8Array.from(INVITE_KEY) } }),
+      openInviteKey,
       openPassphraseKey: () => Promise.reject(new Error("unused")),
       decodeImage: async (bytes) => {
         decoded.push(Uint8Array.from(bytes));
@@ -72,6 +77,7 @@ describe("the recipient path over the real envelope build", () => {
       sleep: async () => undefined,
       nextFrames: async () => undefined,
       now: () => new Date("2026-08-06T12:00:00Z"),
+      forgetInvite: () => undefined,
     });
 
     session.start(QR_FRAGMENT);

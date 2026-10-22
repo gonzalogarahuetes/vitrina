@@ -334,6 +334,105 @@ pub fn unwrap_album_key_with_master(
         .map_err(|e| Failure::from(e).into())
 }
 
+/// `K_invite` as a handle (encryption spec §6.1). Unlike `AlbumKey` and
+/// `MasterKey` it can return its bytes, once per call to `toInviteBytes`:
+/// its purpose is to leave the module, into the invite URL's fragment.
+/// Never interchangeable with `AlbumKey`; both are 32 bytes, so the handle
+/// types are what keeps them apart on this side of the boundary.
+#[wasm_bindgen]
+pub struct InviteKey(envelope::InviteKey);
+
+#[wasm_bindgen]
+impl InviteKey {
+    /// The recipient's side: the 32 bytes decoded from the fragment.
+    #[wasm_bindgen(js_name = fromBytes)]
+    pub fn from_bytes(
+        #[wasm_bindgen(js_name = inviteKey)] invite_key: &[u8],
+    ) -> Result<InviteKey, JsValue> {
+        envelope::InviteKey::try_from_slice(invite_key)
+            .map(InviteKey)
+            .map_err(|e| wrong_length("inviteKey", e).into())
+    }
+
+    /// The owner's side: a fresh `K_invite` drawn inside the module, so the
+    /// key exists as a typed handle while it wraps `K_album`.
+    pub fn generate() -> Result<InviteKey, JsValue> {
+        envelope::InviteKey::generate()
+            .map(InviteKey)
+            .map_err(|e| Failure::from(e).into())
+    }
+
+    /// A copy of the 32 bytes, for the invite fragment and nothing else. The
+    /// Rust copy is wiped when this returns; the caller zeroes the array once
+    /// it has been encoded. A method, not a getter, so each export is explicit.
+    #[wasm_bindgen(js_name = toInviteBytes)]
+    pub fn to_invite_bytes(&self) -> Vec<u8> {
+        self.0.to_invite_bytes().to_vec()
+    }
+}
+
+/// What the relay stores for a QR recipient (§6.1). No salt: there is no
+/// KDF, `K_invite` is random and used directly. Both parts are ciphertext or
+/// public values.
+#[wasm_bindgen]
+pub struct InviteWrappedKey(envelope::InviteWrappedKey);
+
+#[wasm_bindgen]
+impl InviteWrappedKey {
+    #[wasm_bindgen(js_name = fromParts)]
+    pub fn from_parts(
+        wrapped: &[u8],
+        #[wasm_bindgen(js_name = wrapNonce)] wrap_nonce: &[u8],
+    ) -> Result<InviteWrappedKey, JsValue> {
+        // try_from_parts checks `wrapped` first, then `wrap_nonce`, and reports
+        // the first mismatch; the expected length tells the caller which.
+        envelope::InviteWrappedKey::try_from_parts(wrapped, wrap_nonce)
+            .map(InviteWrappedKey)
+            .map_err(|e| {
+                let param = if e.expected == envelope::InviteWrappedKey::WRAPPED_LEN {
+                    "wrapped"
+                } else {
+                    "wrapNonce"
+                };
+                wrong_length(param, e).into()
+            })
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn wrapped(&self) -> Vec<u8> {
+        self.0.wrapped.to_vec()
+    }
+
+    #[wasm_bindgen(getter, js_name = wrapNonce)]
+    pub fn wrap_nonce(&self) -> Vec<u8> {
+        self.0.wrap_nonce.to_vec()
+    }
+}
+
+#[wasm_bindgen(js_name = wrapAlbumKeyForInvite)]
+pub fn wrap_album_key_for_invite(
+    album: &AlbumKey,
+    invite: &InviteKey,
+    #[wasm_bindgen(js_name = recipientId)] recipient_id: &[u8],
+) -> Result<InviteWrappedKey, JsValue> {
+    let recipient_id = self::recipient_id(recipient_id)?;
+    envelope::wrap_album_key_for_invite(&album.0, &invite.0, &recipient_id)
+        .map(InviteWrappedKey)
+        .map_err(|e| Failure::from(e).into())
+}
+
+#[wasm_bindgen(js_name = unwrapAlbumKeyWithInvite)]
+pub fn unwrap_album_key_with_invite(
+    wrapped: &InviteWrappedKey,
+    invite: &InviteKey,
+    #[wasm_bindgen(js_name = recipientId)] recipient_id: &[u8],
+) -> Result<AlbumKey, JsValue> {
+    let recipient_id = self::recipient_id(recipient_id)?;
+    envelope::unwrap_album_key_with_invite(&wrapped.0, &invite.0, &recipient_id)
+        .map(AlbumKey)
+        .map_err(|e| Failure::from(e).into())
+}
+
 // Album titles and recipient labels (§2). Both are short blobs under keys
 // derived from `K_album`; the derived keys never cross the boundary, so these
 // four functions are the whole surface. The relay's 1024-byte ceiling is
@@ -556,6 +655,21 @@ pub fn master_wrapped_len() -> u32 {
 #[wasm_bindgen(js_name = masterWrapNonceLen)]
 pub fn master_wrap_nonce_len() -> u32 {
     envelope::MasterWrappedKey::WRAP_NONCE_LEN as u32
+}
+
+#[wasm_bindgen(js_name = inviteKeyLen)]
+pub fn invite_key_len() -> u32 {
+    envelope::InviteKey::LEN as u32
+}
+
+#[wasm_bindgen(js_name = inviteWrappedLen)]
+pub fn invite_wrapped_len() -> u32 {
+    envelope::InviteWrappedKey::WRAPPED_LEN as u32
+}
+
+#[wasm_bindgen(js_name = inviteWrapNonceLen)]
+pub fn invite_wrap_nonce_len() -> u32 {
+    envelope::InviteWrappedKey::WRAP_NONCE_LEN as u32
 }
 
 // §6.6.2's lengths table — the third construction, reading its own constants.

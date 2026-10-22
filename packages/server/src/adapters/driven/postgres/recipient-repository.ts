@@ -35,17 +35,21 @@ class PostgresRecipientRepository implements RecipientRepository {
 
   async create(recipient: NewRecipient): Promise<CreatedRecipient> {
     try {
+      // Both kinds carry a wrapping since 006; only passphrase has a KDF.
       const query =
         recipient.kind === "qr"
-          ? "INSERT INTO recipients (id, album_id, kind, label, token_hash) VALUES ($1, $2, $3, $4, $5) RETURNING id, created_at"
+          ? "INSERT INTO recipients (id, album_id, kind, label, token_hash, wrapped, wrap_nonce) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id, created_at"
           : "INSERT INTO recipients (id, album_id, kind, label, token_hash, wrapped, wrap_nonce, kdf_salt, kdf_memory_kib, kdf_iterations, kdf_parallelism) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id, created_at";
 
-      const extraFields =
+      const wrapFields = [
+        Buffer.from(recipient.wrap.wrapped),
+        Buffer.from(recipient.wrap.wrapNonce),
+      ];
+
+      const kdfFields =
         recipient.kind === "qr"
           ? []
           : [
-              Buffer.from(recipient.wrap.wrapped),
-              Buffer.from(recipient.wrap.wrapNonce),
               Buffer.from(recipient.wrap.kdfSalt),
               recipient.wrap.params.memoryKib,
               recipient.wrap.params.iterations,
@@ -60,7 +64,8 @@ class PostgresRecipientRepository implements RecipientRepository {
         recipient.kind,
         Buffer.from(recipient.label),
         Buffer.from(recipient.tokenHash),
-        ...extraFields,
+        ...wrapFields,
+        ...kdfFields,
       ]);
       return {
         id: recipientRow.id,
@@ -114,13 +119,34 @@ class PostgresRecipientRepository implements RecipientRepository {
     const {
       rows: [recipientRow],
     } = await this.pool.query(
-      `SELECT wrapped, wrap_nonce, kdf_salt, kdf_memory_kib, kdf_iterations, kdf_parallelism
+      `SELECT kind, wrapped, wrap_nonce, kdf_salt, kdf_memory_kib, kdf_iterations, kdf_parallelism
         FROM recipients
-        WHERE id = $1 AND kind = 'passphrase'`,
+        WHERE id = $1`,
       [recipientId],
     );
     if (!recipientRow) return null;
+
+    // pg types the row `any`; this makes the port's union true, not assumed.
+    // CHK_recipients_wrap_columns should make each throw unreachable. A row
+    // that reaches one is not answered with nulls the route would encode.
+    if (recipientRow.wrapped === null || recipientRow.wrap_nonce === null) {
+      throw new Error("A recipients row has no wrapping.");
+    }
+
+    if (recipientRow.kind === "qr") {
+      return {
+        kind: "qr",
+        wrapped: recipientRow.wrapped,
+        wrapNonce: recipientRow.wrap_nonce,
+      };
+    }
+
+    if (recipientRow.kind !== "passphrase" || recipientRow.kdf_salt === null) {
+      throw new Error("A recipients row's wrap columns contradict its kind.");
+    }
+
     return {
+      kind: "passphrase",
       wrapped: recipientRow.wrapped,
       wrapNonce: recipientRow.wrap_nonce,
       kdfSalt: recipientRow.kdf_salt,

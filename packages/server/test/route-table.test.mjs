@@ -46,6 +46,10 @@ const FORBIDDEN = [
   "k_album",
   "master_key",
   "album_key",
+  // Since 006 (encryption spec §6.1): the QR's key. Both are 32 bytes beside
+  // K_album, so a name is the only thing that tells them apart here.
+  "k_invite",
+  "invite_key",
   "secret",
   "pepper",
   "root",
@@ -250,21 +254,18 @@ describe("the route table", () => {
     /*
      * §4.1's outbound half allows a wrapped blob and its public parameters,
      * and this proves the forbidden lists above have not grown to cover them.
-     * All seven, required: the client cannot unwrap with any one missing, and
-     * `id` is in the wrap AAD with no other source (invite spec §4).
+     * `id`, `kind` and the wrapping are required for both kinds: the client
+     * cannot unwrap with any one missing, and `id` is in both wrap AADs with
+     * no other source (invite spec §4). The four KDF fields are required for
+     * passphrase only, since 006 (encryption spec §6.1).
      */
     const ok = recipients.retrieveRecipientKeySchema.response[200];
-    const fields = [
-      "id",
-      "wrapped",
-      "wrap_nonce",
-      "kdf_salt",
-      "kdf_memory_kib",
-      "kdf_iterations",
-      "kdf_parallelism",
-    ];
-    assert.deepEqual(Object.keys(ok.properties).sort(), [...fields].sort());
-    assert.deepEqual([...ok.required].sort(), [...fields].sort());
+    const always = ["id", "kind", "wrapped", "wrap_nonce"];
+    const kdf = ["kdf_salt", "kdf_memory_kib", "kdf_iterations", "kdf_parallelism"];
+    assert.deepEqual(Object.keys(ok.properties).sort(), [...always, ...kdf].sort());
+    assert.deepEqual([...ok.required].sort(), [...always].sort());
+    assert.deepEqual(ok.if, { properties: { kind: { const: "passphrase" } } });
+    assert.deepEqual([...ok.then.required].sort(), [...kdf].sort());
     assert.equal(ok.additionalProperties, false, "the allowlist is what keeps `label` out");
   });
 

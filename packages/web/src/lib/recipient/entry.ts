@@ -10,7 +10,14 @@
  * session. The native call below keeps SvelteKit's state object as it is and
  * changes only the URL. (In `vite dev` SvelteKit logs a one-time warning about
  * the native call; that warning is expected here.)
+ *
+ * A valid fragment is kept for the tab (lib/session/recipient-session.ts), so
+ * a reload continues: QR unwraps again with the stored K_invite, passphrase
+ * asks for the words again. Never K_album, which no fragment carries.
  */
+
+import { parseInvite } from "$lib/invite/parse";
+import { inviteStore, type InviteStore } from "$lib/session/recipient-session";
 
 export type LocationLike = { readonly pathname: string; readonly search: string; readonly hash: string };
 export type HistoryLike = { readonly state: unknown; replaceState(data: unknown, unused: string, url: string): void };
@@ -19,23 +26,29 @@ const RECIPIENT_PATHS = new Set(["/v/", "/v"]);
 
 let captured: string | null = null;
 
-export function captureInvite(location: LocationLike, history: HistoryLike): void {
+/**
+ * Flows §4.1 step 1 and §4.7, in the order decided on 21 October 2026: read
+ * the fragment, strip it, parse it, and store it only if parseInvite accepts
+ * it. A malformed or newer-version fragment never reaches storage. With no
+ * fragment — a reload — the tab's stored one is handed over instead, and
+ * parsed again by the session like any other.
+ */
+export function captureInvite(location: LocationLike, history: HistoryLike, store: InviteStore = inviteStore()): void {
   if (!RECIPIENT_PATHS.has(location.pathname)) return;
   const fragment = location.hash;
 
-  /*
-   * ⟪SEAM — flows §4.7, pending the device test (scripts/tab-reload-test/).⟫
-   * Every reload is the dead page today: the fragment is stripped below and
-   * nothing is stored, so a reload arrives with an empty fragment and
-   * parseInvite answers `missing`. Restoring from tab-scoped storage plugs in
-   * HERE, and only here: on an empty fragment, read the stored one back; on a
-   * non-empty one, store it before stripping. It is not built, and nothing
-   * may be stored until the owner decides (invite spec §2.2 step 4 forbids
-   * writing `key` to sessionStorage as written today). eslint.config.js
-   * already confines sessionStorage to one module; this seam would call it.
-   */
-
   history.replaceState(history.state, "", location.pathname + location.search);
+
+  if (fragment === "") {
+    captured = store.read() ?? "";
+    return;
+  }
+  const parsed = parseInvite(fragment);
+  if (parsed.ok) {
+    store.write(fragment);
+    // Parsed only to decide; the session parses its own copy. Zero this one's K_invite.
+    if (parsed.invite.mode === "qr") parsed.invite.inviteKey.fill(0);
+  }
   captured = fragment;
 }
 

@@ -2,7 +2,7 @@
 
 **Status:** Draft v0.1 · last updated 14 September 2026 · **provisional**
 **Companion to:** `vitrina-project-brief.md` §9–§9.3, `vitrina-encryption-spec.md` §6
-**Implemented by:** `001_initial_schema.sql` (B.5), `002` (Phase 1), `003` (titles and labels as ciphertext), `004` (media removal) and `005` (`media.metadata`'s floor)
+**Implemented by:** `001_initial_schema.sql` (B.5), `002` (Phase 1), `003` (titles and labels as ciphertext), `004` (media removal), `005` (`media.metadata`'s floor) and `006` (every recipient holds a wrapping)
 
 ---
 
@@ -270,7 +270,7 @@ No `status` column — brief §9.2.
 | `kdf_iterations`  | `integer`     | NULL                                            |
 | `kdf_parallelism` | `integer`     | NULL                                            |
 
-**Changed by `006`, owed** (encryption spec §6.1, 19 October 2026): until `006` is applied, the constraints below are not yet the ones in the database — the applied ones require all six columns NULL for QR recipients. Since the change, every recipient has a wrapping: under a random invite key for QR recipients, under a passphrase-derived key for passphrase recipients. So `wrapped` and `wrap_nonce` are NOT NULL for both kinds, and the four KDF columns are NULL for QR recipients and NOT NULL for passphrase recipients, enforced by one constraint:
+**Since `006`** (encryption spec §6.1, 19 October 2026). Until then QR rows held no wrapping and all six columns were NULL. Since the change, every recipient has a wrapping: under a random invite key for QR recipients, under a passphrase-derived key for passphrase recipients. So `wrapped` and `wrap_nonce` are NOT NULL for both kinds, and the four KDF columns are NULL for QR recipients and NOT NULL for passphrase recipients, enforced by one constraint:
 
 ```sql
 CHECK (

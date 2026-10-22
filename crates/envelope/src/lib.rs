@@ -10,6 +10,7 @@ mod chunk;
 mod envelope;
 mod header;
 mod ids;
+mod invite_wrap;
 mod keys;
 mod owner_wrap;
 #[cfg(test)]
@@ -32,7 +33,10 @@ pub use envelope::{
 };
 pub use header::{HeaderError, LayoutError};
 pub use ids::{AlbumId, AssetId, RecipientId, Salt, WrongLength};
-pub use keys::{AlbumKey, LoginProof, MasterKey, OwnerKek};
+pub use invite_wrap::{
+    InviteWrapError, InviteWrappedKey, unwrap_album_key_with_invite, wrap_album_key_for_invite,
+};
+pub use keys::{AlbumKey, InviteKey, LoginProof, MasterKey, OwnerKek};
 pub use owner_wrap::{
     OwnerWrapError, WrappedMaster, derive_owner_credential, unwrap_master_key, wrap_master_key,
 };

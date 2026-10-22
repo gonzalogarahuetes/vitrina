@@ -166,7 +166,7 @@ test('1. the owner publishes two photos and invites a recipient, who opens one',
 
 	const invited = await call('POST', `/albums/${ALBUM_ID}/recipients`, {
 		...owner(),
-		body: { id: RECIPIENT.id, kind: 'qr', label: b64(randomBytes(60)), token_hash: b64(sha256(RECIPIENT.token)) },
+		body: { id: RECIPIENT.id, kind: 'qr', label: b64(randomBytes(60)), token_hash: b64(sha256(RECIPIENT.token)), wrapped: b64(randomBytes(48)), wrap_nonce: b64(randomBytes(24)) },
 	})
 	assert.equal(invited.status, 201, invited.text)
 

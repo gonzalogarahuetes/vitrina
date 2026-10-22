@@ -85,6 +85,15 @@ interface LabelVector {
   k_label: string;
   blob: string;
 }
+interface InviteWrapVector {
+  category: number;
+  name: string;
+  k_album: string;
+  k_invite: string;
+  recipient_id: string;
+  wrap_nonce: string;
+  wrapped: string;
+}
 interface SaltLengthVector extends Omit<WrapVector, "wrapped" | "category"> {
   vector: number;
   wrapped?: string;
@@ -121,6 +130,7 @@ interface VectorFile {
   owner_wrap: OwnerWrapVector[];
   album_title: TitleVector[];
   recipient_label: LabelVector[];
+  invite_wrap: InviteWrapVector[];
   protocol: {
     token: { vector: number; token_raw: string; token_base64url: string; sha256: string; expect: string };
     token_noncanonical: { vector: number; token_base64url: string; expect: string };
@@ -130,6 +140,7 @@ interface VectorFile {
     wrap_salt_length: SaltLengthVector[];
     passphrase_spacing_mark: PassphraseVector;
     album_wrap_aad: { vector: number; album_id: string; aad: string };
+    invite_wrap_aad: { vector: number; recipient_id: string; aad: string };
   };
 }
 
@@ -154,6 +165,7 @@ test("vector file targets envelope version 1", () => {
   assert.deepEqual(file.owner_wrap.map((v) => v.category), [17, 17]);
   assert.deepEqual(file.album_title.map((v) => v.category), [18]);
   assert.deepEqual(file.recipient_label.map((v) => v.category), [19]);
+  assert.deepEqual(file.invite_wrap.map((v) => v.category), [20]);
 });
 
 // Categories 1–4 — decrypt direction is byte-exact. The encrypt direction
@@ -363,6 +375,28 @@ for (const { v, id, decrypt, encrypt, other } of blobCases) {
   });
 }
 
+// Category 20 — §6.1's wrap of K_album under K_invite, on category 16's
+// pattern. K_invite enters as bytes, as it does from an invite fragment.
+for (const v of file.invite_wrap) {
+  test(`category 20: ${v.name} — unwraps to K_album`, () => {
+    assert.equal(v.recipient_id, file.protocol.wrap_aad.recipient_id, "§9.1 vector 5's recipient_id");
+    assert.notEqual(v.k_invite, v.k_album, "K_invite is not K_album");
+    const invite = e.InviteKey.fromBytes(unhex(v.k_invite));
+    const wrapped = e.InviteWrappedKey.fromParts(unhex(v.wrapped), unhex(v.wrap_nonce));
+    assertIsTheAlbumKey(e.unwrapAlbumKeyWithInvite(wrapped, invite, unhex(v.recipient_id)));
+  });
+
+  test(`category 20: ${v.name} — wrap then unwrap round-trips`, () => {
+    const album = e.AlbumKey.fromBytes(unhex(v.k_album));
+    const invite = e.InviteKey.fromBytes(unhex(v.k_invite));
+    const wrapped = e.wrapAlbumKeyForInvite(album, invite, unhex(v.recipient_id));
+    assert.equal(wrapped.wrapped.length, e.inviteWrappedLen());
+    assert.equal(wrapped.wrapNonce.length, e.inviteWrapNonceLen());
+    assert.notEqual(hex(wrapped.wrapNonce), v.wrap_nonce, "wrap_nonce is fresh (§6.1)");
+    assertIsTheAlbumKey(e.unwrapAlbumKeyWithInvite(wrapped, invite, unhex(v.recipient_id)));
+  });
+}
+
 // §9: every vector against every implementation. Each group under
 // file.protocol names the test below that exercises it; a group with no row
 // fails by name, as the negatives table does for categories.
@@ -375,6 +409,7 @@ const protocolTests: Record<string, string> = {
   wrap_salt_length: "protocol 6: salt length is enforced at fromParts",
   passphrase_spacing_mark: "protocol 7: the committed blob unwraps under a passphrase carrying a spacing mark",
   album_wrap_aad: "protocol 8: the album wrap is bound to album_id",
+  invite_wrap_aad: "protocol 9: the invite wrap is bound to recipient_id",
 };
 
 test("every protocol group has a test", () => {
@@ -466,6 +501,23 @@ test(protocolTests.album_wrap_aad!, () => {
   const other = unhex(v.album_id);
   other[15]! ^= 0x01;
   assert.equal(caught(() => e.unwrapAlbumKeyWithMaster(wrapped, master, other)).code, "AuthenticationFailed");
+});
+
+// Protocol vector 9 — vector 8's proxy for the 38-byte AAD (§9.3): the
+// vector's recipient_id must open category 20's blob, and a one-byte change
+// must not. The AAD's own bytes are re-derived without the crate by
+// scripts/check-vectors.mjs.
+test(protocolTests.invite_wrap_aad!, () => {
+  const v = file.protocol.invite_wrap_aad;
+  const c20 = file.invite_wrap[0]!;
+  const invite = e.InviteKey.fromBytes(unhex(c20.k_invite));
+  const wrapped = e.InviteWrappedKey.fromParts(unhex(c20.wrapped), unhex(c20.wrap_nonce));
+  assertIsTheAlbumKey(e.unwrapAlbumKeyWithInvite(wrapped, invite, unhex(v.recipient_id)));
+  assert.equal(v.recipient_id, c20.recipient_id, "§9.1: vector 9's recipient_id is category 20's");
+  assert.equal(v.aad.length / 2, 38);
+  const other = unhex(v.recipient_id);
+  other[15]! ^= 0x01;
+  assert.equal(caught(() => e.unwrapAlbumKeyWithInvite(wrapped, invite, other)).code, "AuthenticationFailed");
 });
 
 // Protocol vector 6 — the one the Rust verifier cannot fail: Salt is [u8; 16]

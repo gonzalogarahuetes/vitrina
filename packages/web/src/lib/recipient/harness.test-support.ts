@@ -1,15 +1,24 @@
 /*
  * Test support for the recipient path: a recording fake relay behind the real
  * API client, a fake envelope behind the real poison guard, and table-driven
- * fakes of the owner's two functions. No fake here parses, derives, wraps or
- * unwraps anything: the invite "parser" is a lookup table and the "unwrap" is
- * a comparison against one fixed passphrase.
+ * fakes of the owner's three functions. No fake here parses, derives, wraps or
+ * unwraps anything: the invite "parser" is a lookup table, the passphrase
+ * "unwrap" is a comparison against one fixed passphrase, and the invite
+ * "unwrap" returns whatever outcome the test asked for.
  */
 import { createApiClient } from "$lib/api/client";
 import { guard, type Envelope } from "$lib/envelope";
 import { uuidToBytes } from "$lib/ids";
 import type { Invite, ParseResult } from "$lib/invite/types";
-import type { AlbumKey, OpenPassphraseResult, RecipientKeyMaterial, UnwrapError } from "$lib/keys/types";
+import type {
+  AlbumKey,
+  InviteKeyMaterial,
+  OpenInviteError,
+  OpenInviteResult,
+  OpenPassphraseResult,
+  PassphraseKeyMaterial,
+  UnwrapError,
+} from "$lib/keys/types";
 import { encodeBase64url } from "@vitrina/shared";
 import { RecipientSession, type Deps, type State } from "./session";
 import type { Picture } from "./render";
@@ -18,13 +27,13 @@ export const ORIGIN = "https://api.vitrina.test";
 export const ALBUM_ID = "6f1c2a8e-3b4d-4e5f-8a9b-0c1d2e3f4a5b";
 export const RECIPIENT_ID = "0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d";
 export const TOKEN = encodeBase64url(Uint8Array.from({ length: 32 }, (_, i) => 200 - i));
-/** K_album as the fragment carries it. Its every spelling is searched for in what was sent. */
-export const KEY = Uint8Array.from({ length: 32 }, (_, i) => (i * 7 + 3) & 0xff);
-export const KEY_B64 = encodeBase64url(KEY);
+/** K_invite as the fragment carries it (encryption spec §6.1). Its every spelling is searched for in what was sent. */
+export const INVITE_KEY = Uint8Array.from({ length: 32 }, (_, i) => (i * 7 + 3) & 0xff);
+export const INVITE_KEY_B64 = encodeBase64url(INVITE_KEY);
 export const PASSPHRASE_WORDS = ["tortilla", "de", "patatas", "con", "cebolla"];
 export const PASSPHRASE = PASSPHRASE_WORDS.join(" ");
 
-export const QR_FRAGMENT = `#v=1&a=${encodeBase64url(uuidToBytes(ALBUM_ID))}&t=${TOKEN}&k=${KEY_B64}`;
+export const QR_FRAGMENT = `#v=1&a=${encodeBase64url(uuidToBytes(ALBUM_ID))}&t=${TOKEN}&k=${INVITE_KEY_B64}`;
 export const PASS_FRAGMENT = `#v=1&a=${encodeBase64url(uuidToBytes(ALBUM_ID))}&t=${TOKEN}`;
 
 export const media = (n: number, status = "ready") => ({
@@ -101,10 +110,11 @@ export function relay() {
     if (queued !== undefined && queued.length > 0) return queued.shift() as Reply;
     if (path === "/v1/recipient")
       return { status: 200, json: { id: RECIPIENT_ID, album_id: album.albumIdInRow, label: encodeBase64url(seal(album.label)), kind: album.kind, created_at: "2026-10-01T00:00:00Z" } };
+    // §10.1, both kinds since 006: the row's kind, and the KDF fields for passphrase only.
     if (path === "/v1/recipient/key")
       return album.kind === "qr"
-        ? err(404, "NOT_FOUND")
-        : { status: 200, json: { id: RECIPIENT_ID, kdf_salt: "s".repeat(22), wrapped: "w".repeat(64), wrap_nonce: "n".repeat(32), kdf_memory_kib: 65536, kdf_iterations: 3, kdf_parallelism: 1 } };
+        ? { status: 200, json: { id: RECIPIENT_ID, kind: "qr", wrapped: "w".repeat(64), wrap_nonce: "n".repeat(32) } }
+        : { status: 200, json: { id: RECIPIENT_ID, kind: "passphrase", kdf_salt: "s".repeat(22), wrapped: "w".repeat(64), wrap_nonce: "n".repeat(32), kdf_memory_kib: 65536, kdf_iterations: 3, kdf_parallelism: 1 } };
     if (path === `/v1/albums/${ALBUM_ID}`)
       return { status: 200, json: { id: ALBUM_ID, title: encodeBase64url(seal(album.title)), created_at: "2026-10-01T00:00:00Z", media: album.media } };
     if (path === `/v1/albums/${ALBUM_ID}/metadata`)
@@ -150,18 +160,21 @@ export class FakePicture implements Picture {
   }
 }
 
-export function harness(opts: { fragment?: string; unwrap?: UnwrapError | "ok"; invite?: Invite } = {}) {
+export function harness(opts: { fragment?: string; unwrap?: UnwrapError | "ok"; inviteOpen?: OpenInviteError | "ok"; invite?: Invite } = {}) {
   const r = relay();
   const env = fakeEnvelope();
   const pictures: FakePicture[] = [];
   const sleeps: number[] = [];
   const keys: FakeKey[] = [];
   const zeroedAt: Uint8Array[] = [];
-  const opened: { passphrase: string; material: RecipientKeyMaterial }[] = [];
+  const opened: { passphrase: string; material: PassphraseKeyMaterial }[] = [];
+  /** Each openInviteKey call: a copy of the bytes it was handed, before it zeroed them. */
+  const invitesOpened: { inviteKey: number[]; material: InviteKeyMaterial }[] = [];
+  let forgotten = 0;
   let framesAwaited = 0;
 
   const table = new Map<string, ParseResult>([
-    [QR_FRAGMENT, { ok: true, invite: opts.invite ?? { mode: "qr", albumId: uuidToBytes(ALBUM_ID), token: TOKEN, key: Uint8Array.from(KEY) } }],
+    [QR_FRAGMENT, { ok: true, invite: opts.invite ?? { mode: "qr", albumId: uuidToBytes(ALBUM_ID), token: TOKEN, inviteKey: Uint8Array.from(INVITE_KEY) } }],
     [PASS_FRAGMENT, { ok: true, invite: { mode: "passphrase", albumId: uuidToBytes(ALBUM_ID), token: TOKEN } }],
     ["#v=2&x=y", { ok: false, error: { kind: "unsupported-version" } }],
     ["#v=1&a=nope", { ok: false, error: { kind: "malformed" } }],
@@ -177,11 +190,15 @@ export function harness(opts: { fragment?: string; unwrap?: UnwrapError | "ok"; 
       r.events.push("parse");
       return table.get(f) ?? { ok: false, error: { kind: "missing" } };
     },
-    openDirectKey: (_env, key) => {
+    // As the real one: zeroes the bytes on every path, success or failure.
+    openInviteKey: (_env, inviteKey, material): OpenInviteResult => {
+      invitesOpened.push({ inviteKey: Array.from(inviteKey), material });
+      inviteKey.fill(0);
+      zeroedAt.push(inviteKey);
+      const outcome = opts.inviteOpen ?? "ok";
+      if (outcome !== "ok") return { ok: false, error: outcome };
       const k = new FakeKey();
       keys.push(k);
-      key.fill(0);
-      zeroedAt.push(key);
       return { ok: true, albumKey: k as unknown as AlbumKey };
     },
     openPassphraseKey: async (_env, passphrase, material): Promise<OpenPassphraseResult> => {
@@ -205,6 +222,9 @@ export function harness(opts: { fragment?: string; unwrap?: UnwrapError | "ok"; 
       framesAwaited++;
     },
     now: () => new Date("2026-08-06T12:00:00Z"),
+    forgetInvite: () => {
+      forgotten++;
+    },
   };
 
   const session = new RecipientSession(deps);
@@ -221,6 +241,8 @@ export function harness(opts: { fragment?: string; unwrap?: UnwrapError | "ok"; 
     keys,
     zeroedAt,
     opened,
+    invitesOpened,
+    forgotten: () => forgotten,
     parsed,
     framesAwaited: () => framesAwaited,
     screen: () => session.current.screen,
@@ -233,3 +255,21 @@ export async function settle(): Promise<void> {
 }
 
 export const paths = (sent: readonly Sent[]) => sent.map((s) => new URL(s.url).pathname);
+
+/** An in-memory stand-in for lib/session/recipient-session.ts's store. */
+export function memoryStore(initial: string | null = null) {
+  let value = initial;
+  const writes: string[] = [];
+  return {
+    writes,
+    value: () => value,
+    read: () => value,
+    write: (fragment: string) => {
+      writes.push(fragment);
+      value = fragment;
+    },
+    clear: () => {
+      value = null;
+    },
+  };
+}

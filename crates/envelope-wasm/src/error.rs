@@ -4,8 +4,8 @@
 
 use js_sys::{Error, JsString, Reflect};
 use vitrina_envelope::{
-    AlbumWrapError, BlobError, EnvelopeError, HeaderError, InvalidParams, LayoutError,
-    OwnerWrapError, WrapError, WrongLength,
+    AlbumWrapError, BlobError, EnvelopeError, HeaderError, InvalidParams, InviteWrapError,
+    LayoutError, OwnerWrapError, WrapError, WrongLength,
 };
 use wasm_bindgen::{JsCast, JsValue};
 
@@ -232,6 +232,30 @@ impl From<AlbumWrapError> for Failure {
                 "unwrapped key has an unexpected length",
             ),
             AlbumWrapError::AuthenticationFailed => Failure::new(
+                "AuthenticationFailed",
+                "unwrap failed: authentication failed",
+            ),
+        }
+    }
+}
+
+/// §6.1's invite wrap. The same codes as `AlbumWrapError`, by decision: the
+/// client tells the two apart by which function it called, not by the code.
+impl From<InviteWrapError> for Failure {
+    fn from(e: InviteWrapError) -> Failure {
+        match e {
+            InviteWrapError::UnexpectedWrappedLength => Failure::new(
+                "UnexpectedWrappedLength",
+                "wrapped key has an unexpected length",
+            ),
+            InviteWrapError::RandomnessUnavailable => {
+                Failure::new("RandomnessUnavailable", "no CSPRNG available")
+            }
+            InviteWrapError::UnexpectedKeyLength => Failure::new(
+                "UnexpectedKeyLength",
+                "unwrapped key has an unexpected length",
+            ),
+            InviteWrapError::AuthenticationFailed => Failure::new(
                 "AuthenticationFailed",
                 "unwrap failed: authentication failed",
             ),

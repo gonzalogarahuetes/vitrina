@@ -243,8 +243,8 @@
 
 ### 4.1 Open link
 
-1. **Read the fragment, then strip it** with `history.replaceState` (invite spec §2.2) before anything else runs, including the router: SvelteKit's own navigation would otherwise copy the URL, fragment included, into `history.state`, which the browser saves with the session. Before stripping, its contents go into the tab's `sessionStorage` (§4.7).
-2. **Parse it.** Missing or malformed → dead page (§4.7). A well-formed `v` other than 1 → the newer-version screen (invite spec §6).
+1. **Read the fragment, then strip it** with `history.replaceState` (invite spec §2.2) before anything else runs, including the router: SvelteKit's own navigation would otherwise copy the URL, fragment included, into `history.state`, which the browser saves with the session.
+2. **Parse it.** Missing or malformed → dead page (§4.7). A well-formed `v` other than 1 → the newer-version screen (invite spec §6). **Only a fragment that parses as a valid version-1 invite is then stored** in the tab's `sessionStorage` (§4.7); a malformed or newer one never reaches storage.
 3. **Branch:** `key` present → `Q-held`; `key` absent → `P-locked` (§4.2).
 4. **QR:** call `GET /v1/recipient/key` and unwrap `K_album` under `K_invite` (encryption spec §6.1; no derivation wait, there is no Argon2id), zeroing `K_invite` afterwards → `Q-held`. A failed unwrap means a damaged link → dead page. Then `GET /v1/recipient` and decrypt the label for the watermark. `403` → revoked; `401` → not recognised (§4.6).
 5. Onboarding (§4.3), then the grid (§4.4).
@@ -270,7 +270,7 @@
 
 ### 4.3 Onboarding
 
-**Shown after the key is held and before the grid.** Nothing records that it was read, so it appears every time someone enters through the link. The text is brief §16, verbatim:
+**Shown after the key is held and before the grid.** Nothing records that it was read, so it appears every time someone enters through the link, and again after a reload (§4.7): remembering it would mean storing more than the fragment, which invite spec §2.2 does not allow. The text is brief §16, verbatim:
 
 > Someone has opened a window to share something with you: you have been given access to an album of their choice, and you can visit it as many times as you want.
 >
@@ -332,8 +332,8 @@
 | A reload of the same tab    | `Q-held`: the stored `K_invite` unwraps again (§4.1 step 4)         | `P-locked`: the token is restored, the passphrase asked again |
 | Closing the tab, reopening it | dead page                                                        | dead page                                               |
 
-- **On first load**, after reading the fragment and before stripping it (§4.1 step 1), its contents — token, album, and `K_invite` for a QR invite — go into `sessionStorage`, one entry, through one module. Invite spec §2.2 step 4 permits exactly this and nothing more. **`K_album` is never stored**, for either kind; it is unwrapped again after every reload.
-- **Revoked or not recognised (§4.6) clears the entry** as well as freeing the keys. A revoked QR invite's stored `K_invite` would unwrap nothing anyway, because the relay refuses the wrapping (encryption spec §6.4).
+- **On first load**, once the fragment has been read, stripped and accepted by the parser (§4.1 steps 1–2), it goes into `sessionStorage` as the raw fragment string — token, album, and `K_invite` for a QR invite — one entry, through one module. A reload parses it again, so there is one parse path and nothing derived is stored. Invite spec §2.2 step 4 permits exactly this and nothing more. **`K_album` is never stored**, for either kind; it is unwrapped again after every reload.
+- **Revoked, not recognised (§4.6), the dead page and the newer-version screen clear the entry** as well as freeing the keys; otherwise a reload after any of them would bring back an invite that no longer applies. A device failure keeps it, since a reload may recover. A revoked QR invite's stored `K_invite` would unwrap nothing anyway, because the relay refuses the wrapping (encryption spec §6.4).
 - **The fragment is always stripped.** The fallback that kept the key in the URL is not needed, and is not built.
 
 **The dead page** is reached when the tab was closed, the fragment is missing or malformed, or a bookmark holds no invite. It knows nothing: titles and labels are ciphertext, and there is no key. All it can offer is to open the invitation link again.

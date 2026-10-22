@@ -14,6 +14,8 @@ const params = new e.WrapParams(8, 1, 1);
 const stored = e.wrapAlbumKey(album, "Café Roble", params, bytes(16));
 const master = e.MasterKey.fromBytes(bytes(32));
 const storedUnderMaster = e.wrapAlbumKeyWithMaster(album, master, bytes(16));
+const invite = e.InviteKey.fromBytes(bytes(32, 0x5a));
+const storedUnderInvite = e.wrapAlbumKeyForInvite(album, invite, bytes(16));
 
 interface ByteRow {
   param: string;
@@ -21,10 +23,11 @@ interface ByteRow {
   calls: ((input: Uint8Array) => unknown)[];
 }
 
-// The nine byte-length rows, each through every entry point that accepts it.
+// The ten byte-length rows, each through every entry point that accepts it.
 const rows: ByteRow[] = [
   { param: "albumKey", expected: 32, calls: [(b) => e.AlbumKey.fromBytes(b)] },
   { param: "masterKey", expected: 32, calls: [(b) => e.MasterKey.fromBytes(b)] },
+  { param: "inviteKey", expected: 32, calls: [(b) => e.InviteKey.fromBytes(b)] },
   {
     param: "assetId",
     expected: 16,
@@ -50,6 +53,8 @@ const rows: ByteRow[] = [
       (b) => e.unwrapAlbumKey("Café Roble", params, b, stored),
       (b) => e.encryptRecipientLabel(album, b, "María"),
       (b) => e.decryptRecipientLabel(album, b, bytes(41)),
+      (b) => e.wrapAlbumKeyForInvite(album, invite, b),
+      (b) => e.unwrapAlbumKeyWithInvite(storedUnderInvite, invite, b),
     ],
   },
   {
@@ -69,6 +74,7 @@ const rows: ByteRow[] = [
       (b) => e.WrappedKey.fromParts(b, bytes(24), bytes(16)),
       (b) => e.MasterWrappedKey.fromParts(b, bytes(24)),
       (b) => e.WrappedMaster.fromParts(b, bytes(24)),
+      (b) => e.InviteWrappedKey.fromParts(b, bytes(24)),
     ],
   },
   {
@@ -78,6 +84,7 @@ const rows: ByteRow[] = [
       (b) => e.WrappedKey.fromParts(bytes(48), b, bytes(16)),
       (b) => e.MasterWrappedKey.fromParts(bytes(48), b),
       (b) => e.WrappedMaster.fromParts(bytes(48), b),
+      (b) => e.InviteWrappedKey.fromParts(bytes(48), b),
     ],
   },
   { param: "kdfSalt", expected: 16, calls: [(b) => e.WrappedKey.fromParts(bytes(48), bytes(24), b)] },
@@ -110,7 +117,7 @@ for (const row of rows) {
   });
 }
 
-// The tenth row. Measured ToInt32 results, from the C.10 brief:
+// The eleventh row. Measured ToInt32 results, from the C.10 brief:
 //   -1 -> 4294967295   1.5 -> 1   NaN -> 0   2**32 -> 0   2.9 -> 2
 //   Infinity -> 0   2**32 + 5 -> 5   -0.5 -> 0   "7" -> 7
 const coercions: unknown[] = [-1, 1.5, NaN, 2 ** 32, 2.9, Infinity, 2 ** 32 + 5, -0.5, "7"];

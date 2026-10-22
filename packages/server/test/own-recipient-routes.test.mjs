@@ -25,11 +25,11 @@ async function recipient({ app, parent, albumId }, kind, fill = 0x6c) {
     kind,
     label: b64(fill, 60),
     token_hash: sha256(token).toString("base64url"),
+    wrapped: b64(0x70, 48), // both kinds since 006
+    wrap_nonce: b64(0x71, 24),
   };
   if (kind === "passphrase") {
     Object.assign(body, {
-      wrapped: b64(0x70, 48),
-      wrap_nonce: b64(0x71, 24),
       kdf_salt: b64(0x72, 16),
       kdf_memory_kib: 20480,
       kdf_iterations: 5,
