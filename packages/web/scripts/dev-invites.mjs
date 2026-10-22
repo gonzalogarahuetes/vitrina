@@ -134,8 +134,9 @@ const signup = await call("POST", "/signup", {
 const owner = Buffer.from(signup.token, "base64url");
 
 const albumId = randomUUID();
-const albumKeyBytes = randomBytes(32);
-const albumKey = envelope.AlbumKey.fromBytes(albumKeyBytes);
+// Drawn inside the module, as the owner's client does: K_album never exists as
+// JavaScript bytes, here or in any invite (encryption spec §6.1).
+const albumKey = envelope.AlbumKey.generate();
 await call("POST", "/albums", {
   token: owner,
   body: {
@@ -178,8 +179,13 @@ for (const [i, [w, h, noise]] of shapes.entries()) {
 
 const fragmentBase = `v=1&a=${b64(idBytes(albumId))}`;
 
-// QR invite: the key travels in the fragment.
+// QR invite (encryption spec §6.1): a random K_invite travels in the fragment,
+// and the relay stores K_album wrapped under it.
 const qr = { id: randomUUID(), token: randomBytes(32) };
+const invite = envelope.InviteKey.generate();
+const inviteWrapping = envelope.wrapAlbumKeyForInvite(albumKey, invite, idBytes(qr.id));
+const inviteBytes = invite.toInviteBytes();
+invite.free();
 await call("POST", `/albums/${albumId}/recipients`, {
   token: owner,
   body: {
@@ -187,6 +193,8 @@ await call("POST", `/albums/${albumId}/recipients`, {
     kind: "qr",
     label: b64(envelope.encryptRecipientLabel(albumKey, idBytes(qr.id), "María")),
     token_hash: b64(sha256(qr.token)),
+    wrapped: b64(inviteWrapping.wrapped),
+    wrap_nonce: b64(inviteWrapping.wrapNonce),
   },
 });
 
@@ -212,6 +220,7 @@ await call("POST", `/albums/${albumId}/recipients`, {
   },
 });
 
-console.log(`QR invite (María):\n  ${APP}/v/#${fragmentBase}&t=${b64(qr.token)}&k=${b64(albumKeyBytes)}\n`);
+console.log(`QR invite (María):\n  ${APP}/v/#${fragmentBase}&t=${b64(qr.token)}&k=${b64(inviteBytes)}\n`);
+inviteBytes.fill(0);
 console.log(`Passphrase invite (Abuelo Juan):\n  ${APP}/v/#${fragmentBase}&t=${b64(pp.token)}\n  passphrase: ${passphrase}\n`);
 console.log(`To test revocation:\n  curl -X POST -H 'authorization: Bearer ${b64(owner)}' ${API}/v1/recipients/${qr.id}/revoke`);

@@ -2,7 +2,7 @@
  * The recipient's routes, each a row of api-sketch §11.8 and nothing else:
  *
  *   GET /v1/recipient                    §11.4  label for the watermark      no log
- *   GET /v1/recipient/key                §10.1  passphrase wrapping          no log
+ *   GET /v1/recipient/key                §10.1  the wrapping, either kind    no log
  *   GET /v1/albums/{album_id}            §9.4   title, statuses              no log
  *   GET /v1/albums/{album_id}/metadata   §9.5   metadata envelopes           album_opened
  *   GET /v1/media/{media_id}/thumbnail   §11.3  thumbnail object             never
@@ -54,13 +54,19 @@ export function isRecipientRow(b: unknown): b is RecipientRow {
   );
 }
 
+const KDF_FIELDS = ["kdf_salt", "kdf_memory_kib", "kdf_iterations", "kdf_parallelism"] as const;
+
+/**
+ * §10.1, both kinds since 006: `kind` says which unwrap runs. A qr answer
+ * carries no KDF field at all, and one that does is not the API's shape — a
+ * server fault, retryable, never a guess at which unwrap to run.
+ */
 export function isKeyMaterial(b: unknown): b is RecipientKeyMaterial {
+  if (!isObj(b) || !isStr(b["id"]) || !isStr(b["wrapped"]) || !isStr(b["wrap_nonce"])) return false;
+  if (b["kind"] === "qr") return KDF_FIELDS.every((f) => !(f in b));
   return (
-    isObj(b) &&
-    isStr(b["id"]) &&
+    b["kind"] === "passphrase" &&
     isStr(b["kdf_salt"]) &&
-    isStr(b["wrapped"]) &&
-    isStr(b["wrap_nonce"]) &&
     isInt(b["kdf_memory_kib"]) &&
     isInt(b["kdf_iterations"]) &&
     isInt(b["kdf_parallelism"])
