@@ -8,9 +8,10 @@
   import { api } from "$lib/api";
   import { en } from "$lib/copy/en";
   import { parseInvite } from "$lib/invite/parse";
-  import { openDirectKey, openPassphraseKey } from "$lib/keys/open";
+  import { openInviteKey, openPassphraseKey } from "$lib/keys/open";
   import { takeCapturedInvite } from "$lib/recipient/entry";
   import { RecipientSession, type State } from "$lib/recipient/session";
+  import { inviteStore } from "$lib/session/recipient-session";
   import Grid from "$lib/recipient/ui/Grid.svelte";
   import Message from "$lib/recipient/ui/Message.svelte";
   import Onboarding from "$lib/recipient/ui/Onboarding.svelte";
@@ -38,8 +39,9 @@
       envelope,
       poison,
       parseInvite,
-      openDirectKey,
+      openInviteKey,
       openPassphraseKey,
+      forgetInvite: () => inviteStore().clear(),
       // Bytes straight to a bitmap: no object URL is ever created, so none can outlive the draw.
       decodeImage: (bytes) => createImageBitmap(new Blob([bytes as Uint8Array<ArrayBuffer>])),
       sleep: (ms) => new Promise((r) => setTimeout(r, ms)),

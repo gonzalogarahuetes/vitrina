@@ -113,3 +113,37 @@ describe("the owner allowlist (flows §1.1)", () => {
     expect(found).toEqual(["localStorage holds secret #0"]);
   });
 });
+
+describe("the recipient invite allowlist (flows §4.7)", () => {
+  const FRAGMENT = `#v=1&a=AAAAAAAAAAAAAAAAAAAAAA&t=${"T".repeat(43)}&k=${KEY}`;
+  const INVITE = "vitrina:recipient:invite";
+  const secrets = [FRAGMENT, KEY];
+
+  it("permits exactly the fragment under its one key, only when named, and does not search it", () => {
+    expect(storageViolations(session({ [INVITE]: FRAGMENT }), secrets, { recipientInvite: FRAGMENT })).toEqual([]);
+    // Not named: the same entry is a secret in storage.
+    expect(storageViolations(session({ [INVITE]: FRAGMENT }), secrets)).toEqual([`sessionStorage key "${INVITE}" holds secret #0, #1`]);
+  });
+
+  it("finds K_invite under any second key, even with the entry permitted", () => {
+    const dump = session({ [INVITE]: FRAGMENT, "vitrina:other": KEY });
+    expect(storageViolations(dump, secrets, { recipientInvite: FRAGMENT })).toEqual(['sessionStorage key "vitrina:other" holds secret #1']);
+  });
+
+  it("finds K_invite anywhere else: localStorage, IndexedDB, cookies, window.name, history.state", () => {
+    const permitted = { [INVITE]: FRAGMENT };
+    const elsewhere: [StorageDump, string][] = [
+      [with_({ sessionStorage: { ...OBSERVED.sessionStorage, ...permitted }, localStorage: { a: KEY } }), "localStorage holds secret #1"],
+      [with_({ sessionStorage: { ...OBSERVED.sessionStorage, ...permitted }, indexedDB: [KEY] }), "IndexedDB holds secret #1"],
+      [with_({ sessionStorage: { ...OBSERVED.sessionStorage, ...permitted }, cookies: `k=${KEY}` }), "document.cookie holds secret #1"],
+      [with_({ sessionStorage: { ...OBSERVED.sessionStorage, ...permitted }, windowName: KEY }), "window.name holds secret #1"],
+      [with_({ sessionStorage: { ...OBSERVED.sessionStorage, ...permitted }, historyState: { "sveltekit:history": 1, k: KEY } }), "history.state holds secret #1"],
+    ];
+    for (const [dump, finding] of elsewhere) expect(storageViolations(dump, secrets, { recipientInvite: FRAGMENT })).toEqual([finding]);
+  });
+
+  it("refuses a different value under the invite key: another fragment, or one with K_album added", () => {
+    const other = FRAGMENT.replace("k=", "k=x");
+    expect(storageViolations(session({ [INVITE]: other }), [], { recipientInvite: FRAGMENT })).toEqual([`sessionStorage key "${INVITE}" is not the invite's fragment`]);
+  });
+});

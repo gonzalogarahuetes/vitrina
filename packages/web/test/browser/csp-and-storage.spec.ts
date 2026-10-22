@@ -1,8 +1,8 @@
 /*
  * The production build in a real browser (Chromium, and WebKit as the closest
  * CI gets to iPhone Safari, still an approximation). Four pages, none needing
- * the API: the three static screens, and a QR invite whose key is held in
- * memory while every API request fails, so the app sits in its offline state.
+ * the API: the three static screens, and a QR and a passphrase invite while
+ * every API request fails, so the app sits in its offline state.
  *
  *   1. No CSP violation, ever: every `securitypolicyviolation` event, every
  *      console message naming the Content Security Policy, and every uncaught
@@ -19,8 +19,10 @@
  *   2. Storage after a reload (invite spec §7 item 7, in a real browser): the
  *      reload runs SvelteKit's persist_state(), then everything persistent is
  *      read and judged by test/storage-allowlist.ts. Permitted: sveltekit:scroll
- *      (numbers only) and an empty sveltekit:snapshot. Nothing else, and none
- *      of the invite's secrets anywhere.
+ *      (numbers only), an empty sveltekit:snapshot, and on an invite page
+ *      vitrina:recipient:invite holding exactly that invite's fragment (flows
+ *      §4.7). Nothing else, and none of the invite's secrets — K_invite in
+ *      every spelling, the token — anywhere but that one entry.
  *
  * The last tests break each check on purpose and expect it to notice, so every
  * run proves the detectors still work. The CSP ones run in Chromium only, for
@@ -39,11 +41,22 @@ import { apiOrigin, blocklistChunk, cutTheApi, dumpStorage, text, watch } from "
 const b64url = (bytes: Buffer) => bytes.toString("base64url");
 const ALBUM = Buffer.alloc(16, 0x11);
 const TOKEN = Buffer.alloc(32, 0x22);
-const KEY = Buffer.from(Array.from({ length: 32 }, (_, i) => (i * 7 + 3) & 0xff));
-const QR_FRAGMENT = `v=1&a=${b64url(ALBUM)}&t=${b64url(TOKEN)}&k=${b64url(KEY)}`;
+/** K_invite (encryption spec §6.1): the fragment's `k`. */
+const INVITE_KEY = Buffer.from(Array.from({ length: 32 }, (_, i) => (i * 7 + 3) & 0xff));
+const QR_FRAGMENT = `v=1&a=${b64url(ALBUM)}&t=${b64url(TOKEN)}&k=${b64url(INVITE_KEY)}`;
+const PASS_FRAGMENT = `v=1&a=${b64url(ALBUM)}&t=${b64url(TOKEN)}`;
 
-/** Every spelling of the invite's secrets that could end up stored. */
-const SECRETS = [QR_FRAGMENT, b64url(KEY), KEY.toString("base64"), KEY.toString("hex"), b64url(TOKEN)];
+/** Every spelling of the invite's secrets that could end up stored: K_invite, then the token. */
+const SECRETS = [
+  QR_FRAGMENT,
+  b64url(INVITE_KEY),
+  INVITE_KEY.toString("base64"),
+  INVITE_KEY.toString("hex"),
+  INVITE_KEY.toString("hex").toUpperCase(),
+  JSON.stringify(Array.from(INVITE_KEY)),
+  Array.from(INVITE_KEY).join(","),
+  b64url(TOKEN),
+];
 
 type Visit = {
   readonly name: string;
@@ -52,6 +65,8 @@ type Visit = {
   readonly secrets: readonly string[];
   /** After the reload, also navigate to `/` and back: SvelteKit persists again on leaving. */
   readonly roundTrip?: boolean;
+  /** The fragment flows §4.7 lets this page keep, under vitrina:recipient:invite. */
+  readonly invite?: string;
 };
 
 const PAGES: readonly Visit[] = [
@@ -59,13 +74,21 @@ const PAGES: readonly Visit[] = [
   { name: "root (owner sign-in)", path: "/", ready: async (page) => expect(page.getByRole("heading", { name: en["signin.title"] })).toBeVisible(), secrets: [] },
   { name: "dead page", path: "/v/", ready: text(en.dead), secrets: [] },
   { name: "newer version", path: "/v/#v=2&x=y", ready: text(en["open.newer-version"]), secrets: ["v=2&x=y"] },
-  // The key is opened and held in memory; the first request fails, so the app waits offline.
+  // The fragment is kept for the tab; the first request (/recipient/key) fails, so the app waits offline.
   {
-    name: "QR invite, key in memory, API unreachable",
+    name: "QR invite, API unreachable",
     path: `/v/#${QR_FRAGMENT}`,
     ready: text(en.offline),
     secrets: SECRETS,
     roundTrip: true,
+    invite: `#${QR_FRAGMENT}`,
+  },
+  {
+    name: "passphrase invite, API unreachable",
+    path: `/v/#${PASS_FRAGMENT}`,
+    ready: text(en.offline),
+    secrets: [PASS_FRAGMENT, b64url(TOKEN)],
+    invite: `#${PASS_FRAGMENT}`,
   },
 ];
 
@@ -82,7 +105,8 @@ async function visitAndReload(page: Page, visit: Visit): Promise<StorageDump> {
     await page.goto("/");
     await page.goBack();
     await page.waitForLoadState("load");
-    await text(en.dead)(page); // the fragment was stripped, so /v/ comes back as the dead page
+    // The fragment was stripped, but the tab kept it (flows §4.7): /v/ comes back to the invite, offline again.
+    await visit.ready(page);
   }
   return dumpStorage(page);
 }
@@ -110,7 +134,8 @@ for (const visit of PAGES) {
     expect(apiFromRoot, "API requests from / with no token").toEqual([]);
 
     expect(await violations(), "CSP violations").toEqual([]);
-    expect(storageViolations(dump, visit.secrets), "storage").toEqual([]);
+    expect(storageViolations(dump, visit.secrets, { recipientInvite: visit.invite }), "storage").toEqual([]);
+    if (visit.invite !== undefined) expect(dump.sessionStorage["vitrina:recipient:invite"], "the kept fragment").toBe(visit.invite);
     expect(cookies, "cookies").toEqual([]);
   });
 }
@@ -189,14 +214,28 @@ test("the secret search notices the fragment's k written to window.name on load"
   await cutTheApi(page);
   await page.addInitScript((k) => {
     window.name = k;
-  }, b64url(KEY));
+  }, b64url(INVITE_KEY));
   const dump = await visitAndReload(page, qr);
-  const found = storageViolations(dump, qr.secrets);
+  const found = storageViolations(dump, qr.secrets, { recipientInvite: qr.invite });
   // Exactly one finding, naming window.name. Which secret numbers it lists
   // depends on which spellings of k coincide, so they are computed, not fixed.
-  const k = b64url(KEY);
+  const k = b64url(INVITE_KEY);
   const hits = qr.secrets.flatMap((secret, i) => (k.includes(secret) ? [`#${i}`] : []));
   expect(found).toEqual([`window.name holds secret ${hits.join(", ")}`]);
+  expect(found.join(" ")).not.toContain(k);
+});
+
+test("the secret search notices K_invite written under a second sessionStorage key, beside the permitted one", async ({ page }) => {
+  const qr = PAGES[3] as Visit;
+  await cutTheApi(page);
+  await page.addInitScript((k) => {
+    sessionStorage.setItem("vitrina:canary", k);
+  }, b64url(INVITE_KEY));
+  const dump = await visitAndReload(page, qr);
+  const found = storageViolations(dump, qr.secrets, { recipientInvite: qr.invite });
+  const k = b64url(INVITE_KEY);
+  const hits = qr.secrets.flatMap((secret, i) => (k.includes(secret) ? [`#${i}`] : []));
+  expect(found).toEqual([`sessionStorage key "vitrina:canary" holds secret ${hits.join(", ")}`]);
   expect(found.join(" ")).not.toContain(k);
 });
 
@@ -241,7 +280,7 @@ test("WebKit's abort report for a URL the test aborted is tolerated in WebKit on
   const violations = await watch(page, { aborted });
   await cutTheApi(page, aborted);
   // The QR page's first request, which cutTheApi aborts before the round trip.
-  const url = `${apiOrigin()}/v1/recipient`;
+  const url = `${apiOrigin()}/v1/recipient/key`;
   const message = `Fetch API cannot load ${url} due to access control checks.`;
   await throwOnRoot(page, message, "TypeError");
   await visitAndReload(page, QR());
