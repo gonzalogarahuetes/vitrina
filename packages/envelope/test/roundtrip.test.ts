@@ -77,6 +77,27 @@ test("MasterKey is opaque: no method or property returns its bytes", () => {
   assert.doesNotMatch(JSON.stringify(master), new RegExp(Buffer.from(MASTER_KEY).toString("hex")));
 });
 
+// §6.1: K_invite is the one key handle that returns its bytes, because they go
+// into the invite URL's fragment. Exactly generate, fromBytes and toInviteBytes,
+// so a getter added later — or the same export copied onto AlbumKey, which the
+// test above pins — fails here.
+test("InviteKey exposes exactly generate, fromBytes and toInviteBytes", () => {
+  const INVITE_KEY = Uint8Array.from({ length: 32 }, (_, i) => 0x90 + i);
+  const visible = (o: object) => Object.getOwnPropertyNames(o).filter((n) => !n.startsWith("__"));
+  assert.deepEqual(visible(e.InviteKey.prototype).sort(), ["constructor", "free", "toInviteBytes"]);
+  assert.deepEqual(visible(e.InviteKey).sort(), ["fromBytes", "generate", "length", "name", "prototype"]);
+
+  const invite = e.InviteKey.fromBytes(INVITE_KEY);
+  assert.doesNotMatch(JSON.stringify(invite), new RegExp(Buffer.from(INVITE_KEY).toString("hex")));
+
+  // A fresh copy on every call: zeroing one must not reach the key or the next.
+  const first = invite.toInviteBytes();
+  assert.deepEqual(first, INVITE_KEY);
+  first.fill(0);
+  assert.deepEqual(invite.toInviteBytes(), INVITE_KEY);
+  invite.free();
+});
+
 // §6.6.2 / §2.2: the KEK survives a network round trip as a handle and nothing
 // else. Unlike MasterKey there is no fromBytes — deriveOwnerCredential is the
 // only way to obtain one.
