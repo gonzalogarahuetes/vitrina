@@ -18,6 +18,7 @@
     onCloseCreate,
     onCreate,
     onLogout,
+    onOpen,
   }: {
     phase: "loading" | "ready";
     albums: readonly AlbumView[];
@@ -28,6 +29,7 @@
     onCloseCreate: () => void;
     onCreate: (title: string) => void;
     onLogout: (scope: LogoutScope) => void;
+    onOpen: (id: string) => void;
   } = $props();
 
   let title = $state("");
@@ -94,12 +96,25 @@
       <ul class="list">
         {#each albums as album (album.id)}
           <li class="album" class:failed={album.failed !== null} data-album={album.id}>
-            {#if album.failed === null}
-              <span class="name">{album.title}</span>
+            {#if album.failed === "key"}
+              <!-- Its key would not open: there is nothing this device can show inside it. -->
+              <span class="name failed-text">{en["albums.failed.key"]}</span>
+              <span class="count">{en["albums.count"](album.mediaCount)}</span>
             {:else}
-              <span class="name failed-text">{album.failed === "key" ? en["albums.failed.key"] : en["albums.failed.title"]}</span>
+              <button
+                class="open"
+                type="button"
+                aria-label={album.title === null ? en["albums.open.untitled.a11y"] : en["albums.open.a11y"](album.title)}
+                onclick={() => onOpen(album.id)}
+              >
+                {#if album.failed === null}
+                  <span class="name">{album.title}</span>
+                {:else}
+                  <span class="name failed-text">{en["albums.failed.title"]}</span>
+                {/if}
+                <span class="count">{en["albums.count"](album.mediaCount)}</span>
+              </button>
             {/if}
-            <span class="count">{en["albums.count"](album.mediaCount)}</span>
           </li>
         {/each}
       </ul>
@@ -164,6 +179,20 @@
   }
   .name {
     font-weight: 700;
+  }
+  .open {
+    all: unset;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    cursor: pointer;
+    margin: -16px;
+    padding: 16px;
+    border-radius: var(--radius);
+  }
+  .open:focus-visible {
+    outline: 3px solid var(--focus);
+    outline-offset: 2px;
   }
   .failed-text {
     color: var(--danger);

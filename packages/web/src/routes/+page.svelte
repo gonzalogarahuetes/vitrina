@@ -9,6 +9,8 @@
   import { en } from "$lib/copy/en";
   import * as ownerKeys from "$lib/keys/owner-open";
   import { OwnerSession, type State } from "$lib/owner/session";
+  import { browserImaging } from "$lib/owner/imaging";
+  import Album from "$lib/owner/ui/Album.svelte";
   import Albums from "$lib/owner/ui/Albums.svelte";
   import SignIn from "$lib/owner/ui/SignIn.svelte";
   import SignUp from "$lib/owner/ui/SignUp.svelte";
@@ -51,6 +53,10 @@
         const t = setTimeout(fn, ms);
         return () => clearTimeout(t);
       },
+      imaging: browserImaging,
+      // Bytes straight to a bitmap: no object URL is ever created for a decrypted image.
+      decodeImage: (bytes) => createImageBitmap(new Blob([bytes as Uint8Array<ArrayBuffer>])),
+      newMediaId: () => crypto.randomUUID(),
     });
     session = s;
     const unsubscribe = s.subscribe((next) => (ui = next));
@@ -134,6 +140,24 @@
     onCloseCreate={() => session?.closeCreate()}
     onCreate={(title) => session?.createAlbum(title)}
     onLogout={(scope) => session?.logout(scope)}
+    onOpen={(id) => session?.openAlbum(id)}
+  />
+{:else if screen.kind === "album"}
+  <Album
+    album={screen}
+    expiry={ui.expiry}
+    onBack={() => session?.leaveAlbum()}
+    onLeave={() => session?.leaveAlbum(true)}
+    onStay={() => session?.stayInAlbum()}
+    onAdd={(files) => session?.addPhotos(files)}
+    onOpen={(key) => session?.openViewer(key)}
+    onCloseViewer={() => session?.closeViewer()}
+    onRetryThumb={(key) => session?.retryThumb(key)}
+    onResend={(key) => session?.resendPhoto(key)}
+    onDismiss={(key) => session?.dismissPhoto(key)}
+    onRemove={(key) => session?.askRemove(key)}
+    onCancelRemove={() => session?.cancelRemove()}
+    onConfirmRemove={() => session?.confirmRemove()}
   />
 {:else if screen.kind === "signed-out-partial"}
   <main class="screen" role="alert">

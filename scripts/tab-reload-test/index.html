@@ -1,0 +1,483 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Tab reload test</title>
+<style>
+  :root {
+    --bg: #ffffff; --fg: #1a1a1a; --muted: #666; --line: #ddd; --card: #f5f5f7;
+    --ok: #1b7f3b; --okbg: #e3f5e8; --bad: #b3261e; --badbg: #fde7e5;
+    --wait: #8a5a00; --waitbg: #fff3d6; --accent: #1f4fd6;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #111; --fg: #eee; --muted: #aaa; --line: #333; --card: #1c1c1e;
+      --ok: #6ad48a; --okbg: #12301b; --bad: #ff8a80; --badbg: #3a1512;
+      --wait: #ffd27a; --waitbg: #3a2c0c; --accent: #8ab4ff; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 16px; font: 16px/1.45 -apple-system, system-ui, Roboto, sans-serif; background: var(--bg); color: var(--fg); }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  h2 { font-size: 17px; margin: 24px 0 8px; }
+  p { margin: 6px 0; }
+  .muted { color: var(--muted); font-size: 14px; }
+  .card { background: var(--card); border-radius: 10px; padding: 12px; margin: 10px 0; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th, td { text-align: left; padding: 6px 4px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { font-weight: 600; color: var(--muted); }
+  .pill { display: inline-block; padding: 2px 8px; border-radius: 999px; font-weight: 600; font-size: 13px; white-space: nowrap; }
+  .ok { background: var(--okbg); color: var(--ok); }
+  .bad { background: var(--badbg); color: var(--bad); }
+  .wait { background: var(--waitbg); color: var(--wait); }
+  .na { background: var(--line); color: var(--muted); }
+  button { font: inherit; font-size: 15px; padding: 10px 14px; border-radius: 8px; border: 1px solid var(--accent); background: var(--accent); color: #fff; margin: 4px 4px 4px 0; }
+  button.secondary { background: transparent; color: var(--accent); }
+  button.danger { background: transparent; color: var(--bad); border-color: var(--bad); }
+  button:disabled { opacity: .45; }
+  select, input[type=text] { font: inherit; padding: 8px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--fg); width: 100%; margin: 4px 0 8px; }
+  code, pre { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px; }
+  pre { background: var(--card); padding: 10px; border-radius: 8px; overflow-x: auto; white-space: pre-wrap; word-break: break-all; }
+  .step { border-left: 4px solid var(--line); padding-left: 10px; margin: 14px 0; }
+  .step.pending { border-color: var(--wait); }
+  .step.done { border-color: var(--ok); }
+  .big { font-size: 18px; font-weight: 600; }
+  #error { display: none; background: var(--badbg); color: var(--bad); padding: 10px; border-radius: 8px; margin-bottom: 10px; }
+  details summary { cursor: pointer; color: var(--muted); }
+</style>
+</head>
+<body>
+
+<div id="error"></div>
+
+<h1>Tab reload test</h1>
+<p class="muted">This page checks how this phone's browser behaves when a tab is reloaded. It stores only dummy test values. Nothing is sent anywhere; everything you see is stored on this phone only.</p>
+
+<div class="card" id="banner"></div>
+
+<h2>Results (screenshot this box when done)</h2>
+<div class="card">
+  <table id="results"></table>
+  <p class="muted" style="margin-top:8px">Run <span id="runno">–</span> · started <span id="started">–</span> · loads so far: <span id="loadcount">–</span></p>
+  <button id="copy">Copy results as text</button>
+  <button id="finish" class="secondary">Finish this run</button>
+</div>
+
+<div class="card" id="about">
+  <p class="big">About this run</p>
+  <label>Where did you open this link from?
+    <select id="source">
+      <option value="">– choose –</option>
+      <option>WhatsApp</option>
+      <option>Telegram</option>
+      <option>Camera app (QR code)</option>
+      <option>Typed or pasted into the browser</option>
+      <option>Other</option>
+    </select>
+  </label>
+  <label>What does this window look like?
+    <select id="opened">
+      <option value="">– choose –</option>
+      <option>Normal browser app (has its own address bar and tabs)</option>
+      <option>In-app browser (a view inside WhatsApp/Telegram with a Done or X button)</option>
+      <option>Not sure</option>
+    </select>
+  </label>
+  <p class="muted">Browser guess from the user agent: <span id="guess">–</span></p>
+</div>
+
+<h2>What to do</h2>
+<p class="muted">Do the steps in order. Before each step, tap its <b>Start</b> button. When the page comes back, look at the Results box.</p>
+
+<div class="step" id="stepA">
+  <p class="big">1. Open the link</p>
+  <p>Already done when you opened this page. The result for "Link details present on first open" is in the Results box. Choose the two answers under "About this run" above.</p>
+</div>
+
+<div class="step" id="stepB">
+  <p class="big">2. Switch apps until the phone drops this tab</p>
+  <p>Tap Start. Then leave the browser: open the camera and take a few photos, open a game or two, scroll Instagram or TikTok for a few minutes, open maps. Come back to this tab. If the page had to load again, the result fills in. If it says "no reload yet", the phone kept the page in memory — go away again, for longer and with heavier apps. Taking a few minutes of video with the camera usually works.</p>
+  <button data-start="appswitch">Start step 2</button>
+  <span id="statusB" class="muted"></span>
+</div>
+
+<div class="step" id="stepC">
+  <p class="big">3. Pull to refresh</p>
+  <p>Tap Start, then drag the page down from the very top until it refreshes. If there is no pull-to-refresh, use the browser's reload button.</p>
+  <button data-start="refresh">Start step 3</button>
+  <span id="statusC" class="muted"></span>
+</div>
+
+<div class="step" id="stepD">
+  <p class="big">4. Close the tab, then reopen it</p>
+  <p>Tap Start, close this tab, then bring it back from the browser's recently-closed list. Chrome: tab switcher → ⋮ menu → "Recent tabs" (or "Reopen closed tab"). Safari: tab view → press and hold the + button → pick it from the list. If this is an in-app browser with no tabs, tap "Not possible here".</p>
+  <button data-start="reopen">Start step 4</button>
+  <button class="secondary" data-na="reopen">Not possible here</button>
+  <span id="statusD" class="muted"></span>
+</div>
+
+<div class="step">
+  <p class="big">5. Finish</p>
+  <p>Fill in the two answers under "About this run", tap <b>Finish this run</b>, then screenshot the Results box (or tap Copy and paste the text into a message).</p>
+</div>
+
+<h2>Test link</h2>
+<p class="muted">The link to open on the phone. The part after <code>#</code> is dummy data of the right length.</p>
+<pre id="link"></pre>
+<button id="copylink" class="secondary">Copy link</button>
+<button id="sharelink" class="secondary">Share link…</button>
+
+<h2>Load log</h2>
+<p class="muted">One line per time this page loaded in this run. "type" is what the browser reports: navigate = fresh open, reload = refresh or re-load after being dropped, back_forward = came back from history. "discarded" is Chrome-only.</p>
+<table id="loads"></table>
+
+<details>
+  <summary>Event log (app switches, hide/show)</summary>
+  <table id="events"></table>
+</details>
+
+<details>
+  <summary>Previous runs on this browser</summary>
+  <div id="previous"></div>
+</details>
+
+<p style="margin-top:24px">
+  <button id="reset" class="danger">Reset everything on this browser</button>
+</p>
+<p class="muted">User agent: <code id="ua"></code></p>
+
+<script>
+(function () {
+  'use strict';
+
+  // ---- constants --------------------------------------------------------
+  // Dummy values only. Base64url alphabet, lengths 22 / 43 / 43.
+  var EXPECT = {
+    v: '1',
+    a: 'Qm9ndXNBbGJ1bUlkXzAwMQ',
+    t: 'Tm90QVJlYWxUb2tlbl9maWxsZXJfZm9yX3Rlc3RfMDE',
+    k: 'RHVtbXlLZXlCeXRlc19ub3RfcmVhbF9ub3Rfc2VjcmU'
+  };
+  var LS_KEY = 'tabreloadtest_v1';
+  var SS_KEY = 'tabreloadtest_frag';
+  var STEPS = { appswitch: 'App switch → reload', refresh: 'Pull-to-refresh', reopen: 'Close & reopen tab' };
+
+  // ---- helpers ----------------------------------------------------------
+  function $(id) { return document.getElementById(id); }
+  function showError(msg) { var e = $('error'); e.style.display = 'block'; e.textContent += msg + '\n'; }
+  window.onerror = function (m, src, line) { showError('Script error: ' + m + ' (line ' + line + ')'); };
+
+  function now() { return new Date().toISOString().replace('T', ' ').slice(0, 19); }
+
+  function lsRead() {
+    try { var s = localStorage.getItem(LS_KEY); return s ? JSON.parse(s) : { runs: [] }; }
+    catch (e) { showError('localStorage read failed: ' + e); return { runs: [] }; }
+  }
+  function lsWrite(state) {
+    try { localStorage.setItem(LS_KEY, JSON.stringify(state)); }
+    catch (e) { showError('localStorage write failed: ' + e); }
+  }
+  function ssRead() {
+    try { return { value: sessionStorage.getItem(SS_KEY), error: null }; }
+    catch (e) { return { value: null, error: String(e) }; }
+  }
+  function ssWrite(v) {
+    try { sessionStorage.setItem(SS_KEY, v); return null; }
+    catch (e) { return String(e); }
+  }
+  function ssClear() { try { sessionStorage.removeItem(SS_KEY); } catch (e) {} }
+
+  function parseFragment(hash) {
+    // hash like "#v=1&a=...&t=...&k=..."
+    if (!hash || hash.length < 2) return null;
+    var out = {}, parts = hash.slice(1).split('&');
+    for (var i = 0; i < parts.length; i++) {
+      var kv = parts[i].split('=');
+      if (kv.length === 2) out[kv[0]] = kv[1];
+    }
+    return out;
+  }
+  function matchesExpected(obj) {
+    return !!obj && obj.v === EXPECT.v && obj.a === EXPECT.a && obj.t === EXPECT.t && obj.k === EXPECT.k;
+  }
+  function navType() {
+    try {
+      var e = performance.getEntriesByType('navigation');
+      if (e && e.length && e[0].type) return e[0].type;
+    } catch (e1) {}
+    try {
+      var t = performance.navigation.type;
+      return ['navigate', 'reload', 'back_forward'][t] || ('type ' + t);
+    } catch (e2) {}
+    return 'unknown';
+  }
+  function wasDiscarded() {
+    return ('wasDiscarded' in document) ? String(document.wasDiscarded) : 'n/a';
+  }
+  function guessBrowser(ua) {
+    var g = [];
+    if (/WhatsApp/i.test(ua)) g.push('"WhatsApp" in UA');
+    if (/Telegram/i.test(ua)) g.push('"Telegram" in UA');
+    if (/Android/.test(ua)) {
+      if (/; wv\)/.test(ua) || /Version\/\d[\d.]* Chrome/.test(ua)) g.push('Android WebView (in-app browser)');
+      else if (/Chrome\/\d/.test(ua)) g.push('Chrome, or a Chrome tab inside another app');
+      else g.push('Android, unknown browser');
+    }
+    if (/iPhone|iPad|iPod/.test(ua)) {
+      if (/CriOS/.test(ua)) g.push('Chrome on iOS');
+      else if (/FxiOS/.test(ua)) g.push('Firefox on iOS');
+      else if (/Safari\//.test(ua)) g.push('Safari, or an in-app Safari view (the UA cannot tell them apart)');
+      else g.push('iOS WebView (in-app browser)');
+    }
+    return g.join('; ') || 'unknown';
+  }
+  function testLink() {
+    return location.protocol + '//' + location.host + location.pathname +
+      '#v=' + EXPECT.v + '&a=' + EXPECT.a + '&t=' + EXPECT.t + '&k=' + EXPECT.k;
+  }
+  function pill(text, cls) { return '<span class="pill ' + cls + '">' + text + '</span>'; }
+  function esc(s) { return String(s).replace(/[&<>]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]; }); }
+
+  // ---- state ------------------------------------------------------------
+  var state = lsRead();
+  function currentRun() {
+    var r = state.runs[state.runs.length - 1];
+    return (r && !r.finished) ? r : null;
+  }
+  function newRun() {
+    var r = {
+      id: state.runs.length + 1,
+      startedAt: now(),
+      ua: navigator.userAgent,
+      source: '', opened: '',
+      firstLoad: null,            // filled below
+      pending: null,
+      steps: {},
+      loads: [],
+      events: [],
+      finished: false
+    };
+    state.runs.push(r);
+    return r;
+  }
+
+  // ---- this load --------------------------------------------------------
+  var rawHash = location.hash;
+  var frag = parseFragment(rawHash);
+  var fragPresent = !!(frag && frag.k);
+  var nt = navType();
+  var ssBefore = ssRead();
+  var run = currentRun();
+  var isFirstOpen = false;
+
+  if (fragPresent) {
+    // A link with a fragment is always the start of a new run.
+    if (run) { run.finished = true; run.note = 'superseded by a new open'; }
+    run = newRun();
+    isFirstOpen = true;
+    run.firstLoad = {
+      fragment: 'present',
+      correct: matchesExpected(frag),
+      hashLength: rawHash.length,
+      ssHadOldValue: ssBefore.value !== null
+    };
+    // The behaviour under test: copy the fragment into sessionStorage, then strip it.
+    var werr = ssWrite(JSON.stringify(frag));
+    if (werr) run.firstLoad.ssWriteError = werr;
+    try { history.replaceState(null, '', location.pathname + location.search); }
+    catch (e) { run.firstLoad.replaceStateError = String(e); }
+  } else if (!run) {
+    // No fragment and no run in progress: treat as a fresh open where the app dropped the fragment.
+    run = newRun();
+    isFirstOpen = true;
+    run.firstLoad = { fragment: 'missing', correct: false, hashLength: rawHash.length, ssHadOldValue: ssBefore.value !== null };
+  }
+
+  // Evaluate sessionStorage now (after the write on first open).
+  var ssNow = ssRead();
+  var ssStatus;
+  if (ssNow.error) ssStatus = 'error';
+  else if (ssNow.value === null) ssStatus = 'missing';
+  else {
+    var parsed = null; try { parsed = JSON.parse(ssNow.value); } catch (e) {}
+    ssStatus = matchesExpected(parsed) ? 'intact' : 'different';
+  }
+
+  var load = {
+    ts: now(), type: nt, hash: fragPresent ? 'yes' : 'no',
+    ss: ssStatus, discarded: wasDiscarded(), step: run.pending || (isFirstOpen ? 'first open' : '')
+  };
+  if (ssNow.error) load.ssError = ssNow.error;
+  run.loads.push(load);
+
+  if (run.pending && !isFirstOpen) {
+    run.steps[run.pending] = { ss: ssStatus, type: nt, discarded: load.discarded, ts: load.ts, loadNo: run.loads.length };
+    run.pending = null;
+  }
+  lsWrite(state);
+
+  // ---- events: tell bfcache restores and app switches apart ---------------
+  function logEvent(name, detail) {
+    var r = currentRun(); if (!r) return;
+    r.events.push({ ts: now(), name: name, detail: detail || '' });
+    if (r.events.length > 60) r.events.shift();
+    lsWrite(state);
+    renderEvents();
+  }
+  window.addEventListener('pageshow', function (e) {
+    if (e.persisted) {
+      logEvent('pageshow', 'persisted=true — restored from back-forward cache, NOT a reload');
+      setBanner('The page came back from the browser\'s memory cache (not a reload). That proves nothing about storage. Keep going with the step.', 'wait');
+    }
+  });
+  window.addEventListener('pagehide', function (e) { logEvent('pagehide', 'persisted=' + e.persisted); });
+  document.addEventListener('visibilitychange', function () { logEvent('visibility', document.visibilityState); });
+  document.addEventListener('freeze', function () { logEvent('freeze', ''); });
+  document.addEventListener('resume', function () { logEvent('resume', ''); });
+
+  // ---- rendering ---------------------------------------------------------
+  function setBanner(text, cls) {
+    $('banner').innerHTML = pill(cls === 'ok' ? 'OK' : cls === 'bad' ? 'Problem' : 'Note', cls) + ' ' + esc(text);
+  }
+  function ssPill(s) {
+    if (s === 'intact') return pill('intact', 'ok');
+    if (s === 'missing') return pill('gone', 'bad');
+    if (s === 'different') return pill('changed', 'bad');
+    if (s === 'n/a') return pill('not possible here', 'na');
+    return pill(s || '—', s ? 'bad' : 'na');
+  }
+  function stepRow(key) {
+    var s = run.steps[key];
+    if (s && s.ss === 'n/a') return ssPill('n/a');
+    if (s) return ssPill(s.ss) + ' <span class="muted">load type: ' + esc(s.type) + (s.discarded !== 'n/a' ? ', discarded: ' + esc(s.discarded) : '') + '</span>';
+    if (run.pending === key) return pill('waiting — no reload yet', 'wait');
+    return pill('not done', 'na');
+  }
+  function renderResults() {
+    var fl = run.firstLoad || {};
+    var firstCell = fl.fragment === 'present'
+      ? (fl.correct ? pill('yes', 'ok') : pill('present but altered', 'bad') + ' <span class="muted">length ' + fl.hashLength + '</span>')
+      : pill('no', 'bad') + ' <span class="muted">the app or browser dropped the part after #</span>';
+    var rows = [
+      ['Opened from', esc(run.source || '—') + ' · ' + esc(run.opened || '—')],
+      ['Link details present on first open', firstCell],
+      [STEPS.appswitch, stepRow('appswitch')],
+      [STEPS.refresh, stepRow('refresh')],
+      [STEPS.reopen, stepRow('reopen')],
+      ['Storage right now', ssPill(ssStatus)],
+      ['User agent', '<code>' + esc(run.ua) + '</code>']
+    ];
+    var h = '';
+    for (var i = 0; i < rows.length; i++) h += '<tr><th>' + rows[i][0] + '</th><td>' + rows[i][1] + '</td></tr>';
+    $('results').innerHTML = h;
+    $('runno').textContent = run.id;
+    $('started').textContent = run.startedAt;
+    $('loadcount').textContent = run.loads.length;
+    $('finish').disabled = !!run.finished;
+  }
+  function renderSteps() {
+    var map = { appswitch: 'B', refresh: 'C', reopen: 'D' };
+    for (var k in map) {
+      var el = $('step' + map[k]), st = $('status' + map[k]);
+      el.className = 'step' + (run.steps[k] ? ' done' : run.pending === k ? ' pending' : '');
+      st.textContent = run.steps[k] ? 'Done.' : run.pending === k ? 'Waiting: leave now, then come back. No reload yet.' : '';
+    }
+  }
+  function renderLoads() {
+    var h = '<tr><th>#</th><th>time</th><th>type</th><th>#frag</th><th>storage</th><th>discarded</th><th>step</th></tr>';
+    for (var i = 0; i < run.loads.length; i++) {
+      var l = run.loads[i];
+      h += '<tr><td>' + (i + 1) + '</td><td>' + esc(l.ts.slice(11)) + '</td><td>' + esc(l.type) + '</td><td>' + l.hash +
+        '</td><td>' + ssPill(l.ss) + '</td><td>' + esc(l.discarded) + '</td><td>' + esc(STEPS[l.step] || l.step || '') + '</td></tr>';
+    }
+    $('loads').innerHTML = h;
+  }
+  function renderEvents() {
+    var ev = run.events, h = '<tr><th>time</th><th>event</th><th>detail</th></tr>';
+    for (var i = Math.max(0, ev.length - 30); i < ev.length; i++)
+      h += '<tr><td>' + esc(ev[i].ts.slice(11)) + '</td><td>' + esc(ev[i].name) + '</td><td>' + esc(ev[i].detail) + '</td></tr>';
+    $('events').innerHTML = h;
+  }
+  function renderPrevious() {
+    var h = '';
+    for (var i = 0; i < state.runs.length; i++) {
+      var r = state.runs[i]; if (r === run) continue;
+      h += '<pre>' + esc(summaryText(r)) + '</pre>';
+    }
+    $('previous').innerHTML = h || '<p class="muted">None.</p>';
+  }
+  function summaryText(r) {
+    function s(k) { var x = r.steps[k]; return x ? (x.ss === 'n/a' ? 'n/a' : x.ss + ' (type ' + x.type + (x.discarded !== 'n/a' ? ', discarded ' + x.discarded : '') + ')') : (r.pending === k ? 'waiting' : 'not done'); }
+    var fl = r.firstLoad || {};
+    return 'Run ' + r.id + ' started ' + r.startedAt + (r.finished ? ' (finished)' : '') + '\n' +
+      'Opened from: ' + (r.source || '?') + ' / ' + (r.opened || '?') + '\n' +
+      'Fragment on first open: ' + (fl.fragment === 'present' ? (fl.correct ? 'yes' : 'altered') : 'no') + '\n' +
+      STEPS.appswitch + ': ' + s('appswitch') + '\n' +
+      STEPS.refresh + ': ' + s('refresh') + '\n' +
+      STEPS.reopen + ': ' + s('reopen') + '\n' +
+      'Loads: ' + r.loads.length + ' — ' + r.loads.map(function (l) { return l.type + '/' + l.ss; }).join(', ') + '\n' +
+      'UA: ' + r.ua;
+  }
+  function renderAll() { renderResults(); renderSteps(); renderLoads(); renderEvents(); renderPrevious(); }
+
+  // ---- initial banner -----------------------------------------------------
+  if (isFirstOpen) {
+    if (fragPresent) setBanner('Fresh open, link details were present. Storage set. Now do the steps below.', 'ok');
+    else setBanner('This page opened without the part after #. If you just tapped the link in an app, that app dropped it — record that. If instead you are mid-test, ignore this line.', 'bad');
+  } else if (load.step) {
+    setBanner('The page reloaded (type: ' + nt + '). Step "' + STEPS[load.step] + '" recorded: storage ' + ssStatus + '.', ssStatus === 'intact' ? 'ok' : 'bad');
+  } else {
+    setBanner('The page loaded again (type: ' + nt + ') with no step started. Storage ' + ssStatus + '. Tap a Start button before the next step.', 'wait');
+  }
+
+  // ---- wire up -------------------------------------------------------------
+  $('ua').textContent = navigator.userAgent;
+  $('guess').textContent = guessBrowser(navigator.userAgent);
+  $('link').textContent = testLink();
+  $('source').value = run.source; $('opened').value = run.opened;
+  $('source').onchange = function () { run.source = this.value; lsWrite(state); renderResults(); };
+  $('opened').onchange = function () { run.opened = this.value; lsWrite(state); renderResults(); };
+
+  var starts = document.querySelectorAll('[data-start]');
+  for (var i = 0; i < starts.length; i++) starts[i].onclick = function () {
+    run.pending = this.getAttribute('data-start');
+    logEvent('start', STEPS[run.pending]);
+    lsWrite(state); renderAll();
+  };
+  var nas = document.querySelectorAll('[data-na]');
+  for (var j = 0; j < nas.length; j++) nas[j].onclick = function () {
+    var k = this.getAttribute('data-na');
+    run.steps[k] = { ss: 'n/a', type: '', discarded: 'n/a', ts: now() };
+    if (run.pending === k) run.pending = null;
+    lsWrite(state); renderAll();
+  };
+
+  function copyText(t, btn) {
+    function done(ok) { var old = btn.textContent; btn.textContent = ok ? 'Copied' : 'Copy failed — select the text by hand'; setTimeout(function () { btn.textContent = old; }, 2000); }
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(t).then(function () { done(true); }, function () { done(false); });
+    else {
+      var ta = document.createElement('textarea'); ta.value = t; document.body.appendChild(ta); ta.select();
+      var ok = false; try { ok = document.execCommand('copy'); } catch (e) {}
+      document.body.removeChild(ta); done(ok);
+    }
+  }
+  $('copy').onclick = function () { copyText(summaryText(run), this); };
+  $('copylink').onclick = function () { copyText(testLink(), this); };
+  $('sharelink').onclick = function () {
+    if (navigator.share) navigator.share({ title: 'Tab reload test', url: testLink() })['catch'](function () {});
+    else copyText(testLink(), this);
+  };
+  if (!navigator.share) $('sharelink').style.display = 'none';
+  $('finish').onclick = function () { run.finished = true; lsWrite(state); renderAll(); setBanner('Run finished. Screenshot the Results box. Opening the test link again starts a new run.', 'ok'); };
+  $('reset').onclick = function () {
+    if (!confirm('Delete all runs and logs stored on this browser?')) return;
+    try { localStorage.removeItem(LS_KEY); } catch (e) {}
+    ssClear();
+    location.replace(testLink());
+  };
+
+  renderAll();
+})();
+</script>
+</body>
+</html>

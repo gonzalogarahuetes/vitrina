@@ -102,6 +102,8 @@ export const FONT_STACK = "'Atkinson Hyperlegible', Verdana, sans-serif";
  * visible part of the photo by the callers.
  */
 export function drawWatermark(ctx: Ctx, lines: readonly string[], cx: number, cy: number, fontPx: number, maxW: number): void {
+  // The owner's own view has no recipient label, so nothing to draw (brief §5 names the recipient).
+  if (lines.length === 0) return;
   ctx.save();
   ctx.font = `700 ${fontPx}px ${FONT_STACK}`;
   ctx.textAlign = "center";
