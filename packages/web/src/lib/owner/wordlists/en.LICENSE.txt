@@ -1,0 +1,17 @@
+en.txt — English passphrase wordlist: EFF's eff_large_wordlist.txt,
+renamed, content unmodified (SHA-256 ccba0018f766e955b13db0285bcebc91d3460523b71b1459d4b61e69e97e92f3)
+
+Source:   https://www.eff.org/document/passphrase-wordlists
+Author:   Joseph Bonneau, Electronic Frontier Foundation (2016)
+Licence:  Creative Commons Attribution 4.0 International (CC BY 4.0)
+          https://creativecommons.org/licenses/by/4.0/
+Basis:    EFF's copyright policy, https://www.eff.org/copyright —
+          "Any and all original material on the EFF website may be freely
+          distributed at will under the Creative Commons Attribution 4.0
+          International License (CC-BY), unless otherwise noted."
+          The file itself carries no licence notice.
+Retrieved: 22 October 2026
+
+Attribution: "EFF Large Wordlist" by Joseph Bonneau / Electronic Frontier
+Foundation, used under CC BY 4.0. Unmodified; the dice-roll column is
+dropped when the list is loaded.
