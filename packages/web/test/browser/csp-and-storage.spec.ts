@@ -101,6 +101,14 @@ async function visitAndReload(page: Page, visit: Visit): Promise<StorageDump> {
   await visit.ready(page);
   await page.reload();
   await page.waitForLoadState("load");
+  // An invite page restores from the tab and requests /recipient/key again
+  // (flows §4.7). Wait until that request has failed and the page has settled:
+  // leaving with it still in flight lets navigation cancel it before
+  // cutTheApi's handler sees it, and WebKit reports that cancellation as an
+  // access-control error the test did not cause. Pages that keep nothing
+  // make no request after a reload, and the newer-version page comes back
+  // dead (its fragment was never kept), so only invite pages wait here.
+  if (visit.invite !== undefined) await visit.ready(page);
   if (visit.roundTrip === true) {
     await page.goto("/");
     await page.goBack();
