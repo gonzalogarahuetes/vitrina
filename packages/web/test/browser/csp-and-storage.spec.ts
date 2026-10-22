@@ -111,6 +111,12 @@ async function visitAndReload(page: Page, visit: Visit): Promise<StorageDump> {
   if (visit.invite !== undefined) await visit.ready(page);
   if (visit.roundTrip === true) {
     await page.goto("/");
+    // Let / finish rendering before leaving it. `goto` returns at the load
+    // event, but SvelteKit imports the route's chunk and CSS after it; going
+    // back at once cancels those, and WebKit then failed the history load of
+    // /v/ ("WebKit encountered an internal error"), leaving / on SvelteKit's
+    // 500 page (CI trace, 22 October 2026).
+    await expect(page.getByRole("heading", { name: en["signin.title"] })).toBeVisible();
     await page.goBack();
     await page.waitForLoadState("load");
     // The fragment was stripped, but the tab kept it (flows §4.7): /v/ comes back to the invite, offline again.
