@@ -5,7 +5,7 @@ use chacha20poly1305::XChaCha20Poly1305;
 use zeroize::Zeroizing;
 
 use crate::owner_wrap::OwnerWrapError;
-use crate::{AlbumId, AlbumWrapError, AssetId, RecipientId, WrongLength};
+use crate::{AlbumId, AlbumWrapError, AssetId, InviteWrapError, RecipientId, WrongLength};
 
 const TITLE_DOMAIN: &[u8; 16] = b"vitrina-title-v1";
 const LABEL_DOMAIN: &[u8; 16] = b"vitrina-label-v1";
@@ -44,6 +44,8 @@ pub(crate) struct Kek(Zeroizing<[u8; 32]>);
 pub struct OwnerKek(Zeroizing<[u8; 32]>);
 
 pub struct LoginProof(Zeroizing<[u8; 32]>);
+
+pub struct InviteKey(Zeroizing<[u8; 32]>);
 
 impl ChunkKey for AssetKey {
     fn cipher(&self) -> XChaCha20Poly1305 {
@@ -208,10 +210,44 @@ impl LabelKey {
     }
 }
 
+impl InviteKey {
+    pub const LEN: usize = 32;
+
+    pub fn from_bytes(bytes: [u8; Self::LEN]) -> Self {
+        InviteKey(Zeroizing::new(bytes))
+    }
+
+    pub fn try_from_slice(bytes: &[u8]) -> Result<InviteKey, WrongLength> {
+        let bytes: [u8; Self::LEN] = bytes.try_into().map_err(|_| WrongLength {
+            expected: Self::LEN,
+            got: bytes.len(),
+        })?;
+        Ok(InviteKey::from_bytes(bytes))
+    }
+
+    pub(crate) fn as_bytes(&self) -> &[u8; Self::LEN] {
+        &self.0
+    }
+
+    pub fn generate() -> Result<InviteKey, InviteWrapError> {
+        let mut key_bytes = Zeroizing::new([0u8; Self::LEN]);
+
+        getrandom::fill(&mut key_bytes[..]).map_err(|_| InviteWrapError::RandomnessUnavailable)?;
+        Ok(InviteKey(key_bytes))
+    }
+
+    /// Bytes leave the module only here and on `LoginProof`, because `K_invite` must go into
+    /// the invite URL's fragment (encryption spec §6.1). Do not add this to `AlbumKey` or
+    /// `MasterKey`. Zeroized on drop; the caller zeroes the JavaScript copy once encoded.
+    pub fn to_invite_bytes(&self) -> Zeroizing<[u8; 32]> {
+        Zeroizing::new(*self.0)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_fixtures::{ASSET_ID, K_ALBUM, hex};
+    use crate::test_fixtures::{ASSET_ID, K_ALBUM, K_INVITE, hex};
     #[cfg(target_arch = "wasm32")]
     use wasm_bindgen_test::wasm_bindgen_test as test;
 
@@ -455,5 +491,52 @@ mod tests {
                 expected: AlbumKey::LEN
             })
         );
+    }
+    // Invite Key Tests
+    // ----------------------------------------------------
+    #[test]
+    fn accepts_invite_key_exact_length_and_preserves_bytes() {
+        assert_eq!(
+            InviteKey::try_from_slice(&K_INVITE).unwrap().as_bytes(),
+            &K_INVITE
+        );
+    }
+
+    #[test]
+    fn rejects_empty_invite_key() {
+        assert_eq!(
+            InviteKey::try_from_slice(&[]).err(),
+            Some(WrongLength {
+                got: 0,
+                expected: InviteKey::LEN
+            })
+        );
+    }
+
+    #[test]
+    fn rejects_short_invite_key() {
+        assert_eq!(
+            InviteKey::try_from_slice(&[0u8; 15]).err(),
+            Some(WrongLength {
+                got: 15,
+                expected: InviteKey::LEN
+            })
+        );
+    }
+
+    #[test]
+    fn rejects_long_invite_key() {
+        assert_eq!(
+            InviteKey::try_from_slice(&[0u8; 35]).err(),
+            Some(WrongLength {
+                got: 35,
+                expected: InviteKey::LEN
+            })
+        );
+    }
+
+    #[test]
+    fn to_invite_bytes_preserves_original_bytes() {
+        assert_eq!(*InviteKey::from_bytes(K_INVITE).to_invite_bytes(), K_INVITE);
     }
 }
