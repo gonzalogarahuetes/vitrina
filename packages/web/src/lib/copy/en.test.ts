@@ -153,3 +153,107 @@ describe("the owner's album copy (flows §3.4, §3.6, §3.7)", () => {
     expect(stuckSince(new Date(2026, 9, 13, 14, 5), now)).toMatch(/^Tue 13 Oct,? 14:05$/);
   });
 });
+
+describe("the invite copy (flows §3.8)", () => {
+  const invite = () => strings().filter(([slot]) => slot.startsWith("invite."));
+
+  it("neither mode is presented as stronger in every respect: each says what it gives and what it costs", () => {
+    for (const mode of ["qr", "passphrase"] as const) {
+      expect(en[`invite.mode.${mode}.gives`].length, mode).toBeGreaterThan(20);
+      expect(en[`invite.mode.${mode}.costs`].length, mode).toBeGreaterThan(20);
+    }
+    const modeCopy = strings().filter(([slot]) => slot.startsWith("invite.mode"));
+    expect(modeCopy.filter(([, s]) => /\b(recommended|safer|safest|weaker|weakest|stronger|strongest|more secure|less secure|best|better)\b/i.test(s))).toEqual([]);
+  });
+
+  it("the house-key line says whoever holds it can open the album, until revoked (invite spec §3, brief §11)", () => {
+    for (const s of [en["invite.housekey"], en["invite.housekey.passphrase"]]) {
+      expect(s).toMatch(/house key/i);
+      expect(s).toMatch(/\banyone\b/i);
+      expect(s).toMatch(/can open this album/i);
+      expect(s).toMatch(/until you revoke/i);
+    }
+    expect(en["invite.housekey"]).toMatch(/photo of the code/i);
+  });
+
+  it("never implies the invitation cannot be passed on (brief §3, §11)", () => {
+    expect(invite().filter(([, s]) => /can(no|')t be (forwarded|shared|passed on)|only (they|you) can open|nobody else can|no one else can/i.test(s))).toEqual([]);
+  });
+
+  it("the share screen says it is shown once, and the leave sheet names the remedy", () => {
+    expect(en["invite.once"]).toMatch(/can't be shown again/i);
+    expect(en["invite.leave.consequence"]).toMatch(/new one/i);
+    expect(en["invite.leave.consequence"]).toMatch(/revoke/i);
+  });
+
+  it("the passphrase language is the recipient's, not the app's (brief §15.2)", () => {
+    expect(en["invite.language.hint"]).toMatch(/they speak/i);
+    expect(en["invite.language.hint"]).toMatch(/doesn't have to be the language of this app/i);
+  });
+
+  it("the link and the passphrase go by separate channels (encryption spec §6.5)", () => {
+    expect(en["invite.channels"]).toMatch(/separately/i);
+  });
+
+  it("nothing offers to copy the passphrase (decided in the prototype review)", () => {
+    expect(strings().filter(([, s]) => /copy (the )?(passphrase|words)/i.test(s))).toEqual([]);
+  });
+
+  it("the device failure is not a wrong input, and says nothing was shared", () => {
+    expect(en["invite.device"]).toMatch(/this device/i);
+    expect(en["invite.device"]).toMatch(/nothing was shared/i);
+    expect(en["invite.failed"]).toMatch(/nothing was shared/i);
+  });
+});
+
+describe("the revoke copy (flows §3.9, brief §8)", () => {
+  const revoke = () => strings().filter(([slot]) => slot.startsWith("revoke."));
+
+  it("is immediate and stops future access only", () => {
+    expect(en["revoke.confirm"]).toMatch(/at once/i);
+    expect(en["revoke.confirm"]).toMatch(/can't take back/i);
+    expect(en["revoke.done"]).toMatch(/from now on/i);
+    expect(en["revoke.done"]).toMatch(/can't be taken back/i);
+  });
+
+  it("never implies that anything already seen is withdrawn, deleted or undecryptable", () => {
+    expect(revoke().filter(([, s]) => /(withdraw|deleted from|removed from) (their|every)|can no longer (see|decrypt|open) (what|anything)|takes? back (the|their|what)|erase/i.test(s))).toEqual([]);
+  });
+
+  it("re-inviting means a new invitation", () => {
+    expect(en["revoke.done"]).toMatch(/new invitation/i);
+  });
+});
+
+describe("the access-log copy (flows §3.10, api-sketch §11.6)", () => {
+  const log = () => strings().filter(([slot]) => /^(log\.|people\.)/.test(slot));
+
+  it("uses opened, never viewed, seen, visited or looked at", () => {
+    expect(log().length).toBeGreaterThan(20);
+    expect(log().filter(([, s]) => /\b(view(ed|s)?|seen|saw|visit(ed|s)?|look(ed)? at|watched)\b/i.test(s))).toEqual([]);
+  });
+
+  it("matches §11.6's permitted phrasings", () => {
+    expect(en["log.summary.opens"](3)).toBe("Opened this album 3 times");
+    expect(en["log.summary.photos"](12)).toBe("Has opened 12 photos");
+    expect(en["log.summary.last"]("6 Aug")).toBe("Last opened 6 Aug");
+    expect(en["log.entry.album"]("María")).toBe("María opened this album");
+  });
+
+  it("a sparse log is not evidence of restricted access, and the copy says what the counts are", () => {
+    expect(en["log.sparse"]).toMatch(/not what they can open/i);
+    expect(en["log.sparse"]).toMatch(/every photo/i);
+    expect(log().filter(([, s]) => /\bonly (opened|been able|has access)|can only|restricted|limited to/i.test(s))).toEqual([]);
+    expect(en["log.counts"]).toMatch(/reloads/i);
+  });
+
+  it("never says a photo was not opened: thumbnails never log", () => {
+    expect(log().filter(([, s]) => /(not|never|hasn't|haven't) (been )?opened (this|the|a|any) photo|no photos? opened|opened 0|opened no/i.test(s))).toEqual([]);
+  });
+
+  it("the removed-photo state promises nothing about when erasure completes", () => {
+    const s = en["log.photo.removed"];
+    expect(s).toMatch(/hidden from everyone/i);
+    expect(s).not.toMatch(/under ?way|in progress|being erased|soon|shortly|automatically|in the background|eventually/i);
+  });
+});

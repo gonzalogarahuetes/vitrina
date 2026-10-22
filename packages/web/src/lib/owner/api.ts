@@ -15,7 +15,10 @@
  *   GET  /v1/media/{id}                   §9.8   status, updated_at
  *   DELETE /v1/media/{id}                 §9.11  204 erased · 202 pending
  *   GET  /v1/media/{id}/thumbnail|asset   §11.3, §11.2
- *   GET  /v1/albums/{id}/access-log       §11.7  last_opened_at per recipient
+ *   GET  /v1/albums/{id}/access-log       §11.7  per-recipient summary (labels as ciphertext)
+ *   GET  /v1/albums/{id}/access-log/entries  §11.7  entries, paged by `before`
+ *   POST /v1/albums/{id}/recipients       §7.7   create: id, kind, label, token_hash, wrapping
+ *   POST /v1/recipients/{id}/revoke       §7.8   no body, no Content-Type
  *   POST /v1/logout          §7.5   no body, no Content-Type
  *   POST /v1/logout/all      §7.5   no body, no Content-Type
  *
@@ -101,10 +104,80 @@ export const isMediaStatus = (b: unknown): b is MediaStatusBody =>
 const isCreatedMedia = (b: unknown): b is { id: string; status: MediaStatus; created_at: string } =>
   isObj(b) && isStr(b["id"]) && STATUSES.includes(b["status"]) && isTime(b["created_at"]);
 
-export type AccessLogSummary = { readonly recipients: readonly { readonly last_opened_at: string | null }[] };
+/** §11.7's per-recipient summary. `label` stays ciphertext (base64url) until K_label opens it. */
+export type AccessLogRecipient = {
+  readonly recipient_id: string;
+  readonly label: string;
+  readonly revoked_at: string | null;
+  readonly album_opens: number;
+  readonly media_opened: number;
+  readonly last_opened_at: string | null;
+};
 
-const isAccessLog = (b: unknown): b is AccessLogSummary =>
-  isObj(b) && Array.isArray(b["recipients"]) && b["recipients"].every((r) => isObj(r) && (r["last_opened_at"] === null || isTime(r["last_opened_at"])));
+export type AccessLogSummary = { readonly recipients: readonly AccessLogRecipient[] };
+
+const isCount = (v: unknown): v is number => isInt(v) && v >= 0;
+const isTimeOrNull = (v: unknown): boolean => v === null || isTime(v);
+
+const isAccessLogRecipient = (r: unknown): r is AccessLogRecipient =>
+  isObj(r) &&
+  isStr(r["recipient_id"]) &&
+  UUID.test(r["recipient_id"]) &&
+  isStr(r["label"]) &&
+  isTimeOrNull(r["revoked_at"]) &&
+  isCount(r["album_opens"]) &&
+  isCount(r["media_opened"]) &&
+  isTimeOrNull(r["last_opened_at"]);
+
+const isAccessLog = (b: unknown): b is AccessLogSummary => isObj(b) && Array.isArray(b["recipients"]) && b["recipients"].every(isAccessLogRecipient);
+
+export type AccessLogEvent = "album_opened" | "asset_viewed";
+
+/** One §11.7 entry. `media_id` is null for `album_opened`. */
+export type AccessLogEntry = {
+  readonly id: number;
+  readonly recipient_id: string;
+  readonly media_id: string | null;
+  readonly event: AccessLogEvent;
+  readonly occurred_at: string;
+};
+
+export type AccessLogPage = { readonly entries: readonly AccessLogEntry[]; readonly next_before: number | null };
+
+const isAccessLogEntry = (e: unknown): e is AccessLogEntry =>
+  isObj(e) &&
+  isCount(e["id"]) &&
+  isStr(e["recipient_id"]) &&
+  UUID.test(e["recipient_id"]) &&
+  (e["event"] === "album_opened" ? e["media_id"] === null : e["event"] === "asset_viewed" && isStr(e["media_id"]) && UUID.test(e["media_id"])) &&
+  isTime(e["occurred_at"]);
+
+const isAccessLogPage = (b: unknown): b is AccessLogPage =>
+  isObj(b) && Array.isArray(b["entries"]) && b["entries"].every(isAccessLogEntry) && (b["next_before"] === null || isCount(b["next_before"]));
+
+/** §7.7's body. Every binary field is bytes here and encoded below; nothing in it is key material (api-sketch §4.1). */
+export type NewRecipientBody =
+  | {
+      readonly id: string;
+      readonly kind: "qr";
+      /** Ciphertext under K_label(id). */
+      readonly label: Uint8Array;
+      readonly tokenHash: Uint8Array;
+      readonly wrapped: Uint8Array;
+      readonly wrapNonce: Uint8Array;
+    }
+  | {
+      readonly id: string;
+      readonly kind: "passphrase";
+      readonly label: Uint8Array;
+      readonly tokenHash: Uint8Array;
+      readonly wrapped: Uint8Array;
+      readonly wrapNonce: Uint8Array;
+      readonly kdfSalt: Uint8Array;
+      readonly params: KdfParameters;
+    };
+
+const isRevoked = (b: unknown): b is { revoked_at: string } => isObj(b) && isTime(b["revoked_at"]);
 
 function assertUuid(id: string): string {
   // The last check before an id becomes part of a URL path.
@@ -221,9 +294,55 @@ export function ownerApi(client: ApiClient) {
       if (res.status === 202) return "pending";
       throw new UnexpectedResponse(res.status);
     },
-    /** §11.7's summary. Only `last_opened_at` is read here (flows §3.7); labels stay ciphertext. */
+    /** §11.7's summary: every recipient, revoked ones included. Labels arrive as ciphertext. */
     accessLog: (token: string, albumId: string) =>
       client.json({ method: "GET", path: `/v1/albums/${assertUuid(albumId)}/access-log`, token }, isAccessLog),
+    /** §11.7's entries, newest first, paged by `before`. Both filters are identifiers, not credentials. */
+    accessLogEntries: (token: string, albumId: string, page: { readonly recipientId?: string; readonly before?: number } = {}) => {
+      const query: Record<string, string> = {};
+      if (page.recipientId !== undefined) query["recipient_id"] = assertUuid(page.recipientId);
+      if (page.before !== undefined) {
+        if (!Number.isSafeInteger(page.before) || page.before < 0) throw new TypeError("not a cursor");
+        query["before"] = String(page.before);
+      }
+      return client.json({ method: "GET", path: `/v1/albums/${assertUuid(albumId)}/access-log/entries`, token, query }, isAccessLogPage);
+    },
+
+    // ── Invites (flows §3.8, §3.9) ─────────────────────────────────────────
+
+    /**
+     * §7.7. The token is never here: only its hash. The id is the client's,
+     * because it is in the wrap AAD. A `409` arrives as an ApiFailure and the
+     * caller regenerates everything (flows §3.8).
+     */
+    createRecipient: (token: string, albumId: string, b: NewRecipientBody) =>
+      client.json(
+        {
+          method: "POST",
+          path: `/v1/albums/${assertUuid(albumId)}/recipients`,
+          token,
+          json: {
+            id: assertUuid(b.id),
+            kind: b.kind,
+            label: encodeBase64url(b.label),
+            token_hash: encodeBase64url(b.tokenHash),
+            wrapped: encodeBase64url(b.wrapped),
+            wrap_nonce: encodeBase64url(b.wrapNonce),
+            ...(b.kind === "passphrase"
+              ? {
+                  kdf_salt: encodeBase64url(b.kdfSalt),
+                  kdf_memory_kib: b.params.memoryKib,
+                  kdf_iterations: b.params.iterations,
+                  kdf_parallelism: b.params.parallelism,
+                }
+              : {}),
+          },
+        },
+        isCreated,
+      ),
+    /** §7.8. No body, so no Content-Type. Idempotent: a repeat answers the original `revoked_at`. */
+    revokeRecipient: (token: string, recipientId: string) =>
+      client.json({ method: "POST", path: `/v1/recipients/${assertUuid(recipientId)}/revoke`, token }, isRevoked),
 
     /** No body, so no Content-Type: a JSON Content-Type with no body is a 400 (api-sketch §7.5). */
     logout: async (token: string): Promise<void> => {

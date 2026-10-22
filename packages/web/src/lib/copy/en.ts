@@ -2,8 +2,9 @@
  * English copy, keyed by slot name. Recipient path: the ⟦copy: …⟧ slots of
  * flows §2 and §4, the prototype's extra slots, and open.newer-version. Owner
  * path: the slots of flows §3.1–§3.7, §3.11 and §3.12, the Main (unlock),
- * Signup and Signin boards' extra slots, and signin.unavailable. Each owner
- * slot carries its rule above it.
+ * Signup and Signin boards' extra slots, and signin.unavailable; flows §3.8–
+ * §3.10's invite, revoke and access-log slots, with the Invite board's extra
+ * ones. Each owner slot carries its rule above it.
  *
  * Every string here is bound by brief §3's never-claim list: nothing may say or
  * suggest that screenshots are prevented, that photos cannot be copied, or that
@@ -268,6 +269,149 @@ export const en = {
 
   /** Flows §3.12: when the session ends, and that uploads still running then will be lost. */
   "session.ending": (when: string) => `Your session ends ${when}. Anything still uploading at that point will be lost.`,
+
+  // ── Invites (flows §3.8) ──────────────────────────────────────────────────
+  // Invite-wide rules: an invitation is a bearer credential for the whole
+  // album (brief §11), so nothing here may suggest it cannot be passed on, and
+  // every QR and link carries the house-key line. Neither mode is presented as
+  // stronger in every respect (encryption spec §6.5): each says what it gives
+  // and what it costs. Every string is a whole sentence on its own, for the
+  // Spanish interface to come; nothing is assembled from fragments.
+
+  /** From the album. No rule beyond brief §3. */
+  "album.invite": "Invite someone",
+  /** From the album: flows §3.9's list. */
+  "album.people": "Invited people",
+
+  "invite.title": "Invite someone to this album",
+  "invite.back": "Back to the album",
+  /** Flows §3.8 step 2: the name the watermark carries (brief §5). */
+  "invite.name.label": "Their name",
+  /** Brief §5: the watermark is social, never "tracking". May say the relay can't read it (api-sketch §5.3), nothing stronger. */
+  "invite.name.hint": "It's written across every photo they open, like this: Shared with María. Our servers can't read it.",
+  "invite.name.empty": "Write their name first.",
+  "invite.name.too-long": "Use 60 characters or fewer.",
+  /** ⟦copy: invite.mode⟧ — neither mode is stronger in every respect (encryption spec §6.5). QR first, as the default. */
+  "invite.mode": "How will you give them the invitation?",
+  "invite.mode.qr": "A QR code or link",
+  /** §6.5: direct mode is stronger against stolen server data. */
+  "invite.mode.qr.gives": "One thing to send: they scan the code or tap the link. If the data on our servers were ever stolen, it couldn't be used to open this album.",
+  /** §6.5, brief §11: whoever holds or photographs it has full access until revoked. */
+  "invite.mode.qr.costs": "Anyone who gets hold of it, even a photo of the code, can open the album until you revoke it.",
+  "invite.mode.passphrase": "A link and a passphrase",
+  /** §6.5: the link alone opens nothing. */
+  "invite.mode.passphrase.gives": "The link alone opens nothing. They also need a few words, which you read out to them or write down.",
+  /** §6.5: weaker against stolen server data; more steps for the recipient. */
+  "invite.mode.passphrase.costs": "More steps for them, because they type the words in. And if the data on our servers were ever stolen, this kind of invitation could be attacked by guessing, which a QR code's cannot.",
+  /** ⟦copy: invite.language⟧ — the passphrase language is the recipient's, not the app's (brief §15.2). */
+  "invite.language": "Language of the passphrase",
+  "invite.language.hint": "Choose a language they speak, so the words are easy for them to say and type. It doesn't have to be the language of this app.",
+  "invite.language.loading": "Loading the word lists…",
+  "invite.language.failed": "The word lists couldn't be loaded. Check your connection, then try again.",
+  "invite.language.retry": "Try again",
+  /** No vetted list exists (encryption spec §6.3): passphrase mode cannot be offered, and says so. */
+  "invite.language.none": "Passphrase invitations aren't available in this version of the app. Use a QR code or link instead.",
+  "invite.language.choose": "Choose a language for the passphrase first.",
+  "invite.create": "Create the invitation",
+  "invite.creating": "Creating the invitation…",
+  /** A 400, 413 or 415, or repeated 409s. Nothing was shared, and the screen says so. */
+  "invite.failed": "The invitation couldn't be created, and nothing was shared. Try again.",
+  /** Flows §2's third exit, for an invite: this device could not finish. Never a wrong input. */
+  "invite.device": "This device couldn't finish making the invitation, and nothing was shared. Reload the page to try again, or use another phone or computer.",
+
+  /** The share step's heading. The label is the owner's own text. */
+  "invite.share.title": (label: string) => `Invitation for ${label}`,
+  "invite.qr.a11y": (label: string) => `QR code of the invitation link for ${label}`,
+  /** ⟦copy: invite.housekey⟧ — invite spec §3, brief §11: whoever holds it can open the album. Beside every QR. */
+  "invite.housekey": "This QR code and its link are like a house key. Anyone who has either one, even a photo of the code, can open this album until you revoke it.",
+  /** The same rule beside a passphrase invite's link: the link alone is not the key, the link and the words together are. */
+  "invite.housekey.passphrase": "This link and the passphrase together are like a house key. Anyone who has both can open this album until you revoke it.",
+  /** ⟦copy: invite.once⟧ — this link cannot be shown again (flows §3.8). */
+  "invite.once": "This invitation can't be shown again. If you leave before sending it, you'll need to make a new one.",
+  "invite.link.label": "The link",
+  "invite.link.copy": "Copy the link",
+  "invite.link.copied": "Link copied.",
+  "invite.link.copy-failed": "The link couldn't be copied. Select it above and copy it yourself.",
+  /** navigator.share, on devices that have a share sheet. */
+  "invite.link.share": "Send the link…",
+  /** ⟦copy: invite.channels⟧ — send the link and the passphrase separately (encryption spec §6.5). */
+  "invite.channels": "Send the link and the passphrase separately: the link by message, for example, and the words by phone or on paper.",
+  "invite.passphrase.label": "The passphrase",
+  /** The language the words are in, by its name in the interface's language. */
+  "invite.passphrase.language": (language: string) => `Words in ${language}`,
+  "invite.done": "Done",
+  "invite.leave.title": "Leave this invitation?",
+  /** Flows §3.8: the remedy is a new invite, and revoking this one if it may already have been sent. */
+  "invite.leave.consequence": "Once you leave, this invitation can't be shown again. If you haven't sent it, you'll need a new one. If it may have reached the wrong person, revoke it from Invited people.",
+  "invite.leave.stay": "Stay here",
+  "invite.leave.confirm": "Leave",
+
+  // ── Invited people and revoke (flows §3.9) ────────────────────────────────
+  // Revoke-wide rule (brief §8, "Revocation is server-enforced, not
+  // cryptographic"): revoking stops future access, at once, and the copy may
+  // say so; it never implies that anything already seen is withdrawn.
+
+  "people.title": "Invited people",
+  "people.back": "Back to the album",
+  "people.loading": "Loading…",
+  "people.empty": "No one has been invited to this album yet.",
+  /** A label that will not open: the person is listed anyway (as albums are, flows §3.4). */
+  "people.unreadable": "A name that can't be read on this device",
+  "people.revoked": (when: string) => `Revoked ${when}`,
+  "people.revoke": "Revoke",
+  /** A 404 on revoke: the list was stale, and has been fetched again (flows §3.9). */
+  "people.refreshed": "This list was out of date, so it has been loaded again. Check it before revoking anyone.",
+  "people.log": "Access log",
+  "people.log.person": (label: string) => `What ${label} opened`,
+  "people.log.person.unnamed": "What they opened",
+
+  /** ⟦copy: revoke.confirm⟧ — immediate, future access only (brief §8). */
+  "revoke.confirm.title": (label: string) => `Revoke the invitation for ${label}?`,
+  "revoke.confirm.title.unnamed": "Revoke this invitation?",
+  "revoke.confirm": "It stops working at once: from their next request on, it opens nothing. It can't take back anything they've already seen.",
+  "revoke.yes": "Revoke",
+  "revoke.no": "Keep it",
+  "revoke.busy": "Revoking…",
+  /** ⟦copy: revoke.done⟧ — immediate, future access only; re-inviting means a new invitation (flows §3.9). */
+  "revoke.done": "Revoked. That invitation opens nothing from now on. Anything already seen can't be taken back. To let them back in, make a new invitation.",
+  "revoke.failed": "This invitation couldn't be revoked. Try again.",
+
+  // ── Access log (flows §3.10, api-sketch §11.6) ────────────────────────────
+  // Log-wide rules: "opened" and only the permitted column of §11.6's table:
+  // never viewed, seen, visited or looked at. A sparse log is not evidence of
+  // restricted access, and nothing here may suggest it is. Never say a photo
+  // was not opened: thumbnails never log.
+
+  /** ⟦copy: log.summary⟧ */
+  "log.summary.opens": (n: number) => (n === 0 ? "Hasn't opened this album yet" : n === 1 ? "Opened this album once" : `Opened this album ${n} times`),
+  /** Shown only when at least one photo was opened: a zero would read as "has not seen any", which thumbnails make untrue. */
+  "log.summary.photos": (n: number) => (n === 1 ? "Has opened 1 photo" : `Has opened ${n} photos`),
+  "log.summary.last": (when: string) => `Last opened ${when}`,
+  /** §11.6: behavioural, not authorisational. Beside every list of counts. */
+  "log.sparse": "This shows what each person opened, not what they can open: everyone here who isn't revoked can open every photo in this album.",
+  /** §11.6: the metric is opens, not intentional viewings. */
+  "log.counts": "Each time the album or a photo is opened counts once, including reloads.",
+
+  "log.title": "Access log",
+  "log.title.person": (label: string) => `What ${label} opened`,
+  "log.title.person.unnamed": "What they opened",
+  "log.back": "Back to invited people",
+  "log.loading": "Loading the log…",
+  /** ⟦copy: log.none⟧ */
+  "log.none": "No one has opened this album yet.",
+  "log.none.person": "They haven't opened this album yet.",
+  /** ⟦copy: log.entry⟧ */
+  "log.entry.album": (label: string) => `${label} opened this album`,
+  "log.entry.photo": (label: string) => `${label} opened this photo`,
+  "log.entry.album.unnamed": "Someone whose name can't be read opened this album",
+  "log.entry.photo.unnamed": "Someone whose name can't be read opened this photo",
+  /** Flows §3.10: hidden and not yet erased. Must not promise when or whether erasure completes. */
+  "log.photo.removed": "A photo you removed. It's hidden from everyone now, and its entries go when its stored copy is erased.",
+  "log.photo.failed": "This photo couldn't be shown.",
+  "log.photo.loading.a11y": "Photo loading",
+  "log.photo.a11y": "The photo that was opened",
+  "log.more": "Show older entries",
+  "log.more.busy": "Loading older entries…",
 } as const;
 
 export type Copy = typeof en;
@@ -297,6 +441,31 @@ export function stuckSince(d: Date, now: Date): string {
   const sameDay = d.toDateString() === now.toDateString();
   const opts: Intl.DateTimeFormatOptions = sameDay ? { hour: "2-digit", minute: "2-digit" } : { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" };
   return new Intl.DateTimeFormat("en-GB", opts).format(d);
+}
+
+/** For the access log and people.revoked: "14:05" today, "Thu 15 Oct, 14:05" this year, "15 Oct 2025, 14:05" before. */
+export function logTime(d: Date, now: Date): string {
+  if (d.toDateString() === now.toDateString()) return new Intl.DateTimeFormat("en-GB", { hour: "2-digit", minute: "2-digit" }).format(d);
+  const opts: Intl.DateTimeFormatOptions =
+    d.getFullYear() === now.getFullYear()
+      ? { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }
+      : { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" };
+  return new Intl.DateTimeFormat("en-GB", opts).format(d);
+}
+
+/** For log.summary.last: "6 Aug", as api-sketch §11.6's example, with the year when it isn't this one. */
+export function logDay(d: Date, now: Date): string {
+  const opts: Intl.DateTimeFormatOptions = d.getFullYear() === now.getFullYear() ? { day: "numeric", month: "short" } : { day: "numeric", month: "short", year: "numeric" };
+  return new Intl.DateTimeFormat("en-GB", opts).format(d);
+}
+
+/** A passphrase language's name, in the interface's language: "English", "Spanish". Falls back to the code. */
+export function languageName(code: string): string {
+  try {
+    return new Intl.DisplayNames(["en"], { type: "language" }).of(code) ?? code;
+  } catch {
+    return code;
+  }
 }
 
 /** The countdown for credential.paused: "about 12 minutes", "45 seconds". Rounded up, never "0". */

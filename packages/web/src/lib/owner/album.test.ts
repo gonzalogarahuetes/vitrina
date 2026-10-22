@@ -434,11 +434,11 @@ describe("remove (flows §3.7)", () => {
   it("unopened only when no recipient's last_opened_at is later than the item's created_at", async () => {
     const h = harness({ stored: STORED });
     seed(h, { id: SEEDED, created_at: "2026-10-10T09:00:00Z" });
-    h.accessLog.push({ recipient_id: "r1", last_opened_at: "2026-10-10T08:59:59Z" }, { recipient_id: "r2", last_opened_at: null });
+    h.accessLog.push({ recipient_id: "e1000000-0000-4000-8000-000000000001", last_opened_at: "2026-10-10T08:59:59Z" }, { recipient_id: "e1000000-0000-4000-8000-000000000002", last_opened_at: null });
     await inAlbum(h);
     expect((await confirm(h, SEEDED))?.statement).toBe("unopened");
     h.session.cancelRemove();
-    h.accessLog.push({ recipient_id: "r3", last_opened_at: "2026-10-10T09:00:01Z" });
+    h.accessLog.push({ recipient_id: "e1000000-0000-4000-8000-000000000003", last_opened_at: "2026-10-10T09:00:01Z" });
     expect((await confirm(h, SEEDED))?.statement).toBe("opened");
     expect(routes(h.sent).filter((r) => r.endsWith("/access-log"))).toHaveLength(2);
   });
@@ -447,7 +447,7 @@ describe("remove (flows §3.7)", () => {
     const h = harness({ stored: STORED });
     seed(h, { id: SEEDED });
     await inAlbum(h);
-    h.override(`GET /v1/albums/${ALBUM_A}/access-log`, { status: 200, json: { recipients: [{ last_opened_at: "2026-10-10T09:00:00Z" }] } });
+    h.override(`GET /v1/albums/${ALBUM_A}/access-log`, { status: 200, json: { recipients: [{ recipient_id: "e1000000-0000-4000-8000-000000000001", label: "x".repeat(60), revoked_at: null, album_opens: 1, media_opened: 0, last_opened_at: "2026-10-10T09:00:00Z" }] } });
     // Equal to created_at is not later: unopened. That is the boundary, stated.
     expect((await confirm(h, SEEDED))?.statement).toBe("unopened");
   });

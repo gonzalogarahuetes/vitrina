@@ -1,8 +1,8 @@
 <script lang="ts">
   /*
-   * The owner path's composition point. This is the one place the owner's six
+   * The owner path's composition point. This is the one place the owner's eight
    * key functions (lib/keys/owner-open.ts) meet the session. Tests build the
-   * same session with fakes of all six.
+   * same session with fakes of all eight.
    */
   import { onMount } from "svelte";
   import { api } from "$lib/api";
@@ -11,7 +11,10 @@
   import { OwnerSession, type State } from "$lib/owner/session";
   import { browserImaging } from "$lib/owner/imaging";
   import Album from "$lib/owner/ui/Album.svelte";
+  import AccessLog from "$lib/owner/ui/AccessLog.svelte";
   import Albums from "$lib/owner/ui/Albums.svelte";
+  import Invite from "$lib/owner/ui/Invite.svelte";
+  import People from "$lib/owner/ui/People.svelte";
   import SignIn from "$lib/owner/ui/SignIn.svelte";
   import SignUp from "$lib/owner/ui/SignUp.svelte";
   import Unlock from "$lib/owner/ui/Unlock.svelte";
@@ -40,6 +43,8 @@
         unlockMasterKey: ownerKeys.unlockMasterKey,
         openAlbumKey: ownerKeys.openAlbumKey,
         createAlbumKey: ownerKeys.createAlbumKey,
+        createQrInvite: ownerKeys.createQrInvite,
+        createPassphraseInvite: ownerKeys.createPassphraseInvite,
       },
       store: sessionStore(),
       // Bundled, not fetched (connect-src names the API alone), and a chunk of
@@ -57,6 +62,11 @@
       // Bytes straight to a bitmap: no object URL is ever created for a decrypted image.
       decodeImage: (bytes) => createImageBitmap(new Blob([bytes as Uint8Array<ArrayBuffer>])),
       newMediaId: () => crypto.randomUUID(),
+      // Bundled, a chunk of its own, loaded only when passphrase mode is chosen. check-build.mjs enforces it.
+      loadWordlists: () => import("$lib/owner/wordlists").then((m) => m.WORDLISTS),
+      // The interface is English only for now (brief §15.3); the passphrase language defaults to it when a list exists.
+      displayLanguage: "en",
+      origin: location.origin,
     });
     session = s;
     const unsubscribe = s.subscribe((next) => (ui = next));
@@ -158,7 +168,31 @@
     onRemove={(key) => session?.askRemove(key)}
     onCancelRemove={() => session?.cancelRemove()}
     onConfirmRemove={() => session?.confirmRemove()}
+    onInvite={() => session?.openInvite()}
+    onPeople={() => session?.openPeople()}
   />
+{:else if screen.kind === "invite"}
+  <Invite
+    invite={screen}
+    onBack={() => session?.leaveInvite()}
+    onMode={(mode) => session?.chooseInviteMode(mode)}
+    onLanguage={(language) => session?.chooseInviteLanguage(language)}
+    onRetryLanguages={() => session?.retryInviteLanguages()}
+    onCreate={(label) => session?.createInvite(label)}
+    onAskLeave={(open) => session?.askLeaveInvite(open)}
+    onLeave={() => session?.leaveInvite(true)}
+  />
+{:else if screen.kind === "people"}
+  <People
+    people={screen}
+    onBack={() => session?.leavePeople()}
+    onRevoke={(id) => session?.askRevoke(id)}
+    onCancelRevoke={() => session?.cancelRevoke()}
+    onConfirmRevoke={() => session?.confirmRevoke()}
+    onLog={(id) => session?.openLog(id)}
+  />
+{:else if screen.kind === "log"}
+  <AccessLog log={screen} onBack={() => session?.closeLog()} onMore={() => session?.moreLog()} />
 {:else if screen.kind === "signed-out-partial"}
   <main class="screen" role="alert">
     <h1>{en["logout.partial"](screen.scope === "everywhere")}</h1>

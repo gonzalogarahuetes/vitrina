@@ -3,7 +3,8 @@
    * The owner's album (flows §3.4): every item in its real state, upload
    * (§3.6), removal with its computed statement (§3.7), and the recipient's
    * viewer for the full photo (§4.5), drawn without a watermark because the
-   * owner is not a recipient.
+   * owner is not a recipient. From here, the album's invite (§3.8) and its
+   * people and access log (§3.9, §3.10).
    */
   import { en, sessionEndTime } from "$lib/copy/en";
   import type { AlbumScreen } from "$lib/owner/album";
@@ -26,6 +27,8 @@
     onRemove,
     onCancelRemove,
     onConfirmRemove,
+    onInvite,
+    onPeople,
   }: {
     album: AlbumScreen;
     expiry: Expiry | null;
@@ -41,6 +44,10 @@
     onRemove: (key: string) => void;
     onCancelRemove: () => void;
     onConfirmRemove: () => void;
+    /** Flows §3.8. */
+    onInvite: () => void;
+    /** Flows §3.9, §3.10. */
+    onPeople: () => void;
   } = $props();
 
   let input: HTMLInputElement | undefined = $state();
@@ -89,6 +96,11 @@
   {#if album.phase === "loading"}
     <p class="note" role="status">{en["album.loading"]}</p>
   {:else}
+    <div class="sharing">
+      <button class="btn" type="button" onclick={onInvite}>{en["album.invite"]}</button>
+      <button class="btn ghost" type="button" onclick={onPeople}>{en["album.people"]}</button>
+    </div>
+
     <div class="add">
       <label class="btn" for="add-photos">{en["album.add"]}</label>
       <input id="add-photos" class="visually-hidden" type="file" accept="image/*" multiple bind:this={input} onchange={chosen} />
@@ -184,6 +196,14 @@
     border-radius: var(--radius);
     background: var(--accent-soft);
     border: 2px solid var(--accent);
+  }
+  .sharing {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .sharing .btn.ghost {
+    width: 100%;
   }
   .add {
     display: flex;

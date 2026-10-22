@@ -96,6 +96,15 @@ for (const f of files(BUILD).filter((f) => f.endsWith(".js"))) {
   }
 }
 
+// --- No data: images in script ----------------------------------------------
+// CSP refuses data: URLs and must keep refusing them (invite spec §3: the QR
+// is inline SVG). A data:image string in a chunk is a QR, or any picture,
+// about to be built the one way the browser will block. Static, like the
+// style scan: the browser check's CSP watcher covers what is built at runtime.
+for (const f of files(BUILD).filter((f) => f.endsWith(".js"))) {
+  if (/data:image\//i.test(readFileSync(f, "utf8"))) fail(`${relative(BUILD, f)} builds a data: image, which CSP refuses`);
+}
+
 // --- No version check -------------------------------------------------------
 // SvelteKit fetches _app/version.json after a failed route load, from the
 // app's own origin, which connect-src refuses (vite-plugins.ts,
@@ -163,8 +172,30 @@ let blocklistReport = "";
   }
 }
 
+// --- The passphrase wordlists: one chunk, reached only by a dynamic import ---
+// Bundled for the same reason as the blocklist, and split out so that only an
+// owner who chooses passphrase mode ever loads them (lib/owner/wordlists).
+let wordlistReport = "";
+{
+  const js = files(BUILD).filter((f) => f.endsWith(".js"));
+  // lib/owner/wordlists/index.ts carries this string.
+  const chunks = js.filter((f) => readFileSync(f, "utf8").includes("vitrina:passphrase-wordlists"));
+  if (chunks.length !== 1) fail(`expected one wordlist chunk, found ${chunks.length}`);
+  else {
+    const chunk = chunks[0];
+    const name = basename(chunk).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const staticImport = new RegExp(`(?:\\bfrom\\s*|\\bimport\\s*)["'][^"']*${name}["']`);
+    for (const f of js) {
+      if (f !== chunk && staticImport.test(readFileSync(f, "utf8"))) fail(`${relative(BUILD, f)} imports the wordlists statically`);
+    }
+    if (html.includes(basename(chunk))) fail("index.html preloads the wordlists");
+    const raw = readFileSync(chunk);
+    wordlistReport = `, wordlists ${relative(BUILD, chunk)} ${(raw.length / 1024).toFixed(0)} KiB`;
+  }
+}
+
 if (failures.length > 0) {
   console.error("check-build: build/ violates the static-SPA guards\n  " + failures.join("\n  "));
   process.exit(1);
 }
-console.log(`check-build: ok (connect-src ${apiOrigin}, ${inline.length} inline script by hash${blocklistReport})`);
+console.log(`check-build: ok (connect-src ${apiOrigin}, ${inline.length} inline script by hash${blocklistReport}${wordlistReport})`);

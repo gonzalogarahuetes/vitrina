@@ -1,6 +1,6 @@
 /*
  * The owner's key functions. The owner approved these signatures on
- * 15 October 2026. The implementations (./owner-open.ts) are the owner's, on
+ * 15 October 2026, and the two invite functions on 22 October 2026. The implementations (./owner-open.ts) are the owner's, on
  * CLAUDE.md's "do not write" list. The owner session (lib/owner/session.ts)
  * gets them injected and calls them. Nothing on the glue side derives, wraps
  * or unwraps.
@@ -161,7 +161,63 @@ export type CreateAlbumKey = (
   /** RandomnessUnavailable, or any other throw. */
   | Fail<"could-not-derive">;
 
-/** The six functions, as the session takes them. */
+// ── Create invite (flows §3.8) ───────────────────────────────────────────
+// Approved 22 October 2026, with full regeneration on a 409: the glue calls
+// the function again from scratch and re-encrypts the label under the new id.
+
+/** What both modes post, plus the token for the fragment. Every secret an invite needs is made in one place. */
+type NewRecipient = {
+  /** Lowercase UUIDv4 from crypto.randomUUID(). In the wrap AAD, and K_label derives from it. */
+  readonly recipientId: string;
+  /** The fragment's `t`: base64url, 43 chars. The 32 raw bytes are zeroed inside once encoded and hashed. */
+  readonly token: string;
+  /** SHA-256 of the 32 raw token bytes (schema §6). 32 bytes. The only form of the token that is posted. */
+  readonly tokenHash: Uint8Array;
+  /** 48 bytes. */
+  readonly wrapped: Uint8Array;
+  /** 24 bytes. */
+  readonly wrapNonce: Uint8Array;
+};
+
+export type QrInvite = NewRecipient & {
+  readonly kind: "qr";
+  /** The fragment's `k`: base64url, 43 chars. From toInviteBytes(); that array is zeroed inside once encoded, and the InviteKey handle freed. */
+  readonly inviteKey: string;
+};
+
+export type PassphraseInvite = NewRecipient & {
+  readonly kind: "passphrase";
+  /** PASSPHRASE_WORDS words as the list spells them, in order. Joined with U+0020 for the wrap. */
+  readonly words: readonly string[];
+  /** 16 bytes, drawn by the crate inside wrapAlbumKey. */
+  readonly kdfSalt: Uint8Array;
+  /** The parameters actually used (RECIPIENT_KDF_V1), so the request body has one source for them. */
+  readonly params: KdfParameters;
+};
+
+/** One vetted wordlist (encryption spec §6.3), named by its file: `en.txt` is `en`. */
+export type Wordlist = { readonly language: string; readonly words: readonly string[] };
+
+/** Async only because crypto.subtle.digest is. `albumKey` is borrowed and never freed. */
+export type CreateQrInvite = (
+  env: Envelope,
+  albumKey: AlbumKey,
+) => Promise<{ readonly ok: true; readonly invite: QrInvite } | Fail<"could-not-derive">>;
+
+export type CreatePassphraseInviteError =
+  /** Fewer than 7,776 words: refused rather than drawing a passphrase under 64 bits. */
+  | "unusable-wordlist"
+  /** RandomnessUnavailable, HashingFailed, a subtle.digest failure, any other throw → derive.failed */
+  | "could-not-derive";
+
+/** Runs Argon2id: the glue shows the derivation wait (flows §2) and awaits two frames first. */
+export type CreatePassphraseInvite = (
+  env: Envelope,
+  albumKey: AlbumKey,
+  wordlist: Wordlist,
+) => Promise<{ readonly ok: true; readonly invite: PassphraseInvite } | Fail<CreatePassphraseInviteError>>;
+
+/** The eight functions, as the session takes them. */
 export type OwnerKeyFunctions = {
   readonly createAccountKeys: CreateAccountKeys;
   readonly deriveLoginCredential: DeriveLoginCredential;
@@ -169,4 +225,6 @@ export type OwnerKeyFunctions = {
   readonly unlockMasterKey: UnlockMasterKey;
   readonly openAlbumKey: OpenAlbumKey;
   readonly createAlbumKey: CreateAlbumKey;
+  readonly createQrInvite: CreateQrInvite;
+  readonly createPassphraseInvite: CreatePassphraseInvite;
 };

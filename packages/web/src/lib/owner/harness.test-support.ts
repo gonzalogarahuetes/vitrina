@@ -1,7 +1,7 @@
 /*
  * Test support for the owner path: a recording fake relay behind the real API
  * client, a fake envelope behind the real poison guard, the real session store
- * over a recording Storage, and table-driven fakes of the owner's six key
+ * over a recording Storage, and table-driven fakes of the owner's eight key
  * functions. No fake here derives, wraps or unwraps anything. "Derivation" is
  * a comparison against one fixed password, and every "key" is an opaque
  * counted handle.
@@ -18,14 +18,18 @@ import type {
   OwnerKek,
   OwnerKeyFunctions,
   UnlockMasterKeyError,
+  Wordlist,
 } from "$lib/keys/owner-types";
 import { sessionStore } from "$lib/session/owner-session";
-import { encodeBase64url, OWNER_KDF_V1 } from "@vitrina/shared";
+import { uuidToBytes } from "$lib/ids";
+import { encodeBase64url, OWNER_KDF_V1, RECIPIENT_KDF_V1 } from "@vitrina/shared";
 import { fakeJpeg } from "./jpeg.test-support";
 import type { Dims, Imaging } from "./prepare";
 import { OwnerSession, type Deps, type State } from "./session";
 
 export const ORIGIN = "https://api.vitrina.test";
+/** The page's origin: where an invite link points (invite spec §1). Not the API's. */
+export const APP_ORIGIN = "https://vitrina.test";
 export const EMAIL = "  María.Pérez@Example.ES ";
 export const PASSWORD = "a long chosen phrase";
 export const TOKEN = encodeBase64url(Uint8Array.from({ length: 32 }, (_, i) => 100 + i));
@@ -102,6 +106,19 @@ export function fakeEnvelope() {
     decryptMeta: openObject(3),
     decryptAlbumTitle: (key: unknown, _id: Uint8Array, blob: Uint8Array) => (check("decryptAlbumTitle", key), trimPadding(open(blob))),
     encryptAlbumTitle: (key: unknown, _id: Uint8Array, title: string) => (check("encryptAlbumTitle", key), Uint8Array.from([...seal(title), ...new Uint8Array(40)])),
+    // Labels: marker, the 16-byte recipient id, the label, padded past the 41-byte floor. Opening checks the id,
+    // so a label encrypted under one attempt's id does not open under another's.
+    encryptRecipientLabel: (key: unknown, id: Uint8Array, label: string) => {
+      check("encryptRecipientLabel", key);
+      return Uint8Array.from([MARK, ...id, ...new TextEncoder().encode(label), ...new Uint8Array(40)]);
+    },
+    decryptRecipientLabel: (key: unknown, id: Uint8Array, blob: Uint8Array) => {
+      check("decryptRecipientLabel", key);
+      if (blob[0] !== MARK || id.some((b, i) => blob[1 + i] !== b)) {
+        throw Object.assign(new Error("authentication failed"), { name: "EnvelopeError", code: "AuthenticationFailed" });
+      }
+      return trimPadding(new TextDecoder().decode(blob.subarray(17)));
+    },
   };
   const { envelope, poison } = guard(module);
   return { envelope: envelope as unknown as Envelope, poison, calls, trapOn, plaintexts };
@@ -124,6 +141,24 @@ export type MediaFixture = {
 };
 
 export type RecipientLogFixture = { recipient_id: string; last_opened_at: string | null };
+
+/** A recipient row as the fake relay keeps it: what was posted, plus the summary's counts. */
+export type RecipientFixture = {
+  id: string;
+  album: string;
+  body: Record<string, unknown>;
+  label: string;
+  revoked_at: string | null;
+  album_opens: number;
+  media_opened: number;
+  last_opened_at: string | null;
+};
+
+export type EntryFixture = { id: number; recipient_id: string; media_id: string | null; event: "album_opened" | "asset_viewed"; occurred_at: string };
+
+/** A label blob as the fake envelope makes it, for seeding the relay. */
+export const labelBlob = (recipientId: string, label: string): string =>
+  encodeBase64url(Uint8Array.from([MARK, ...uuidToBytes(recipientId), ...new TextEncoder().encode(label), ...new Uint8Array(40)]));
 
 export type AlbumFixture = { id: string; title: string; wrapped_key: string; wrap_nonce: string; media_count: number; created_at: string };
 
@@ -155,6 +190,9 @@ export function relay() {
   const created = new Set<string>();
   const media = new Map<string, MediaFixture>();
   const accessLog: RecipientLogFixture[] = [];
+  const recipients = new Map<string, RecipientFixture>();
+  const entries: EntryFixture[] = [];
+  let pageSize = 100;
   /** id → how many more status reports say `processing` for a row that is in fact complete. */
   const delayReady = new Map<string, number>();
   const reported = (m: MediaFixture) => {
@@ -174,7 +212,7 @@ export function relay() {
     updated_at: m.updated_at,
   });
 
-  function mediaRoute(method: string, path: string, body: string, bytes: Uint8Array | null): Reply | null {
+  function mediaRoute(method: string, path: string, body: string, bytes: Uint8Array | null, query = ""): Reply | null {
     let m: RegExpExecArray | null;
     if ((m = /^\/v1\/albums\/([0-9a-f-]{36})$/.exec(path)) && method === "GET") {
       const id = m[1] as string;
@@ -188,7 +226,39 @@ export function relay() {
       return { status: 200, json: { metadata: rows.map((r) => ({ media_id: r.id, envelope: r.metadata })) } };
     }
     if ((m = /^\/v1\/albums\/([0-9a-f-]{36})\/access-log$/.exec(path)) && method === "GET") {
-      return { status: 200, json: { recipients: accessLog.map((r) => ({ ...r, label: "x".repeat(60), revoked_at: null, album_opens: 1, media_opened: 0 })) } };
+      const id = m[1] as string;
+      if (!albums.some((a) => a.id === id)) return err(404, "NOT_FOUND");
+      const stored = [...recipients.values()]
+        .filter((r) => r.album === id)
+        .map((r) => ({ recipient_id: r.id, label: r.label, revoked_at: r.revoked_at, album_opens: r.album_opens, media_opened: r.media_opened, last_opened_at: r.last_opened_at }));
+      return { status: 200, json: { recipients: [...accessLog.map((r) => ({ ...r, label: "x".repeat(60), revoked_at: null, album_opens: 1, media_opened: 0 })), ...stored] } };
+    }
+    if ((m = /^\/v1\/albums\/([0-9a-f-]{36})\/access-log\/entries$/.exec(path)) && method === "GET") {
+      const id = m[1] as string;
+      if (!albums.some((a) => a.id === id)) return err(404, "NOT_FOUND");
+      const q = new URL(`https://x${query}`).searchParams;
+      const before = q.get("before");
+      const who = q.get("recipient_id");
+      const rows = entries
+        .filter((e) => (before === null || e.id < Number(before)) && (who === null || e.recipient_id === who))
+        .sort((a, b) => b.id - a.id);
+      const page = rows.slice(0, pageSize);
+      return { status: 200, json: { entries: page, next_before: rows.length > pageSize ? (page[page.length - 1]?.id ?? null) : null } };
+    }
+    if ((m = /^\/v1\/albums\/([0-9a-f-]{36})\/recipients$/.exec(path)) && method === "POST") {
+      const album = m[1] as string;
+      if (!albums.some((a) => a.id === album)) return err(404, "NOT_FOUND");
+      const b = JSON.parse(body) as Record<string, unknown>;
+      const id = b["id"] as string;
+      if (recipients.has(id) || [...recipients.values()].some((r) => r.body["token_hash"] === b["token_hash"])) return err(409, "CONFLICT");
+      recipients.set(id, { id, album, body: b, label: b["label"] as string, revoked_at: null, album_opens: 0, media_opened: 0, last_opened_at: null });
+      return { status: 201, json: { id, created_at: clock } };
+    }
+    if ((m = /^\/v1\/recipients\/([0-9a-f-]{36})\/revoke$/.exec(path)) && method === "POST") {
+      const r = recipients.get(m[1] as string);
+      if (r === undefined) return err(404, "NOT_FOUND");
+      r.revoked_at ??= clock;
+      return { status: 200, json: { revoked_at: r.revoked_at } };
     }
     if ((m = /^\/v1\/albums\/([0-9a-f-]{36})\/media$/.exec(path)) && method === "POST") {
       const b = JSON.parse(body) as { id: string; kind: string; metadata: string };
@@ -221,11 +291,11 @@ export function relay() {
     return null;
   }
 
-  function answer(method: string, path: string, body: string, bytes: Uint8Array | null): Reply {
+  function answer(method: string, path: string, body: string, bytes: Uint8Array | null, query = ""): Reply {
     const key = `${method} ${path}`;
     const queued = overrides.get(key);
     if (queued !== undefined && queued.length > 0) return queued.shift() as Reply;
-    const routed = mediaRoute(method, path, body, bytes);
+    const routed = mediaRoute(method, path, body, bytes, query);
     if (routed !== null) return routed;
     switch (key) {
       case "POST /v1/signup":
@@ -262,7 +332,7 @@ export function relay() {
     const bytes = init.body instanceof Uint8Array ? Uint8Array.from(init.body) : null;
     sent.push({ url: input, method, headers, body, bytes });
     events.push(`request ${method} ${url.pathname}`);
-    const r = answer(method, url.pathname, body, bytes);
+    const r = answer(method, url.pathname, body, bytes, url.search);
     if (r === "network") throw new TypeError("Failed to fetch");
     const h = new Headers(r.headers);
     if (r.status === 204 || r.status === 202) return new Response(null, { status: r.status, headers: h });
@@ -277,6 +347,11 @@ export function relay() {
     albums,
     media,
     accessLog,
+    recipients,
+    entries,
+    setPageSize: (n: number) => {
+      pageSize = n;
+    },
     delayReady,
     override,
     err,
@@ -304,7 +379,7 @@ export function recordingStorage(initial: Record<string, string> = {}) {
   return { data, writes, storage };
 }
 
-// ── The owner's six functions, faked ──────────────────────────────────────
+// ── The owner's eight functions, faked ────────────────────────────────────
 
 export type FakeKeyOptions = {
   /** The one password every fake accepts. */
@@ -316,13 +391,39 @@ export type FakeKeyOptions = {
   /** Album ids whose wrapping will not open, and how. */
   albumFails?: Map<string, OpenAlbumKeyError>;
   createAlbum?: "could-not-derive";
+  /** How the invite functions fail, if they do. */
+  invite?: "could-not-derive" | "unusable-wordlist";
 };
+
+/** What the fake invite functions handed out, in order: every id, token and K_invite a test may search for. */
+export type IssuedInvite = { recipientId: string; token: string; tokenHash: Uint8Array; inviteKey: string | null; words: readonly string[] | null };
+
+/** Recipient ids the fakes hand out, one per call. A 409 retry gets the next. */
+export const RECIPIENT_IDS = [
+  "d1000000-0000-4000-8000-000000000001",
+  "d2000000-0000-4000-8000-000000000002",
+  "d3000000-0000-4000-8000-000000000003",
+  "d4000000-0000-4000-8000-000000000004",
+] as const;
 
 export function fakeKeys(opts: FakeKeyOptions, events: string[]) {
   const password = opts.password ?? PASSWORD;
   const handles: FakeHandle[] = [];
   const proofs: Uint8Array[] = [];
   const passwordsSeen: string[] = [];
+  const issued: IssuedInvite[] = [];
+  const wordlistsSeen: string[] = [];
+  /** A fresh, distinct value per call. Not random and not a hash: opaque bytes a test can recognise. */
+  const issue = (kind: "qr" | "passphrase", words: readonly string[] | null) => {
+    const n = issued.length;
+    const recipientId = RECIPIENT_IDS[n] ?? `d9000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
+    const token = encodeBase64url(Uint8Array.from({ length: 32 }, (_, i) => (n * 37 + i * 3 + 1) & 0xff));
+    const tokenHash = Uint8Array.from({ length: 32 }, (_, i) => (n * 53 + i * 5 + 2) & 0xff);
+    const inviteKey = kind === "qr" ? encodeBase64url(Uint8Array.from({ length: 32 }, (_, i) => (n * 71 + i * 7 + 3) & 0xff)) : null;
+    const inv = { recipientId, token, tokenHash, inviteKey, words };
+    issued.push(inv);
+    return inv;
+  };
   const make = (kind: FakeHandle["kind"], label = "") => {
     const h = new FakeHandle(kind, label);
     handles.push(h);
@@ -383,8 +484,41 @@ export function fakeKeys(opts: FakeKeyOptions, events: string[]) {
       if (opts.createAlbum !== undefined) return { ok: false, error: opts.createAlbum };
       return { ok: true, albumKey: make("album", albumId) as unknown as AlbumKey, wrappedKey: new Uint8Array(48).fill(3), wrapNonce: new Uint8Array(24).fill(4) };
     },
+    createQrInvite: async (_env, albumKey) => {
+      events.push("createQrInvite");
+      if ((albumKey as unknown as FakeHandle).freed > 0) throw new Error("used a freed album key");
+      if (opts.invite !== undefined) return { ok: false, error: "could-not-derive" };
+      const i = issue("qr", null);
+      return {
+        ok: true,
+        invite: { kind: "qr", recipientId: i.recipientId, token: i.token, tokenHash: i.tokenHash, inviteKey: i.inviteKey as string, wrapped: new Uint8Array(48).fill(5), wrapNonce: new Uint8Array(24).fill(6) },
+      };
+    },
+    createPassphraseInvite: async (_env, albumKey, wordlist) => {
+      events.push(`createPassphraseInvite ${wordlist.language}`);
+      wordlistsSeen.push(wordlist.language);
+      if ((albumKey as unknown as FakeHandle).freed > 0) throw new Error("used a freed album key");
+      if (opts.invite !== undefined) return { ok: false, error: opts.invite };
+      const n = issued.length;
+      const words = [0, 1, 2, 3, 4].map((k) => wordlist.words[(n * 5 + k) % wordlist.words.length] as string);
+      const i = issue("passphrase", words);
+      return {
+        ok: true,
+        invite: {
+          kind: "passphrase",
+          recipientId: i.recipientId,
+          token: i.token,
+          tokenHash: i.tokenHash,
+          words,
+          kdfSalt: new Uint8Array(16).fill(7),
+          params: RECIPIENT_KDF_V1,
+          wrapped: new Uint8Array(48).fill(8),
+          wrapNonce: new Uint8Array(24).fill(9),
+        },
+      };
+    },
   };
-  return { keys, handles, proofs, passwordsSeen };
+  return { keys, handles, proofs, passwordsSeen, issued, wordlistsSeen };
 }
 
 // ── The harness ───────────────────────────────────────────────────────────
@@ -420,7 +554,21 @@ export function okImaging(oriented: Dims = { width: 4032, height: 3024 }): Imagi
   };
 }
 
-export function harness(opts: FakeKeyOptions & { stored?: Record<string, string>; blocklist?: string[]; imaging?: Imaging | ((events: string[]) => Imaging) } = {}) {
+/** Two fake lists in two languages, neither English-only: nothing in the flow may assume a language. */
+export const FAKE_WORDLISTS: readonly Wordlist[] = [
+  { language: "en", words: ["acorn", "badge", "cabin", "dwell", "ember", "fable", "gravy", "hatch"] },
+  { language: "es", words: ["árbol", "barco", "cielo", "dátil", "época", "faro", "gato", "hilo"] },
+];
+
+export function harness(
+  opts: FakeKeyOptions & {
+    stored?: Record<string, string>;
+    blocklist?: string[];
+    imaging?: Imaging | ((events: string[]) => Imaging);
+    wordlists?: readonly Wordlist[] | "fail";
+    displayLanguage?: string;
+  } = {},
+) {
   const r = relay();
   const env = fakeEnvelope();
   const k = fakeKeys(opts, r.events);
@@ -428,6 +576,7 @@ export function harness(opts: FakeKeyOptions & { stored?: Record<string, string>
   const sleeps: number[] = [];
   const timers: { ms: number; fn: () => void; cancelled: boolean }[] = [];
   let blocklistLoads = 0;
+  let wordlistLoads = 0;
   let framesAwaited = 0;
   let now = NOW;
   const ids = [NEW_ALBUM, ALBUM_C];
@@ -469,6 +618,14 @@ export function harness(opts: FakeKeyOptions & { stored?: Record<string, string>
       return p;
     },
     newMediaId: () => mediaIds.shift() ?? "00000000-0000-4000-8000-0000000000ff",
+    loadWordlists: async () => {
+      wordlistLoads++;
+      r.events.push("loadWordlists");
+      if (opts.wordlists === "fail") throw new Error("chunk failed to load");
+      return opts.wordlists ?? FAKE_WORDLISTS;
+    },
+    displayLanguage: opts.displayLanguage ?? "en",
+    origin: APP_ORIGIN,
   };
 
   const session = new OwnerSession(deps);
@@ -485,6 +642,7 @@ export function harness(opts: FakeKeyOptions & { stored?: Record<string, string>
     sleeps,
     timers,
     blocklistLoads: () => blocklistLoads,
+    wordlistLoads: () => wordlistLoads,
     framesAwaited: () => framesAwaited,
     setNow: (d: Date) => {
       now = d;

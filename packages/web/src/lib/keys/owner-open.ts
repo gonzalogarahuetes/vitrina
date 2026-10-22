@@ -6,6 +6,9 @@ import type {
   OwnerCredential,
   OwnerKek,
   WrapParams,
+  InviteKey,
+  InviteWrappedKey,
+  WrappedKey,
 } from "@vitrina/envelope/wasm/envelope";
 import type {
   MasterKey,
@@ -18,8 +21,16 @@ import type {
   OwnerKeyMaterial,
   UnlockMasterKey,
   CreateAlbumKey,
+  CreatePassphraseInvite,
+  CreateQrInvite,
+  Wordlist,
 } from "./owner-types";
-import { decodeBase64url, OWNER_KDF_V1 } from "@vitrina/shared";
+import {
+  decodeBase64url,
+  encodeBase64url,
+  OWNER_KDF_V1,
+  RECIPIENT_KDF_V1,
+} from "@vitrina/shared";
 import { MalformedId, uuidToBytes } from "$lib/ids";
 import { withinKdfCeiling } from "./kdf-ceiling";
 import { MalformedEncodingError } from "@vitrina/shared";
@@ -388,6 +399,139 @@ export const createAlbumKey: CreateAlbumKey = (
   }
 };
 
+export const createQrInvite: CreateQrInvite = async (
+  env: Envelope,
+  albumKey: AlbumKey,
+) => {
+  let raw: Uint8Array<ArrayBuffer> | undefined;
+  let inviteKey: InviteKey | undefined;
+  let wrappedKey: InviteWrappedKey | undefined;
+  try {
+    const recipientId = crypto.randomUUID();
+    const recipientIdBytes = uuidToBytes(recipientId);
+    raw = crypto.getRandomValues(new Uint8Array(32));
+    const token = encodeBase64url(raw);
+    const tokenHash = await hashToken(raw);
+    raw.fill(0);
+    inviteKey = env.InviteKey.generate();
+    wrappedKey = env.wrapAlbumKeyForInvite(
+      albumKey,
+      inviteKey,
+      recipientIdBytes,
+    );
+    const wrapped = wrappedKey.wrapped;
+    const wrapNonce = wrappedKey.wrapNonce;
+
+    const bytes = inviteKey.toInviteBytes();
+    const k = encodeBase64url(bytes);
+    bytes.fill(0);
+
+    return {
+      ok: true,
+      invite: {
+        kind: "qr",
+        recipientId,
+        token,
+        tokenHash,
+        wrapped,
+        wrapNonce,
+        inviteKey: k,
+      },
+    };
+  } catch {
+    return {
+      ok: false,
+      error: "could-not-derive",
+    };
+  } finally {
+    raw?.fill(0);
+    // After a trap the poisoned loader throws on every call, free included.
+    try {
+      wrappedKey?.free();
+    } catch {}
+    try {
+      inviteKey?.free();
+    } catch {}
+  }
+};
+
+const WORDLIST_MIN_LENGTH = 7776;
+export const PASSPHRASE_WORDS = 5;
+
+export const createPassphraseInvite: CreatePassphraseInvite = async (
+  env: Envelope,
+  albumKey: AlbumKey,
+  wordlist: Wordlist,
+) => {
+  let raw: Uint8Array<ArrayBuffer> | undefined;
+  let params: WrapParams | undefined;
+  let wrappedKey: WrappedKey | undefined;
+  try {
+    const n = wordlist.words.length;
+    if (n < WORDLIST_MIN_LENGTH) {
+      return { ok: false, error: "unusable-wordlist" };
+    }
+    const words = Array.from(
+      { length: PASSPHRASE_WORDS },
+      () => wordlist.words[uniformIndex(n, (b) => crypto.getRandomValues(b))]!,
+    );
+
+    const passphrase = words.join(" ");
+    const recipientId = crypto.randomUUID();
+    const recipientIdBytes = uuidToBytes(recipientId);
+    raw = crypto.getRandomValues(new Uint8Array(32));
+    const token = encodeBase64url(raw);
+    const tokenHash = await hashToken(raw);
+    raw.fill(0);
+
+    params = new env.WrapParams(
+      RECIPIENT_KDF_V1.memoryKib,
+      RECIPIENT_KDF_V1.iterations,
+      RECIPIENT_KDF_V1.parallelism,
+    );
+    wrappedKey = env.wrapAlbumKey(
+      albumKey,
+      passphrase,
+      params,
+      recipientIdBytes,
+    );
+    const wrapped = wrappedKey.wrapped;
+    const wrapNonce = wrappedKey.wrapNonce;
+    const kdfSalt = wrappedKey.kdfSalt;
+    wrappedKey.free();
+    params.free();
+
+    return {
+      ok: true,
+      invite: {
+        kind: "passphrase",
+        recipientId,
+        token,
+        tokenHash,
+        wrapped,
+        wrapNonce,
+        kdfSalt,
+        words,
+        params: RECIPIENT_KDF_V1,
+      },
+    };
+  } catch {
+    return {
+      ok: false,
+      error: "could-not-derive",
+    };
+  } finally {
+    raw?.fill(0);
+    // After a trap the poisoned loader throws on every call, free included.
+    try {
+      wrappedKey?.free();
+    } catch {}
+    try {
+      params?.free();
+    } catch {}
+  }
+};
+
 /** The binding's `code` if this is one of its errors, otherwise undefined. */
 function envelopeCode(e: unknown): string | undefined {
   if (
@@ -399,4 +543,26 @@ function envelopeCode(e: unknown): string | undefined {
     return e.code;
   }
   return undefined;
+}
+
+export async function hashToken(raw: Uint8Array<ArrayBuffer>) {
+  if (raw.length !== 32) {
+    throw Error("Raw token wrong length");
+  }
+  return new Uint8Array(await crypto.subtle.digest("SHA-256", raw));
+}
+
+/** A uniform index in [0, n): rejection sampling, never a bare `% n` (see above). */
+export function uniformIndex(
+  n: number,
+  fill: (b: Uint32Array<ArrayBuffer>) => void,
+): number {
+  if (!Number.isInteger(n) || n < 1 || n > 2 ** 32)
+    throw new RangeError("n out of range");
+  const limit = 2 ** 32 - (2 ** 32 % n);
+  const buf = new Uint32Array(1);
+  for (;;) {
+    fill(buf);
+    if (buf[0]! < limit) return buf[0]! % n;
+  }
 }
