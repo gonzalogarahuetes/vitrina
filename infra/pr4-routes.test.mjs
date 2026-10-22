@@ -58,7 +58,8 @@ let base
 let ownerToken
 let albumKey
 const passphrase = { id: randomUUID(), token: randomBytes(32) }
-const qr = { id: randomUUID(), token: randomBytes(32), wrapped: randomBytes(48), wrapNonce: randomBytes(24) }
+/** A QR recipient. `inviteBytes` is K_invite as the invite's fragment carries it (§6.1). */
+const qr = { id: randomUUID(), token: randomBytes(32), wrapped: null, wrapNonce: null, inviteBytes: null }
 /** What step 2 posted, for step 4 to compare the response against. */
 let posted
 /** Step 4's response body — step 5 unwraps from this and nothing else. */
@@ -205,6 +206,15 @@ test('2. a passphrase recipient and a QR recipient are created through the API',
 	})
 	assert.equal(created.status, 201, created.text)
 
+	// §6.1, as the owner's client does it: K_invite drawn inside the module,
+	// K_album wrapped under it, and only K_invite's bytes leave — for the URL.
+	const invite = envelope.InviteKey.generate()
+	const inviteWrapping = envelope.wrapAlbumKeyForInvite(albumKey, invite, idBytes(qr.id))
+	qr.wrapped = inviteWrapping.wrapped
+	qr.wrapNonce = inviteWrapping.wrapNonce
+	qr.inviteBytes = invite.toInviteBytes()
+	invite.free()
+
 	const qrCreated = await call('POST', `/albums/${ALBUM_ID}/recipients`, {
 		token: ownerToken,
 		body: {
@@ -213,8 +223,6 @@ test('2. a passphrase recipient and a QR recipient are created through the API',
 			label: b64(envelope.encryptRecipientLabel(albumKey, idBytes(qr.id), 'Abuelo')),
 			token_hash: b64(sha256(qr.token)),
 			// Opaque to the relay: K_album under K_invite (encryption spec §6.1).
-			// Random bytes until the binding has an invite wrap; the relay
-			// stores and returns them without reading, which is what is tested.
 			wrapped: b64(qr.wrapped),
 			wrap_nonce: b64(qr.wrapNonce),
 		},
@@ -299,6 +307,37 @@ test('7. the QR recipient fetches its wrapping: 200, no-store, kind qr, no KDF f
 		wrapped: b64(qr.wrapped),
 		wrap_nonce: b64(qr.wrapNonce),
 	})
+})
+
+test('7b. K_invite from the fragment unwraps the fetched wrapping, and K_album opens the title', async () => {
+	/*
+	 * flows §4.1 step 4 end to end: every input but K_invite comes from the
+	 * RESPONSE — the id for the AAD, the wrapping, the nonce — so a route
+	 * returning the wrong row or a mangled field fails here, as step 5 does
+	 * for the passphrase recipient. No Argon2id.
+	 */
+	const fetched = (await call('GET', '/recipient/key', { token: qr.token })).body
+	const invite = envelope.InviteKey.fromBytes(qr.inviteBytes)
+	const recovered = envelope.unwrapAlbumKeyWithInvite(
+		envelope.InviteWrappedKey.fromParts(unb64(fetched.wrapped), unb64(fetched.wrap_nonce)),
+		invite,
+		idBytes(fetched.id),
+	)
+
+	const details = await call('GET', `/albums/${ALBUM_ID}`, { token: qr.token })
+	assert.equal(details.status, 200, details.text)
+	assert.equal(envelope.decryptAlbumTitle(recovered, idBytes(ALBUM_ID), unb64(details.body.title)), TITLE)
+
+	// The passphrase recipient's id in the AAD: the wrapping is bound to its row.
+	assert.throws(
+		() =>
+			envelope.unwrapAlbumKeyWithInvite(
+				envelope.InviteWrappedKey.fromParts(unb64(fetched.wrapped), unb64(fetched.wrap_nonce)),
+				invite,
+				idBytes(passphrase.id),
+			),
+		(e) => e.name === 'EnvelopeError' && e.code === 'AuthenticationFailed',
+	)
 })
 
 test('8. once revoked, the passphrase recipient gets 403 and no wrapping', async () => {
