@@ -247,6 +247,24 @@ struct Protocol {
     passphrase_spacing_mark: PassphraseVector,
     album_wrap_aad: AlbumWrapAadVector,
     invite_wrap_aad: InviteWrapAadVector,
+    passphrase_final_sigma: FinalSigmaVector,
+}
+
+/// §9.1 vector 10. Three spellings §6.3 step 3 must bring to one string, on
+/// vector 4's terms otherwise: one KEK over the normalised form — the first
+/// non-ASCII Argon2id input in the file, so it also pins §6.2's UTF-8 — and
+/// one `wrapped` blob that every spelling must open.
+#[derive(Serialize, Deserialize)]
+struct FinalSigmaVector {
+    vector: u8,
+    passphrases: Vec<String>,
+    normalized: String,
+    salt: String,
+    params: Params,
+    recipient_id: String,
+    wrap_nonce: String,
+    wrapped: String,
+    kek: String,
 }
 
 /// vitrina-schema.md §6: the hash is over the 32 raw bytes, never the string.
@@ -505,6 +523,9 @@ const SALT_VECTOR_6: [u8; 16] = [
 ];
 const SALT_VECTOR_7: [u8; 16] = [
     0xe4, 0x70, 0x18, 0x4c, 0x10, 0x54, 0xaf, 0x56, 0x1e, 0x09, 0x01, 0x7a, 0xf6, 0xf9, 0xc0, 0xcf,
+];
+const SALT_VECTOR_10: [u8; 16] = [
+    0x5b, 0x91, 0x0e, 0x3a, 0xc7, 0x68, 0xd2, 0x14, 0xa9, 0x40, 0x7f, 0xe6, 0x23, 0xbd, 0x85, 0x0c,
 ];
 /// UUIDv4 3f2a91c7-8b4e-4d16-9f05-c2a7d81e6b34.
 const RECIPIENT_ID: [u8; 16] = [
@@ -898,6 +919,52 @@ fn protocol() -> Protocol {
             recipient_id: hex(&RECIPIENT_ID),
             aad: hex(&invite_wrap_aad(&RecipientId::from_bytes(RECIPIENT_ID))),
         },
+        passphrase_final_sigma: final_sigma_vector(),
+    }
+}
+
+/// §9.1 vector 10, written as escapes so no editor's normalisation can change
+/// them: ΓΑΤΑΣ (upper case, whose Σ a platform may lowercase to σ or ς),
+/// γάτας (precomposed ά, final ς) and γατασ (no mark, medial σ at the end).
+const FINAL_SIGMA_PASSPHRASES: [&str; 3] = [
+    "\u{0393}\u{0391}\u{03A4}\u{0391}\u{03A3}",
+    "\u{03B3}\u{03AC}\u{03C4}\u{03B1}\u{03C2}",
+    "\u{03B3}\u{03B1}\u{03C4}\u{03B1}\u{03C3}",
+];
+const FINAL_SIGMA_NORMALIZED: &str = "\u{03B3}\u{03B1}\u{03C4}\u{03B1}\u{03C3}";
+
+fn final_sigma_vector() -> FinalSigmaVector {
+    let salt: Salt = Salt::from_bytes(SALT_VECTOR_10);
+    let kek = derive_kek(FINAL_SIGMA_PASSPHRASES[0], Params::LOW.wrap_params(), salt).unwrap();
+    for passphrase in FINAL_SIGMA_PASSPHRASES {
+        assert_eq!(
+            normalize_passphrase(passphrase),
+            FINAL_SIGMA_NORMALIZED,
+            "{passphrase}"
+        );
+        let again = derive_kek(passphrase, Params::LOW.wrap_params(), salt).unwrap();
+        assert_eq!(again.expose_bytes(), kek.expose_bytes(), "{passphrase}");
+    }
+    let wrap_nonce: [u8; 24] = wrap_nonce_for(10);
+    let wrapped: [u8; 48] = wrap_with_salt_and_nonce(
+        &album_key(),
+        FINAL_SIGMA_PASSPHRASES[0],
+        salt,
+        Params::LOW.wrap_params(),
+        &RecipientId::from_bytes(RECIPIENT_ID),
+        &wrap_nonce,
+    )
+    .unwrap();
+    FinalSigmaVector {
+        vector: 10,
+        passphrases: FINAL_SIGMA_PASSPHRASES.map(String::from).to_vec(),
+        normalized: FINAL_SIGMA_NORMALIZED.to_string(),
+        salt: hex(&SALT_VECTOR_10),
+        params: Params::LOW,
+        recipient_id: hex(&RECIPIENT_ID),
+        wrap_nonce: hex(&wrap_nonce),
+        wrapped: hex(&wrapped),
+        kek: hex(kek.expose_bytes()),
     }
 }
 
@@ -1571,6 +1638,46 @@ fn verify_protocol(p: &Protocol) {
         )))),
         iw.aad
     );
+
+    // §9.1 vector 10: §6.3 step 3. Every spelling, one string, one KEK, one blob.
+    let fs = &p.passphrase_final_sigma;
+    assert_eq!(fs.vector, 10);
+    assert_eq!(fs.passphrases.len(), 3);
+    assert!(
+        fs.normalized.ends_with('\u{03C3}') && !fs.normalized.contains('\u{03C2}'),
+        "§6.3 step 3: the normalised form ends in σ, never ς"
+    );
+    assert!(
+        fs.passphrases.iter().any(|s| s.contains('\u{03A3}')),
+        "an upper-case Σ"
+    );
+    assert!(
+        fs.passphrases.iter().any(|s| s.contains('\u{03C2}')),
+        "a final ς"
+    );
+    assert_eq!(
+        fs.recipient_id, p.wrap_aad.recipient_id,
+        "§9.1: vector 5's recipient_id"
+    );
+    let salt: Salt = Salt::from_bytes(unhex_array(&fs.salt));
+    for passphrase in &fs.passphrases {
+        assert_eq!(
+            normalize_passphrase(passphrase),
+            fs.normalized,
+            "{passphrase}"
+        );
+        let kek = derive_kek(passphrase, fs.params.wrap_params(), salt).unwrap();
+        assert_eq!(hex(kek.expose_bytes()), fs.kek, "{passphrase}");
+        verify_wrap(
+            &hex(&K_ALBUM),
+            passphrase,
+            &fs.salt,
+            fs.params,
+            &fs.recipient_id,
+            &fs.wrap_nonce,
+            &fs.wrapped,
+        );
+    }
 }
 
 #[test]
@@ -1733,6 +1840,7 @@ fn protocol_entries(p: &Protocol) -> Vec<Entry> {
     v.push((p.passphrase_spacing_mark.vector, None));
     v.push((p.album_wrap_aad.vector, None));
     v.push((p.invite_wrap_aad.vector, None));
+    v.push((p.passphrase_final_sigma.vector, None));
     v
 }
 

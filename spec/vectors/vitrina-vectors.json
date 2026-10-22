@@ -385,6 +385,25 @@
       "vector": 9,
       "recipient_id": "3f2a91c78b4e4d169f05c2a7d81e6b34",
       "aad": "76697472696e612d696e766974652d777261702d76313f2a91c78b4e4d169f05c2a7d81e6b34"
+    },
+    "passphrase_final_sigma": {
+      "vector": 10,
+      "passphrases": [
+        "ΓΑΤΑΣ",
+        "γάτας",
+        "γατασ"
+      ],
+      "normalized": "γατασ",
+      "salt": "5b910e3ac768d214a9407fe623bd850c",
+      "params": {
+        "m_cost_kib": 8,
+        "t_cost": 1,
+        "p_cost": 1
+      },
+      "recipient_id": "3f2a91c78b4e4d169f05c2a7d81e6b34",
+      "wrap_nonce": "6dc41a832f0b975ea138d6724ce905bf81279a60f34dcbca",
+      "wrapped": "0e08701a85fbb0cfbac5a45618f2885c309b9faacd6f165e9df7e71bbdc0759a4ebcc364b5dc5ba3a521898b70bce9bb",
+      "kek": "5d5f3799efd297328d4f4c9eb66674390b05a500b27ffb52e3826fc741c855bb"
     }
   }
 }

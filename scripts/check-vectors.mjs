@@ -10,13 +10,17 @@
  * imported. If this file and the crate agree, two implementations agree; if
  * the crate is wrong, the vectors it generated are wrong and this fails.
  *
- * Covered: category 20 and §9.1 vector 9 (encryption spec §6.1). Categories
- * 9, 16, 17, 18 and 19 and protocol vectors 4 and 7 are still owed (§9.2).
+ * Covered: category 20 and §9.1 vector 9 (encryption spec §6.1), and §9.1
+ * vector 10 (§6.3 step 3, §6.2), gated on the Argon2id anchor (category 8),
+ * plus §6.3's normalisation of every passphrase in the protocol section.
+ * Categories 9, 16, 17, 18 and 19 and protocol vectors 4 and 7 are still
+ * owed (§9.2); with the Argon2id gate here, 4 and 7 are each a few lines.
  *
  * Reads spec/vectors/vitrina-vectors.json; never writes it. Exits non-zero
  * naming every failed check.
  */
 import { xchacha20poly1305 } from "@noble/ciphers/chacha.js";
+import { argon2id } from "@noble/hashes/argon2.js";
 import { readFile } from "node:fs/promises";
 
 const FILE = new URL("../spec/vectors/vitrina-vectors.json", import.meta.url);
@@ -114,8 +118,91 @@ for (const v of c20) {
   check("category 20: the blob does not open under another recipient_id", open(kInvite, nonce, inviteWrapAad(otherId), unhex(v.wrapped)) === null);
 }
 
+// ── §6.3's normalisation, written from the spec, not from the crate ────────
+// 1. NFKD. 2. Remove every character whose Canonical_Combining_Class is
+// non-zero. 3. Lowercase, then U+03C2 → U+03C3. 4. Collapse and trim runs of
+// White_Space. JavaScript exposes no CCC property, so step 2 reads it from the
+// platform's canonical ordering instead (ICU, not the crate's table): NFD
+// moves any mark with 0 < CCC < 240 in front of U+0345, the one character
+// with CCC 240, and never moves a starter. So a character has CCC ≠ 0 exactly
+// when it is U+0345 or the reordering moves it.
+const IOTA_SUBSCRIPT = "\u0345";
+const hasCombiningClass = (c) => c === IOTA_SUBSCRIPT || `a${IOTA_SUBSCRIPT}${c}`.normalize("NFD") !== `a${IOTA_SUBSCRIPT}${c}`;
+function normalise(s, { finalSigma = true } = {}) {
+  const kept = [...s.normalize("NFKD")].filter((c) => !hasCombiningClass(c)).join("");
+  const lower = finalSigma ? kept.toLowerCase().replaceAll("\u03c2", "\u03c3") : kept.toLowerCase();
+  return lower.replace(/\p{White_Space}+/gu, " ").replace(/^ | $/g, "");
+}
+
+// The probe is only as good as its two edges: a CCC-0 vowel sign must stay,
+// a CCC-230 accent and U+0345 itself must go.
+check("§6.3 step 2 probe: U+093E (CCC 0, Mc) is kept", !hasCombiningClass("\u093e"));
+check("§6.3 step 2 probe: U+0301 (CCC 230) is removed", hasCombiningClass("\u0301"));
+check("§6.3 step 2 probe: U+0345 (CCC 240) is removed", hasCombiningClass(IOTA_SUBSCRIPT));
+check("§6.3 step 2 probe: a letter is kept", !hasCombiningClass("a") && !hasCombiningClass("\u03b1"));
+
+for (const [group, entries] of Object.entries(file.protocol)) {
+  for (const v of Array.isArray(entries) ? entries : [entries]) {
+    if (typeof v?.normalized !== "string") continue;
+    for (const p of v.passphrase !== undefined ? [v.passphrase] : (v.passphrases ?? [])) {
+      check(`§6.3: ${group} ${JSON.stringify(p)} normalises to the file's form`, normalise(p) === v.normalized, `derived ${JSON.stringify(normalise(p))}`);
+    }
+  }
+}
+
+// ── Gate: category 8, the Argon2id anchor (§9.2) ────────────────────────────
+// Before any KEK below is judged by @noble/hashes, it must reproduce RFC 9106
+// §5.3, secret and associated data included.
+{
+  const a = file.anchors.argon2id;
+  const tag = argon2id(unhex(a.password), unhex(a.salt), {
+    t: a.params.t_cost,
+    m: a.params.m_cost_kib,
+    p: a.params.p_cost,
+    key: unhex(a.secret),
+    personalization: unhex(a.associated_data),
+    dkLen: 32,
+    version: 0x13,
+  });
+  check("category 8: @noble/hashes reproduces the Argon2id anchor", hex(tag) === a.tag);
+}
+
+// ── §9.1 vector 10: §6.3 step 3, through §6.2's wrap ────────────────────────
+// KEK = Argon2id v1.3 over the UTF-8 of the normalised form, secret and
+// associated data EMPTY (§6.2); wrapped = XChaCha20-Poly1305(KEK, wrap_nonce,
+// K_album, aad = "vitrina-wrap-v1" ‖ recipient_id).
+const v10 = file.protocol.passphrase_final_sigma;
+check("protocol 10: present in the file", v10 !== undefined, "regenerate the vectors (cargo test -p vitrina-envelope generate_vectors -- --ignored)");
+if (v10 !== undefined && failures.length === 0) {
+  const kdf = (passphrase) =>
+    argon2id(new TextEncoder().encode(passphrase), unhex(v10.salt), { t: v10.params.t_cost, m: v10.params.m_cost_kib, p: v10.params.p_cost, dkLen: 32, version: 0x13 });
+  const recipientId = unhex(v10.recipient_id);
+  const aad = concat(ascii("vitrina-wrap-v1"), recipientId);
+  const kAlbum = unhex(file.envelope[0].k_album);
+  check("protocol 10: is vector 10", v10.vector === 10);
+  check("protocol 10: recipient_id is vector 5's", v10.recipient_id === file.protocol.wrap_aad.recipient_id);
+  check("protocol 10: the three spellings are §9.1's", JSON.stringify(v10.passphrases) === JSON.stringify(["ΓΑΤΑΣ", "γάτας", "γατασ"].map((s) => s.normalize("NFC"))));
+  check("protocol 10: the normalised form is not ASCII", /[^\x00-\x7f]/.test(v10.normalized));
+  const salts = JSON.stringify(file).match(/"salt": ?"[0-9a-f]{32}"/g) ?? [];
+  check("protocol 10: its salt is used once in the file", salts.filter((x) => x.includes(v10.salt)).length === 1);
+
+  const kek = kdf(v10.normalized);
+  check("protocol 10: the KEK matches the file", hex(kek) === v10.kek, `derived ${hex(kek)}, file ${v10.kek}`);
+  const wrapped = xchacha20poly1305(kek, unhex(v10.wrap_nonce), aad).encrypt(kAlbum);
+  check("protocol 10: wrapped matches the file", hex(wrapped) === v10.wrapped, `derived ${hex(wrapped)}, file ${v10.wrapped}`);
+  for (const p of v10.passphrases) {
+    const opened = open(kdf(normalise(p)), unhex(v10.wrap_nonce), aad, unhex(v10.wrapped));
+    check(`protocol 10: ${p} opens the committed blob`, opened !== null && hex(opened) === file.envelope[0].k_album);
+  }
+  // What the vector catches: without step 3's substitution, the final-ς
+  // spelling derives another KEK and the blob does not open.
+  const unconverged = normalise("γάτας", { finalSigma: false });
+  check("protocol 10: without step 3, γάτας normalises differently", unconverged !== v10.normalized);
+  check("protocol 10: without step 3, γάτας does not open the blob", open(kdf(unconverged), unhex(v10.wrap_nonce), aad, unhex(v10.wrapped)) === null);
+}
+
 if (failures.length > 0) {
   console.error(`check-vectors: ${failures.length} failed, ${passed.length} passed\n  ${failures.join("\n  ")}`);
   process.exit(1);
 }
-console.log(`check-vectors: ${passed.length} checks passed (category 7 gate, category 20, §9.1 vector 9)`);
+console.log(`check-vectors: ${passed.length} checks passed (category 7 and 8 gates, category 20, §9.1 vectors 9 and 10, §6.3 normalisation)`);
