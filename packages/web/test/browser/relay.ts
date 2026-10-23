@@ -1,13 +1,18 @@
 /*
  * The fake relay the owner specs run against, moved here unchanged from
- * owner.spec.ts when the album got a spec of its own, plus the album routes.
+ * owner.spec.ts when the album got a spec of its own, plus the album routes,
+ * and since the invite screens the recipient routes too: a recipient's bearer
+ * token is hashed here as the real relay hashes it (schema §6) and looked up
+ * by the token_hash the owner's client posted, so a link the owner's page
+ * made opens the album in another browser context exactly when the client
+ * got every half of it right.
  * It stores whatever the app posts and hands it back, so every envelope the
  * app opens was made by the app itself, with the real WASM. It cannot read
  * any of it: titles, metadata, assets and thumbnails are ciphertext here as
  * they are on the real relay.
  */
 import { test, type BrowserContext, type Route } from "@playwright/test";
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { apiOrigin } from "./helpers.ts";
 
 export type Logged = {
@@ -43,7 +48,10 @@ export function fakeRelay(opts: { expiresInMs: number }) {
   /** "METHOD /path" → Retry-After seconds, refused once with a 429. */
   const refuse = new Map<string, number>();
   const media = new Map<string, Media>();
-  const accessLog: { last_opened_at: string | null }[] = [];
+  /** Recipient rows, as POST /v1/albums/{id}/recipients stored them: everything posted, nothing more. */
+  const recipients = new Map<string, { album: string; body: Record<string, unknown>; created_at: string; revoked_at: string | null }>();
+  /** access_log (api-sketch §11.6), written by the recipient routes that log. */
+  const entries: { id: number; recipient_id: string; media_id: string | null; event: "album_opened" | "asset_viewed"; occurred_at: string }[] = [];
   /** "METHOD /path" → what to do instead, once. */
   const once = new Map<string, "store-then-drop" | { status: number }>();
   /** While set, every row's status is reported as processing, however complete it is. */
@@ -99,6 +107,44 @@ export function fakeRelay(opts: { expiresInMs: number }) {
       });
     }
 
+    // ── A recipient's bearer token (api-sketch §7.1): hashed over its 32 raw bytes, then looked up ──
+    const bearer = /^Bearer (.+)$/.exec(headers["authorization"] ?? "")?.[1];
+    if (bearer !== undefined && !tokens.has(bearer)) {
+      const raw = Buffer.from(bearer, "base64url");
+      const hash = raw.length === 32 && raw.toString("base64url") === bearer ? createHash("sha256").update(raw).digest("base64url") : null;
+      const found = [...recipients.entries()].find(([, r]) => r.body["token_hash"] === hash);
+      if (found === undefined) return error(401, "UNAUTHENTICATED");
+      const [rid, r] = found;
+      if (r.revoked_at !== null) return error(403, "ACCESS_REVOKED");
+      const logRow = (event: "album_opened" | "asset_viewed", media_id: string | null) =>
+        entries.push({ id: entries.length + 1, recipient_id: rid, media_id, event, occurred_at: now() });
+      const rows = [...media.values()].filter((x) => x.album === r.album && x.status === "ready");
+      let rm: RegExpExecArray | null;
+      if (key === "GET /v1/recipient/key") {
+        const b = r.body;
+        const kdf = b["kind"] === "passphrase" ? { kdf_salt: b["kdf_salt"], kdf_memory_kib: b["kdf_memory_kib"], kdf_iterations: b["kdf_iterations"], kdf_parallelism: b["kdf_parallelism"] } : {};
+        return json(200, { id: rid, kind: b["kind"], wrapped: b["wrapped"], wrap_nonce: b["wrap_nonce"], ...kdf });
+      }
+      if (key === "GET /v1/recipient") return json(200, { id: rid, album_id: r.album, label: r.body["label"], kind: r.body["kind"], created_at: r.created_at });
+      if (key === `GET /v1/albums/${r.album}`) {
+        const album = [...albums.values()].flat().find((x) => x["id"] === r.album) as Record<string, unknown>;
+        return json(200, { id: r.album, title: album["title"], created_at: album["created_at"], media: rows.map((x) => ({ id: x.id, kind: "photo", status: x.status, created_at: x.created_at })) });
+      }
+      if (key === `GET /v1/albums/${r.album}/metadata`) {
+        logRow("album_opened", null);
+        return json(200, { metadata: rows.map((x) => ({ media_id: x.id, envelope: x.metadata })) });
+      }
+      if (req.method() === "GET" && (rm = /^\/v1\/media\/([0-9a-f-]{36})\/(asset|thumbnail)$/.exec(url.pathname))) {
+        const row = rows.find((x) => x.id === rm?.[1]);
+        if (row === undefined) return error(404, "NOT_FOUND");
+        if (rm[2] === "thumbnail") return route.fulfill({ status: 200, headers: { ...cors, "content-type": "application/octet-stream" }, body: row.thumbnail as Buffer });
+        if (!/^bytes=0-/.test(headers["range"] ?? "")) return error(416, "RANGE_NOT_SATISFIABLE");
+        logRow("asset_viewed", row.id);
+        return route.fulfill({ status: 206, headers: { ...cors, "content-type": "application/octet-stream" }, body: row.asset as Buffer });
+      }
+      return error(404, "NOT_FOUND");
+    }
+
     if (key === "POST /v1/signup") {
       const b = JSON.parse(body) as Record<string, unknown>;
       const email = norm(b["email"] as string);
@@ -128,7 +174,7 @@ export function fakeRelay(opts: { expiresInMs: number }) {
     if (instead !== undefined) once.delete(key);
     const ownAlbum = (id: string) => (albums.get(who.email) ?? []).find((x) => x["id"] === id);
     let m: RegExpExecArray | null;
-    if ((m = /^\/v1\/albums\/([0-9a-f-]{36})(\/metadata|\/media|\/access-log)?$/.exec(url.pathname))) {
+    if ((m = /^\/v1\/albums\/([0-9a-f-]{36})(\/metadata|\/media|\/access-log|\/access-log\/entries|\/recipients)?$/.exec(url.pathname))) {
       const album = ownAlbum(m[1] as string);
       if (album === undefined) return error(404, "NOT_FOUND");
       const rows = [...media.values()].filter((x) => x.album === m?.[1]);
@@ -136,7 +182,43 @@ export function fakeRelay(opts: { expiresInMs: number }) {
         return json(200, { id: album["id"], title: album["title"], created_at: album["created_at"], media: rows.map((r) => ({ id: r.id, kind: "photo", status: r.status, created_at: r.created_at })) });
       }
       if (req.method() === "GET" && m[2] === "/metadata") return json(200, { metadata: rows.filter((r) => r.status === "ready").map((r) => ({ media_id: r.id, envelope: r.metadata })) });
-      if (req.method() === "GET" && m[2] === "/access-log") return json(200, { recipients: accessLog });
+      if (req.method() === "GET" && m[2] === "/access-log") {
+        const mine = [...recipients.entries()].filter(([, r]) => r.album === m?.[1]);
+        const summary = mine.map(([rid, r]) => {
+          const own = entries.filter((e) => e.recipient_id === rid);
+          const last = own.map((e) => e.occurred_at).sort().at(-1) ?? null;
+          return {
+            recipient_id: rid,
+            label: r.body["label"],
+            revoked_at: r.revoked_at,
+            album_opens: own.filter((e) => e.event === "album_opened").length,
+            media_opened: new Set(own.filter((e) => e.event === "asset_viewed").map((e) => e.media_id)).size,
+            last_opened_at: last,
+          };
+        });
+        return json(200, { recipients: summary.sort((a, b) => (b.last_opened_at ?? "").localeCompare(a.last_opened_at ?? "")) });
+      }
+      if (req.method() === "GET" && m[2] === "/access-log/entries") {
+        const before = url.searchParams.get("before");
+        const who = url.searchParams.get("recipient_id");
+        const ids = new Set([...recipients.entries()].filter(([, r]) => r.album === m?.[1]).map(([rid]) => rid));
+        const rowsOut = entries
+          .filter((e) => ids.has(e.recipient_id) && (before === null || e.id < Number(before)) && (who === null || e.recipient_id === who))
+          .sort((a, b) => b.id - a.id);
+        const page = rowsOut.slice(0, 100);
+        return json(200, { entries: page, next_before: rowsOut.length > 100 ? (page.at(-1)?.id ?? null) : null });
+      }
+      if (req.method() === "POST" && m[2] === "/recipients") {
+        if (instead !== undefined && typeof instead === "object") return error(instead.status, instead.status === 409 ? "CONFLICT" : "VALIDATION_FAILED");
+        const b = JSON.parse(body) as Record<string, unknown>;
+        const id = b["id"] as string;
+        if (recipients.has(id) || [...recipients.values()].some((r) => r.body["token_hash"] === b["token_hash"])) return error(409, "CONFLICT");
+        const created_at = now();
+        recipients.set(id, { album: m[1] as string, body: b, created_at, revoked_at: null });
+        // A lost response: the row exists, the client never hears so.
+        if (instead === "store-then-drop") return route.abort("connectionreset");
+        return json(201, { id, created_at });
+      }
       if (req.method() === "POST" && m[2] === "/media") {
         const b = JSON.parse(body) as { id: string; kind: string; metadata: string };
         if (media.has(b.id)) return error(409, "CONFLICT");
@@ -176,6 +258,12 @@ export function fakeRelay(opts: { expiresInMs: number }) {
         return route.fulfill({ status: 204, headers: cors });
       }
     }
+    if ((m = /^\/v1\/recipients\/([0-9a-f-]{36})\/revoke$/.exec(url.pathname)) && req.method() === "POST") {
+      const r = recipients.get(m[1] as string);
+      if (r === undefined || ownAlbum(r.album) === undefined) return error(404, "NOT_FOUND");
+      r.revoked_at ??= now();
+      return json(200, { revoked_at: r.revoked_at });
+    }
     switch (key) {
       case "GET /v1/owner/key":
         if (holdOwnerKey !== null) await holdOwnerKey;
@@ -212,7 +300,8 @@ export function fakeRelay(opts: { expiresInMs: number }) {
     tokens,
     accounts,
     media,
-    accessLog,
+    recipients,
+    entries,
     /** The next request to `route` ("METHOD /path") is answered this way instead. */
     once(route: string, what: "store-then-drop" | { status: number }): void {
       once.set(route, what);

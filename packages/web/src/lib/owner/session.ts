@@ -1,8 +1,8 @@
 /*
  * The owner path as one state machine: flows §1.1's key states (O-none,
- * O-locked, O-open) and the screens of §3.1–§3.5, §3.11 and §3.12. It is
+ * O-locked, O-open) and the screens of §3.1–§3.5, §3.8–§3.12. It is
  * plain TypeScript, so the whole path runs under test with a recording fetch,
- * a fake envelope, a fake store and fakes of the owner's six key functions.
+ * a fake envelope, a fake store and fakes of the owner's eight key functions.
  *
  * Key state, and what may change it:
  *   - sessionStorage holds the token and its expires_at, and nothing else,
@@ -13,6 +13,8 @@
  *     handle, go to sign-in (flows §1.1).
  *   - The open album (album.ts) is part of O-open: it holds no key of its
  *     own, borrows its album's AlbumKey, and is disposed with everything else.
+ *     So are an album's invite screen (invite.ts) and its people and access
+ *     log (people.ts). Only one of the three is open at a time.
  *   - A WASM trap: device failed. Nothing is freed, because the instance is
  *     poisoned and must not be touched (envelope.ts). The token is kept, so a
  *     reload comes back to unlock.
@@ -22,12 +24,14 @@
 import { ApiFailure, NetworkFailure, UnexpectedResponse, type ApiClient } from "$lib/api/client";
 import { EnvelopeUnavailable, type Envelope, type Poison } from "$lib/envelope";
 import { uuidToBytes } from "$lib/ids";
-import type { AlbumKey, MasterKey, OwnerKeyFunctions, OwnerKek, OwnerKeyMaterial } from "$lib/keys/owner-types";
+import type { AlbumKey, MasterKey, OwnerKeyFunctions, OwnerKek, OwnerKeyMaterial, Wordlist } from "$lib/keys/owner-types";
 import type { SessionStore } from "$lib/session/owner-session";
 import { decodeBase64urlRange } from "@vitrina/shared";
 import type { Picture } from "$lib/recipient/render";
 import { AlbumLeft, OwnerAlbum, type AlbumScreen } from "./album";
 import { ownerApi, type AlbumRow, type OwnerApi } from "./api";
+import { InviteFlow, InviteLeft, type InviteMode, type InviteScreen } from "./invite";
+import { AlbumPeople, PeopleLeft, type LogScreen, type PeopleScreen } from "./people";
 import type { Imaging } from "./prepare";
 import { checkPassword, codePoints } from "./policy";
 
@@ -103,6 +107,9 @@ export type Screen =
       readonly signingOut: LogoutScope | null;
     }
   | AlbumScreen
+  | InviteScreen
+  | PeopleScreen
+  | LogScreen
   | { readonly kind: "signed-out-partial"; readonly scope: LogoutScope; readonly retrying: boolean };
 
 export type Expiry = { readonly endsAt: Date; readonly ending: boolean };
@@ -138,6 +145,12 @@ export type Deps = {
   readonly decodeImage: (bytes: Uint8Array) => Promise<Picture>;
   /** crypto.randomUUID() in the browser: the media id, which is the envelopes' asset_id. */
   readonly newMediaId: () => string;
+  /** The passphrase wordlists, dynamically imported: a chunk only passphrase invite creation loads. */
+  readonly loadWordlists: () => Promise<readonly Wordlist[]>;
+  /** The owner's display language, the default passphrase language (brief §15.2). */
+  readonly displayLanguage: string;
+  /** location.origin: the relay a web invite names (invite spec §1). */
+  readonly origin: string;
 };
 
 /** How long before expires_at the warning shows (flows §3.12). */
@@ -186,6 +199,12 @@ export class OwnerSession {
   private readonly albumKeys = new Map<string, AlbumKey>();
   /** The open album, if any. Holds decrypted pictures and envelopes, never a key of its own. */
   private album: OwnerAlbum | null = null;
+  /** An album's invite screen, if open. Its share view lives only here, and only until it closes. */
+  private invite: InviteFlow | null = null;
+  /** An album's people and access log, if open. */
+  private people: AlbumPeople | null = null;
+  /** Where to go once the album, asked to leave during an upload, is left. */
+  private afterLeave: "invite" | "people" | null = null;
   /** The album list as last shown, to go back to. */
   private albumList: readonly AlbumView[] = [];
 
@@ -227,6 +246,12 @@ export class OwnerSession {
     const a = this.album;
     this.album = null;
     a?.dispose();
+    const i = this.invite;
+    this.invite = null;
+    i?.dispose();
+    const p = this.people;
+    this.people = null;
+    p?.dispose();
   }
 
   // ── Key state: the only places it is dropped ───────────────────────────
@@ -824,7 +849,12 @@ export class OwnerSession {
   openAlbum(id: string): void {
     const s = this.state.screen;
     if (s.kind !== "albums" || s.phase !== "ready" || s.signingOut !== null || s.create === "creating") return;
-    const view = s.albums.find((a) => a.id === id);
+    this.enterAlbum(id);
+  }
+
+  /** The album's screen, fetched afresh: from the list, and back from its invite or people screens. */
+  private enterAlbum(id: string): void {
+    const view = this.albumList.find((a) => a.id === id);
     const albumKey = this.albumKeys.get(id);
     const token = this.token;
     if (view === undefined || view.failed === "key" || albumKey === undefined || token === null) return;
@@ -867,11 +897,18 @@ export class OwnerSession {
     const s = this.state.screen;
     const a = this.album;
     if (s.kind !== "album" || a === null || s.confirm?.removing === true) return;
-    if (a.busy && !force) return a.askLeave(true);
+    if (a.busy && !force) {
+      this.afterLeave = null;
+      return a.askLeave(true);
+    }
     const count = s.items.filter((i) => i.status !== null).length;
+    this.albumList = this.albumList.map((v) => (v.id === s.id ? { ...v, mediaCount: count } : v));
+    const next = this.afterLeave;
+    this.afterLeave = null;
+    if (next === "invite") return this.enterInvite(s.id, s.title);
+    if (next === "people") return this.enterPeople(s.id, s.title);
     this.closeAlbum();
-    const albums = this.albumList.map((v) => (v.id === s.id ? { ...v, mediaCount: count } : v));
-    this.set({ kind: "albums", phase: "ready", albums, create: "closed", signingOut: null });
+    this.set({ kind: "albums", phase: "ready", albums: this.albumList, create: "closed", signingOut: null });
   }
 
   /** Every album action goes to the open album, and only while its screen is showing. */
@@ -888,6 +925,7 @@ export class OwnerSession {
   }
 
   stayInAlbum(): void {
+    this.afterLeave = null;
     this.inAlbum((a) => a.askLeave(false));
   }
   addPhotos(files: readonly File[]): void {
@@ -916,6 +954,193 @@ export class OwnerSession {
   }
   confirmRemove(): void {
     this.inAlbum((a) => a.confirmRemove());
+  }
+
+  // ── §3.8 Create invite (invite.ts) ─────────────────────────────────────
+
+  /** From the album. With a photo still on its way, ask first, as leaving for the list does. */
+  openInvite(): void {
+    this.leaveAlbumFor("invite");
+  }
+
+  /** From the album: its recipients, revoke, and the access log. */
+  openPeople(): void {
+    this.leaveAlbumFor("people");
+  }
+
+  private leaveAlbumFor(next: "invite" | "people"): void {
+    const s = this.state.screen;
+    const a = this.album;
+    if (s.kind !== "album" || a === null || s.phase !== "ready" || s.confirm !== null || s.viewer !== null) return;
+    if (a.busy) {
+      this.afterLeave = next;
+      return a.askLeave(true);
+    }
+    this.afterLeave = next;
+    this.leaveAlbum(true);
+  }
+
+  /** The guarded runner for a sub-screen: a task that finds its screen gone simply stops. */
+  private subGuarded(epoch: number, task: () => Promise<void>): void {
+    this.guarded(epoch, () =>
+      task().catch((e: unknown) => {
+        if (e instanceof InviteLeft || e instanceof PeopleLeft || e instanceof AlbumLeft) return;
+        throw e;
+      }),
+    );
+  }
+
+  private enterInvite(albumId: string, albumTitle: string | null): void {
+    const albumKey = this.albumKeys.get(albumId);
+    const token = this.token;
+    if (albumKey === undefined || token === null) return;
+    this.closeAlbum();
+    const epoch = this.epoch;
+    const d = this.deps;
+    const flow: InviteFlow = new InviteFlow({
+      api: this.api,
+      token,
+      envelope: d.envelope,
+      albumKey,
+      albumId,
+      albumTitle,
+      keys: { createQrInvite: d.keys.createQrInvite, createPassphraseInvite: d.keys.createPassphraseInvite },
+      loadWordlists: d.loadWordlists,
+      displayLanguage: d.displayLanguage,
+      origin: d.origin,
+      nextFrames: d.nextFrames,
+      call: <T>(op: () => Promise<T>): Promise<T> => this.call(epoch, (): Promise<T> => (this.invite === flow ? op() : Promise.reject(new Stale()))),
+      isStale: (e) => e instanceof Stale,
+      guarded: (task) => this.subGuarded(epoch, task),
+      poisoned: () => d.poison.poisoned,
+      screen: () => (this.invite === flow && this.state.screen.kind === "invite" ? this.state.screen : null),
+      show: (screen) => {
+        if (this.invite === flow) this.set(screen);
+      },
+      gone: () => this.backToList(),
+    });
+    this.invite = flow;
+    flow.start();
+  }
+
+  private inInvite(f: (i: InviteFlow) => void): void {
+    const i = this.invite;
+    if (i === null || this.state.screen.kind !== "invite") return;
+    try {
+      f(i);
+    } catch (e) {
+      if (!(e instanceof InviteLeft)) throw e;
+    }
+  }
+
+  chooseInviteMode(mode: InviteMode): void {
+    this.inInvite((i) => i.chooseMode(mode));
+  }
+  chooseInviteLanguage(language: string): void {
+    this.inInvite((i) => i.chooseLanguage(language));
+  }
+  retryInviteLanguages(): void {
+    this.inInvite((i) => i.retryLanguages());
+  }
+  createInvite(label: string): void {
+    this.inInvite((i) => i.create(label));
+  }
+  /** On the share step: open or close the "this link cannot be shown again" confirmation. */
+  askLeaveInvite(open: boolean): void {
+    this.inInvite((i) => i.askLeave(open));
+  }
+
+  /**
+   * Back to the album. From the form, at once. Never during the derivation
+   * wait or the create. From the share step only once confirmed (`force`):
+   * the link, the words and the QR go with the screen, and nothing keeps them.
+   */
+  leaveInvite(force = false): void {
+    const s = this.state.screen;
+    const i = this.invite;
+    if (s.kind !== "invite" || i === null || i.busy) return;
+    if (i.sharing && !force) return i.askLeave(true);
+    if (i.sharing && !s.leaving) return;
+    this.closeAlbum();
+    this.enterAlbum(s.albumId);
+  }
+
+  // ── §3.9 Recipients and revoke, §3.10 Access log (people.ts) ───────────
+
+  private enterPeople(albumId: string, albumTitle: string | null): void {
+    const albumKey = this.albumKeys.get(albumId);
+    const token = this.token;
+    if (albumKey === undefined || token === null) return;
+    this.closeAlbum();
+    const epoch = this.epoch;
+    const d = this.deps;
+    const people: AlbumPeople = new AlbumPeople({
+      api: this.api,
+      token,
+      envelope: d.envelope,
+      albumKey,
+      albumId,
+      albumTitle,
+      decodeImage: d.decodeImage,
+      call: <T>(op: () => Promise<T>): Promise<T> => this.call(epoch, (): Promise<T> => (this.people === people ? op() : Promise.reject(new Stale()))),
+      isStale: (e) => e instanceof Stale,
+      guarded: (task) => this.subGuarded(epoch, task),
+      screen: () => {
+        const sc = this.state.screen;
+        return this.people === people && (sc.kind === "people" || sc.kind === "log") ? sc : null;
+      },
+      show: (screen) => {
+        if (this.people === people) this.set(screen);
+      },
+      gone: () => this.backToList(),
+    });
+    this.people = people;
+    people.start();
+  }
+
+  private inPeople(f: (p: AlbumPeople) => void): void {
+    const p = this.people;
+    const k = this.state.screen.kind;
+    if (p === null || (k !== "people" && k !== "log")) return;
+    try {
+      f(p);
+    } catch (e) {
+      if (e instanceof EnvelopeUnavailable || this.deps.poison.poisoned) return this.deviceFailed();
+      if (!(e instanceof PeopleLeft)) throw e;
+    }
+  }
+
+  askRevoke(id: string): void {
+    this.inPeople((p) => p.askRevoke(id));
+  }
+  cancelRevoke(): void {
+    this.inPeople((p) => p.cancelRevoke());
+  }
+  confirmRevoke(): void {
+    this.inPeople((p) => p.confirmRevoke());
+  }
+  openLog(recipientId: string | null): void {
+    this.inPeople((p) => p.openLog(recipientId));
+  }
+  moreLog(): void {
+    this.inPeople((p) => p.moreLog());
+  }
+  closeLog(): void {
+    this.inPeople((p) => p.closeLogView());
+  }
+
+  /** Back to the album from the people screen. Not while a revoke is in flight. */
+  leavePeople(): void {
+    const s = this.state.screen;
+    if (s.kind !== "people" || s.revoke?.busy === true) return;
+    this.closeAlbum();
+    this.enterAlbum(s.albumId);
+  }
+
+  /** The album answered 404 from a sub-screen: it is gone, so back to the list. */
+  private backToList(): void {
+    this.closeAlbum();
+    this.set({ kind: "albums", phase: "ready", albums: this.albumList, create: "closed", signingOut: null });
   }
 
   // ── §3.11 Logout ───────────────────────────────────────────────────────

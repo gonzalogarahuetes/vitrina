@@ -71,6 +71,20 @@ export const OWNER_KDF_V1: KdfParameters = {
   parallelism: 1,
 };
 
+/**
+ * Argon2id v1 for a passphrase recipient's wrap (encryption spec §6.2), which
+ * the owner's client derives with when it creates a passphrase invite and
+ * posts as the row's `kdf_*`. The same three integers as OWNER_KDF_V1 today,
+ * named separately because the two can be raised independently: a recipient
+ * row carries its own parameters, so raising these never touches an account.
+ * kdf-v1.test.ts checks it against the crate's WrapParams.v1().
+ */
+export const RECIPIENT_KDF_V1: KdfParameters = {
+  memoryKib: 65536,
+  iterations: 3,
+  parallelism: 1,
+};
+
 export {
   decodeBase64url,
   decodeBase64urlRange,

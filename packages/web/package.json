@@ -15,7 +15,8 @@
   },
   "dependencies": {
     "@vitrina/envelope": "workspace:*",
-    "@vitrina/shared": "workspace:*"
+    "@vitrina/shared": "workspace:*",
+    "uqr": "0.1.3"
   },
   "devDependencies": {
     "@playwright/test": "1.63.0",
@@ -25,6 +26,7 @@
     "eslint": "^10.8.1",
     "eslint-plugin-svelte": "^3.23.1",
     "globals": "^17.13.0",
+    "jsqr": "1.4.0",
     "svelte": "^5.57.2",
     "svelte-check": "^4.7.6",
     "svelte-eslint-parser": "^1.9.0",

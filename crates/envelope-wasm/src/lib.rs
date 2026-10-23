@@ -244,6 +244,19 @@ pub fn unwrap_album_key(
         .map_err(|e| Failure::from(e).into())
 }
 
+/// Encryption spec §6.3's normalisation, exactly as the crate applies it
+/// before Argon2id. Exposed for the client's build-time wordlist check (no two
+/// words of a list may normalise alike), so TypeScript never reimplements it.
+/// Not secret-bearing as used there: a wordlist is public. The input is
+/// checked while still UTF-16, as every passphrase is.
+#[wasm_bindgen(js_name = normalizePassphrase)]
+pub fn normalize_passphrase(
+    #[wasm_bindgen(unchecked_param_type = "string")] passphrase: JsValue,
+) -> Result<String, JsValue> {
+    let passphrase = Zeroizing::new(string_param(&passphrase, "passphrase")?);
+    Ok(envelope::normalize_passphrase(passphrase.as_str()))
+}
+
 fn album_id(bytes: &[u8]) -> Result<envelope::AlbumId, JsValue> {
     envelope::AlbumId::try_from_slice(bytes).map_err(|e| wrong_length("albumId", e).into())
 }

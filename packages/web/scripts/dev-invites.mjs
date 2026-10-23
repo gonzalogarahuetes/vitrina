@@ -14,9 +14,10 @@
  * (`pnpm --filter @vitrina/server start` does not load .env, so the server
  * refuses to start.)
  *
- * Everything goes through the API, as infra/pr5-journey.test.mjs does it, and
- * the owner half is as thin as that test's: the owner's key material is random
- * and never unlocked, because no owner screen exists yet. The photos are
+ * The owner's screens now create invites (flows §3.8); this remains a quick
+ * seed for the recipient path only. Everything goes through the API, as
+ * infra/pr5-journey.test.mjs does it, and the owner half is as thin as that
+ * test's: the owner's key material is random and never unlocked. The photos are
  * generated PNGs, so nothing from a camera is involved. The passphrase comes
  * from a tiny fixed list: it is NOT a vetted wordlist (encryption spec §6.3)
  * and is fit for nothing but this script.

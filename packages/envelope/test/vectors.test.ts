@@ -119,6 +119,17 @@ interface PassphraseVector {
   wrapped: string;
   kek: string;
 }
+interface FinalSigmaVector {
+  vector: number;
+  passphrases: string[];
+  normalized: string;
+  salt: string;
+  params: Params;
+  recipient_id: string;
+  wrap_nonce: string;
+  wrapped: string;
+  kek: string;
+}
 interface VectorFile {
   envelope_version: number;
   envelope: EnvelopeVector[];
@@ -141,6 +152,7 @@ interface VectorFile {
     passphrase_spacing_mark: PassphraseVector;
     album_wrap_aad: { vector: number; album_id: string; aad: string };
     invite_wrap_aad: { vector: number; recipient_id: string; aad: string };
+    passphrase_final_sigma: FinalSigmaVector;
   };
 }
 
@@ -410,6 +422,7 @@ const protocolTests: Record<string, string> = {
   passphrase_spacing_mark: "protocol 7: the committed blob unwraps under a passphrase carrying a spacing mark",
   album_wrap_aad: "protocol 8: the album wrap is bound to album_id",
   invite_wrap_aad: "protocol 9: the invite wrap is bound to recipient_id",
+  passphrase_final_sigma: "protocol 10: every spelling of ΓΑΤΑΣ normalises alike and opens the committed blob",
 };
 
 test("every protocol group has a test", () => {
@@ -476,6 +489,20 @@ for (const [group, p] of [
     }
   });
 }
+
+// Protocol vector 10 — §6.3 step 3 through the binding: three spellings, one
+// normalised form, and the committed blob opens under every one of them.
+test(protocolTests.passphrase_final_sigma!, () => {
+  const v = file.protocol.passphrase_final_sigma;
+  assert.equal(v.recipient_id, file.protocol.wrap_aad.recipient_id, "§9.1: vector 5's recipient_id");
+  assert.equal(v.passphrases.length, 3);
+  assert.ok(v.normalized.endsWith("\u03c3") && !v.normalized.includes("\u03c2"), "ends in σ, never ς");
+  const wrapped = e.WrappedKey.fromParts(unhex(v.wrapped), unhex(v.wrap_nonce), unhex(v.salt));
+  for (const passphrase of [...v.passphrases, v.normalized]) {
+    assert.equal(e.normalizePassphrase(passphrase), v.normalized, passphrase);
+    assertIsTheAlbumKey(e.unwrapAlbumKey(passphrase, params(v.params), unhex(v.recipient_id), wrapped));
+  }
+});
 
 // Protocol vector 5 — the AAD bytes are not exposed; the recipient_id being
 // bound into the wrap is shown by a one-byte change failing to unwrap.
@@ -548,6 +575,7 @@ const consumedSalts: { entry: string; salt: string }[] = [
   { entry: "protocol 4: passphrase_normalisation", salt: file.protocol.passphrase_normalisation.salt },
   { entry: "protocol 6: 16-byte salt (accept)", salt: file.protocol.wrap_salt_length[0]!.salt },
   { entry: "protocol 7: passphrase_spacing_mark", salt: file.protocol.passphrase_spacing_mark.salt },
+  { entry: "protocol 10: passphrase_final_sigma", salt: file.protocol.passphrase_final_sigma.salt },
   { entry: "category 17: v1 parameters (§6.6.2)", salt: file.owner_wrap[0]!.salt },
   { entry: "category 17: low parameters", salt: file.owner_wrap[1]!.salt },
 ];
@@ -560,6 +588,7 @@ test("§9.1: the pinned salt entries are the ones the file carries", () => {
     [[6, "accept", 16], [6, "reject", 32]],
   );
   assert.equal(file.protocol.passphrase_spacing_mark.vector, 7);
+  assert.equal(file.protocol.passphrase_final_sigma.vector, 10);
   assert.equal(file.protocol.passphrase_empty.length, 3, "vector 3: out of scope, but its shape is pinned");
   assert.deepEqual(file.owner_wrap.map((w) => w.name), ["v1 parameters (§6.6.2)", "low parameters"]);
 });
@@ -573,4 +602,26 @@ test("§9.1: every consumed salt in the file is pairwise distinct", () => {
   const shared = [...entriesBySalt].filter(([, entries]) => entries.length > 1);
   const report = shared.map(([salt, entries]) => `${salt} is carried by: ${entries.join(", ")}`).join("\n");
   assert.equal(shared.length, 0, `§9.1: consumed salts must be distinct\n${report}`);
+});
+
+// §6.3 through the binding's normalizePassphrase, which the web client's
+// wordlist check calls rather than reimplementing the rule. Every protocol
+// entry carrying both `passphrase` and `normalized` is run, so a vector added
+// later (final sigma, for one) is covered without touching this test.
+test("normalizePassphrase gives every vector's normalised form", () => {
+  const pairs = Object.values(file.protocol as Record<string, unknown>)
+    .flatMap((g) => (Array.isArray(g) ? g : [g]))
+    .flatMap((v): { passphrase: string; normalized: string }[] => {
+      if (typeof v !== "object" || v === null) return [];
+      const { passphrase, passphrases, normalized } = v as { passphrase?: unknown; passphrases?: unknown; normalized?: unknown };
+      if (typeof normalized !== "string") return [];
+      const spellings = typeof passphrase === "string" ? [passphrase] : Array.isArray(passphrases) ? passphrases.filter((p): p is string => typeof p === "string") : [];
+      return spellings.map((p) => ({ passphrase: p, normalized }));
+    });
+  assert.ok(pairs.length >= 8, "vectors 3, 4, 7 and 10 carry normalised forms");
+  for (const v of pairs) {
+    assert.equal(e.normalizePassphrase(v.passphrase), v.normalized, JSON.stringify(v.passphrase));
+    assert.equal(e.normalizePassphrase(v.normalized), v.normalized, "idempotent");
+  }
+  assert.equal(caught(() => e.normalizePassphrase("\ud800")).code, "UnpairedSurrogate");
 });
