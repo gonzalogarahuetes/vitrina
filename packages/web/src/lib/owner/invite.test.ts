@@ -388,3 +388,50 @@ describe("the share screen is shown once (flows §3.8)", () => {
     expect(JSON.stringify(h.session.current)).not.toContain(h.issued[0]?.token ?? "?");
   });
 });
+
+describe("an id given up on after a 409 is revoked once (the orphan follow-up)", () => {
+  const revokes = (h: H) => h.sent.filter((s) => s.method === "POST" && /\/v1\/recipients\/[0-9a-f-]{36}\/revoke$/.test(new URL(s.url).pathname)).map((s) => new URL(s.url).pathname);
+
+  it("a lost response had created the first row: after the new one is shared, the first is revoked and listed as revoked", async () => {
+    const h = harness({ stored: STORED });
+    await inInvite(h);
+    // The relay already holds the first attempt's id, as a send whose response was lost would leave it.
+    h.recipients.set(RECIPIENT_IDS[0], { id: RECIPIENT_IDS[0], album: ALBUM_A, body: {}, label: "x".repeat(60), revoked_at: null, album_opens: 0, media_opened: 0, last_opened_at: null });
+    h.session.createInvite("María");
+    await settle();
+    expect(invite(h).step).toBe("share");
+    expect(revokes(h)).toEqual([`/v1/recipients/${RECIPIENT_IDS[0]}/revoke`]);
+    expect(h.recipients.get(RECIPIENT_IDS[0])?.revoked_at).not.toBeNull();
+    expect(h.recipients.get(RECIPIENT_IDS[1])?.revoked_at, "never the one just shared").toBeNull();
+    const order = h.events.filter((e) => e.includes("/recipients"));
+    expect(order.indexOf(`request POST /v1/recipients/${RECIPIENT_IDS[0]}/revoke`)).toBeGreaterThan(order.lastIndexOf(`request ${RECIPIENTS}`));
+  });
+
+  it("a revoke that fails is not retried and changes nothing on screen (a 404, never created, is covered below)", async () => {
+    const h = harness({ stored: STORED });
+    await inInvite(h);
+    h.override(RECIPIENTS, { status: 409, json: { code: "CONFLICT", message: "x" } });
+    h.override(`POST /v1/recipients/${RECIPIENT_IDS[0]}/revoke`, "network");
+    h.session.createInvite("María");
+    await settle();
+    expect(invite(h).step).toBe("share");
+    expect(h.session.current.offline, "a best-effort revoke never shows the offline state").toBe(false);
+    expect(revokes(h)).toEqual([`/v1/recipients/${RECIPIENT_IDS[0]}/revoke`]);
+  });
+
+  it("giving up after repeated 409s revokes every id tried; no 409, no revoke", async () => {
+    const h = harness({ stored: STORED });
+    await inInvite(h);
+    const conflict = { status: 409, json: { code: "CONFLICT", message: "x" } } as const;
+    h.override(RECIPIENTS, conflict, conflict, conflict);
+    h.session.createInvite("María");
+    await settle();
+    expect(revokes(h)).toEqual(RECIPIENT_IDS.slice(0, 3).map((id) => `/v1/recipients/${id}/revoke`));
+
+    const clean = harness({ stored: STORED });
+    await inInvite(clean);
+    clean.session.createInvite("María");
+    await settle();
+    expect(revokes(clean)).toEqual([]);
+  });
+});

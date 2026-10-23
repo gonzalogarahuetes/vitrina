@@ -12,7 +12,8 @@
  *     screen only after `201`. A `409` regenerates everything, in both modes,
  *     and re-encrypts the label, because the id is in the wrap AAD and K_label
  *     derives from it. A network failure resends the same body (call()), since
- *     that is the same create, not a new one.
+ *     that is the same create, not a new one. Each id given up on is revoked
+ *     once afterwards, in case a lost response had already created it.
  *   - The share screen is shown once. Its link, words and QR exist only in
  *     this screen's state; leaving drops them, and nothing about the invite is
  *     stored anywhere. Leaving asks first.
@@ -202,6 +203,25 @@ export class InviteFlow {
   }
 
   private async run(mode: InviteMode, label: string, list: Wordlist | undefined): Promise<void> {
+    // Ids given up on after a 409. One may be a row the relay did store, from a
+    // send whose response was lost: its token was discarded, so it can never be
+    // used, but the owner would see a recipient they never sent. Revoking it
+    // lists it honestly. A 404 just means it was never created.
+    const abandoned: string[] = [];
+    try {
+      await this.attempts(mode, label, list, abandoned);
+    } finally {
+      this.revokeAbandoned(abandoned);
+    }
+  }
+
+  /** One attempt each, best effort, never awaited: nothing on screen waits for it, and a failure leaves an unusable row active. */
+  private revokeAbandoned(ids: readonly string[]): void {
+    if (!this.alive) return;
+    for (const id of ids) void this.ctx.api.revokeRecipient(this.ctx.token, id).catch(() => undefined);
+  }
+
+  private async attempts(mode: InviteMode, label: string, list: Wordlist | undefined, abandoned: string[]): Promise<void> {
     const { ctx } = this;
     const fail = (problem: InviteProblem): void => {
       if (this.alive && ctx.screen() !== null) this.patch({ step: "form", problem });
@@ -264,7 +284,10 @@ export class InviteFlow {
       } catch (e) {
         if (ctx.isStale(e) || !this.alive) throw e;
         // flows §3.8: regenerate the id and the token, and redo the wrap. Never resend this one.
-        if (e instanceof ApiFailure && e.status === 409) continue;
+        if (e instanceof ApiFailure && e.status === 409) {
+          abandoned.push(invite.recipientId);
+          continue;
+        }
         if (e instanceof ApiFailure && e.status === 404) return ctx.gone();
         if (e instanceof ApiFailure) return fail("failed");
         throw e;

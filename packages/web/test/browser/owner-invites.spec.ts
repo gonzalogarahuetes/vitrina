@@ -328,3 +328,32 @@ test("the share screen is shown once: leaving asks, and nothing of it stays in t
   expect(dump.sessionStorage[INVITE_ENTRY], "the owner's tab never holds a recipient entry").toBeUndefined();
   expect(await owner.violations()).toEqual([]);
 });
+
+test("a lost create response, then a 409: the new invite is shared, and the row nobody can use is listed as revoked", async ({ browser }) => {
+  test.setTimeout(180_000);
+  const relay = fakeRelay({ expiresInMs: 14 * 24 * 60 * 60 * 1000 });
+  const owner = await ownerWithPhoto(browser, relay);
+  relay.once(`POST /v1/albums/${owner.albumId}/recipients`, "store-then-drop");
+  await owner.page.getByRole("button", { name: en["album.invite"] }).click();
+  await owner.page.getByLabel(en["invite.name.label"]).fill(LABEL);
+  await owner.page.getByRole("button", { name: en["invite.create"] }).click();
+  // The response never came: the offline state, then the same body again, which the relay answers 409.
+  await owner.page.getByRole("button", { name: en["offline.retry"] }).click();
+  await expect(owner.page.getByRole("heading", { name: en["invite.share.title"](LABEL) })).toBeVisible({ timeout: ARGON });
+
+  const rows = [...relay.recipients.entries()];
+  expect(rows).toHaveLength(2);
+  const link = (await owner.page.locator("[data-invite-link]").textContent()) ?? "";
+  const shared = rows.find(([, r]) => r.body["token_hash"] === sha256b64(param(link, "t")));
+  const orphan = rows.find(([id]) => id !== shared?.[0]);
+  await expect.poll(() => orphan?.[1].revoked_at ?? null, { message: "the abandoned row is revoked" }).not.toBeNull();
+  expect(shared?.[1].revoked_at, "never the one just shared").toBeNull();
+
+  await owner.page.getByRole("button", { name: en["invite.done"] }).click();
+  await owner.page.getByRole("button", { name: en["invite.leave.confirm"] }).click();
+  await owner.page.getByRole("button", { name: en["album.people"] }).click();
+  const people = owner.page.locator("li.person");
+  await expect(people).toHaveCount(2);
+  await expect(owner.page.locator("li.person.revoked")).toHaveCount(1);
+  expect(await owner.violations()).toEqual([]);
+});

@@ -215,6 +215,8 @@ export function fakeRelay(opts: { expiresInMs: number }) {
         if (recipients.has(id) || [...recipients.values()].some((r) => r.body["token_hash"] === b["token_hash"])) return error(409, "CONFLICT");
         const created_at = now();
         recipients.set(id, { album: m[1] as string, body: b, created_at, revoked_at: null });
+        // A lost response: the row exists, the client never hears so.
+        if (instead === "store-then-drop") return route.abort("connectionreset");
         return json(201, { id, created_at });
       }
       if (req.method() === "POST" && m[2] === "/media") {
