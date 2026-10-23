@@ -163,9 +163,15 @@
   .row .btn {
     flex: 1 1 auto;
   }
+  /* Outline, not filled: the filled .btn.danger below would otherwise win the
+     background and leave danger-coloured text on a danger-coloured button. */
   .btn.ghost.danger {
+    background: transparent;
     color: var(--danger);
     border-color: var(--danger);
+  }
+  .btn.ghost.danger:hover {
+    background: var(--danger-soft);
   }
   .sheet {
     position: fixed;
