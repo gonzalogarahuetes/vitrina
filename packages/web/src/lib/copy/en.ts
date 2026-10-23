@@ -412,6 +412,19 @@ export const en = {
   "log.photo.a11y": "The photo that was opened",
   "log.more": "Show older entries",
   "log.more.busy": "Loading older entries…",
+
+  // ── Licences ──────────────────────────────────────────────────────────────
+  // What the app ships that others made. Names the work and its licence;
+  // claims nothing about the app.
+
+  /** From the album list: the one way in. */
+  "licences.link": "Licences",
+  "licences.title": "Licences",
+  "licences.intro": "Vitrina includes work by other people, used under these licences. Each link opens the licence text.",
+  "licences.font": "The Atkinson Hyperlegible font — SIL Open Font License 1.1",
+  "licences.wordlist.en": "The English passphrase words (EFF Large Wordlist) — CC BY 4.0",
+  "licences.blocklist": "The very common passwords refused at sign-up (SecLists) — MIT License",
+  "licences.back": "Back to Vitrina",
 } as const;
 
 export type Copy = typeof en;

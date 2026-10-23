@@ -15,3 +15,5 @@ Retrieved: 22 October 2026
 Attribution: "EFF Large Wordlist" by Joseph Bonneau / Electronic Frontier
 Foundation, used under CC BY 4.0. Unmodified; the dice-roll column is
 dropped when the list is loaded.
+The attribution ships with the app at static/licenses/EFF-wordlist-CC-BY-4.0.txt,
+because the bundle carries the list.

@@ -1,0 +1,8 @@
+EFF Large Wordlist
+
+The English passphrase words are "EFF Large Wordlist" by Joseph Bonneau,
+Electronic Frontier Foundation (2016), https://www.eff.org/document/passphrase-wordlists,
+used under the Creative Commons Attribution 4.0 International licence
+(CC BY 4.0), https://creativecommons.org/licenses/by/4.0/.
+
+Unmodified. The dice-roll column is dropped when the list is loaded.

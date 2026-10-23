@@ -4,6 +4,7 @@
    * session-expiry warning (§3.12). An album whose key or title will not open
    * is listed with its failure, never dropped. Counts are items, not photos.
    */
+  import { resolve } from "$app/paths";
   import { en, sessionEndTime } from "$lib/copy/en";
   import type { AlbumView, CreatePhase, Expiry, LogoutScope } from "$lib/owner/session";
   import Alert from "$lib/ui/Alert.svelte";
@@ -128,6 +129,7 @@
       <button class="btn ghost" type="button" onclick={() => onLogout("device")}>{en["logout.device"]}</button>
       <button class="btn ghost" type="button" onclick={() => onLogout("everywhere")}>{en["logout.everywhere"]}</button>
     {/if}
+    <a class="licences-link" href={resolve("/licences")}>{en["licences.link"]}</a>
   </div>
 </main>
 
@@ -199,6 +201,11 @@
     font-weight: 400;
   }
   .count {
+    color: var(--ink-muted);
+  }
+  .licences-link {
+    align-self: center;
+    margin-top: 8px;
     color: var(--ink-muted);
   }
   .out {

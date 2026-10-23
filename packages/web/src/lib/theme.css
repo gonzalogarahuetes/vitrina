@@ -4,7 +4,7 @@
  * eyesight (brief §11).
  *
  * Atkinson Hyperlegible is self-hosted from static/fonts/ (SIL OFL 1.1, its
- * licence beside the files): CSP font-src is 'self' and check-build.mjs
+ * licence at static/licenses/OFL-AtkinsonHyperlegible.txt): CSP font-src is 'self' and check-build.mjs
  * refuses any third-party origin, and fails if a file named here is missing.
  */
 @font-face {
