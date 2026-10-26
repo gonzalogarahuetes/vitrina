@@ -565,6 +565,8 @@ export function harness(
     stored?: Record<string, string>;
     blocklist?: string[];
     imaging?: Imaging | ((events: string[]) => Imaging);
+    /** The review's preview of a chosen file; by default a FakePicture, logged as "preview <name>". */
+    preview?: (file: File, events: string[]) => Promise<FakePicture>;
     wordlists?: readonly Wordlist[] | "fail";
     displayLanguage?: string;
   } = {},
@@ -611,6 +613,11 @@ export function harness(
       };
     },
     imaging: typeof opts.imaging === "function" ? opts.imaging(r.events) : (opts.imaging ?? okImaging()),
+    preview: async (file) => {
+      const p = opts.preview !== undefined ? await opts.preview(file, r.events) : (r.events.push(`preview ${file.name}`), new FakePicture(file.size));
+      pictures.push(p);
+      return p;
+    },
     decodeImage: async (bytes) => {
       if (bytes.length === 0 || bytes[0] === 0x00) throw new Error("not an image");
       const p = new FakePicture(bytes.length);

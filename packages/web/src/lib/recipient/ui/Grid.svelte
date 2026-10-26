@@ -14,7 +14,7 @@
     title: string;
     loading: boolean;
     items: readonly Item[];
-    watermark: readonly string[];
+    watermark: string;
     onOpen: (index: number) => void;
     onRetry: (id: string) => void;
   } = $props();

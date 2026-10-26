@@ -17,8 +17,8 @@
     c.width = c.height = Math.round(size * dpr);
     const ctx = c.getContext("2d", { colorSpace: "srgb" });
     try {
-      // The owner's own view: no watermark lines.
-      if (ctx !== null) drawCell(ctx, picture, size, dpr, []);
+      // The owner's own view: no watermark.
+      if (ctx !== null) drawCell(ctx, picture, size, dpr, "");
     } catch {
       // Closed underneath us on the way out.
     }

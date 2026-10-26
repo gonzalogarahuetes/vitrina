@@ -7,9 +7,10 @@
 import { describe, expect, it } from "vitest";
 import { encodeBase64url, decodeBase64urlRange } from "@vitrina/shared";
 import { uuidToBytes } from "$lib/ids";
-import { STALL_MS, type AlbumScreen } from "./album";
+import { ORIGINALS_CAP, STALL_MS, type AlbumScreen } from "./album";
 import {
   ALBUM_A,
+  FakePicture,
   MEDIA_IDS,
   PASSWORD,
   STORED,
@@ -70,6 +71,20 @@ function recordedImaging(events: string[], base: Imaging = okImaging()): Imaging
     encode: async (b, s, t, q) => (events.push(`encode ${s.width}x${s.height}`), base.encode(b, s, t, q)),
   };
 }
+
+/** The review step as a person goes through it: choose, let the reads land, caption some, send. */
+async function send(h: ReturnType<typeof harness>, files: File[], captions: Record<number, string> = {}): Promise<void> {
+  h.session.choosePhotos(files);
+  await settle();
+  const rows = album(h).review?.rows ?? [];
+  rows.slice(-files.length).forEach((r, i) => {
+    const c = captions[i];
+    if (c !== undefined) h.session.setCaption(r.key, c);
+  });
+  h.session.sendReview();
+}
+
+const metaDoc = (r: { body: string }) => JSON.parse(new TextDecoder().decode(unsealed(decodeBase64urlRange((JSON.parse(r.body) as { metadata: string }).metadata, 1, 4096)))) as Record<string, unknown>;
 
 const afterOpen = (h: ReturnType<typeof harness>, from: number) => routes(h.sent.slice(from));
 const statusesSeen = (h: ReturnType<typeof harness>, key: string) =>
@@ -155,7 +170,7 @@ describe("upload (flows §3.6)", () => {
     const h = harness({ stored: STORED });
     await inAlbum(h);
     const from = h.sent.length;
-    h.session.addPhotos([photo()]);
+    await send(h, [photo()]);
     await settle();
     expect(afterOpen(h, from)).toEqual([
       `POST /v1/albums/${ALBUM_A}/media`,
@@ -183,7 +198,7 @@ describe("upload (flows §3.6)", () => {
   it("every plaintext is zeroed once encrypted", async () => {
     const h = harness({ stored: STORED });
     await inAlbum(h);
-    h.session.addPhotos([photo()]);
+    await send(h, [photo()]);
     await settle();
     expect(h.env.plaintexts).toHaveLength(3);
     for (const p of h.env.plaintexts) expect(p.every((b) => b === 0)).toBe(true);
@@ -194,7 +209,7 @@ describe("upload (flows §3.6)", () => {
     await inAlbum(h);
     const original = photo();
     const originalBytes = new Uint8Array(await original.arrayBuffer());
-    h.session.addPhotos([original]);
+    await send(h, [original]);
     await settle();
     const asset = h.sent.find((r) => r.url.endsWith("/asset"))?.bytes as Uint8Array;
     const plain = unsealed(asset);
@@ -205,7 +220,7 @@ describe("upload (flows §3.6)", () => {
   it("the filename is in the metadata envelope and nowhere else: no URL, header or other body carries it", async () => {
     const h = harness({ stored: STORED });
     await inAlbum(h);
-    h.session.addPhotos([photo()]);
+    await send(h, [photo()]);
     await settle();
     const spellings = [NAME, encodeURIComponent(NAME), "bathtime", Buffer.from(NAME).toString("base64").slice(0, 16)];
     for (const r of h.sent) {
@@ -224,7 +239,7 @@ describe("upload (flows §3.6)", () => {
     await inAlbum(h);
     // The second PUT's answer and the next two polls say processing.
     h.delayReady.set(M1, 3);
-    h.session.addPhotos([photo()]);
+    await send(h, [photo()]);
     await settle();
     // The relay holds both objects, but said processing; the item waits until it says ready.
     expect(album(h).items.at(-1)).toMatchObject({ status: "ready", local: null });
@@ -243,7 +258,7 @@ describe("upload (flows §3.6)", () => {
     h.override(`POST /v1/albums/${ALBUM_A}/media`, "network");
     // The first POST "landed" and lost its response; the resend meets the row.
     h.media.set(M1, { id: M1, album: ALBUM_A, status: "pending", created_at: "2026-10-15T12:00:00Z", updated_at: "2026-10-15T12:00:00Z", metadata: "", asset: null, thumbnail: null });
-    h.session.addPhotos([photo()]);
+    await send(h, [photo()]);
     await settle();
     expect(h.session.current.offline).toBe(true);
     h.session.retryOffline();
@@ -263,8 +278,8 @@ describe("upload (flows §3.6)", () => {
     const h = harness({ stored: STORED, imaging: (events) => recordedImaging(events) });
     const events = h.events;
     await inAlbum(h);
-    h.session.addPhotos([photo("one.jpg")]);
-    h.session.addPhotos([photo("two.jpg")]);
+    await send(h, [photo("one.jpg")]);
+    await send(h, [photo("two.jpg")]);
     await settle();
     const firstReadyThumb = events.indexOf(`request PUT /v1/media/${M1}/thumbnail`);
     const secondDecode = events.indexOf("decode two.jpg");
@@ -280,7 +295,7 @@ describe("upload (flows §3.6)", () => {
     const h = harness({ stored: STORED });
     await inAlbum(h);
     h.sleeps.length = 0;
-    h.session.addPhotos([photo("one.jpg"), photo("two.jpg"), photo("three.jpg")]);
+    await send(h, [photo("one.jpg"), photo("two.jpg"), photo("three.jpg")]);
     await settle();
     // The clock does not move under test, so every paced request after the first waits a full slot.
     const paced = h.sleeps.filter((ms) => ms % 250 === 0 && ms >= 250);
@@ -292,7 +307,7 @@ describe("upload (flows §3.6)", () => {
     const h = harness({ stored: STORED });
     await inAlbum(h);
     h.override(`PUT /v1/media/${M1}/asset`, h.err(429, "RATE_LIMITED", { "retry-after": "7" }));
-    h.session.addPhotos([photo()]);
+    await send(h, [photo()]);
     await settle();
     const puts = h.sent.filter((r) => r.url.endsWith(`/${M1}/asset`));
     expect(puts).toHaveLength(2);
@@ -308,7 +323,7 @@ describe("upload (flows §3.6)", () => {
       status: 200,
       json: { id: M1, album_id: ALBUM_A, kind: "photo", status: "failed", byte_size: null, created_at: "2026-10-15T12:00:00Z", updated_at: "2026-10-15T12:00:00Z" },
     });
-    h.session.addPhotos([photo()]);
+    await send(h, [photo()]);
     await settle();
     expect(album(h).items.at(-1)).toMatchObject({ status: "failed", resendable: true, local: null });
     expect(routes(h.sent).filter((r) => r.includes("/thumbnail") && r.startsWith("PUT")), "stops at the failure").toHaveLength(0);
@@ -335,7 +350,7 @@ describe("upload (flows §3.6)", () => {
     };
     const h = harness({ stored: STORED, imaging: app1 });
     await inAlbum(h);
-    h.session.addPhotos([photo()]);
+    await send(h, [photo()]);
     await settle();
     expect(album(h).items.at(-1)).toMatchObject({ status: "ready", localFailure: null });
     for (const put of h.sent.filter((r) => r.method === "PUT")) {
@@ -352,7 +367,7 @@ describe("upload (flows §3.6)", () => {
     const h = harness({ stored: STORED, imaging: leaky });
     await inAlbum(h);
     const from = h.sent.length;
-    h.session.addPhotos([photo()]);
+    await send(h, [photo()]);
     await settle();
     expect(h.sent.slice(from)).toEqual([]);
     expect(album(h).items.at(-1)).toMatchObject({ localFailure: "not-stripped", id: null, status: null });
@@ -365,7 +380,7 @@ describe("upload (flows §3.6)", () => {
     const h = harness({ stored: STORED, imaging: png });
     await inAlbum(h);
     const from = h.sent.length;
-    h.session.addPhotos([photo()]);
+    await send(h, [photo()]);
     await settle();
     expect(h.sent.slice(from)).toEqual([]);
     expect(album(h).items.at(-1)?.localFailure).toBe("not-encoded");
@@ -376,7 +391,7 @@ describe("upload (flows §3.6)", () => {
     seed(h, { id: SEEDED });
     await inAlbum(h);
     h.override(`PUT /v1/media/${M1}/asset`, h.err(401, "UNAUTHENTICATED"));
-    h.session.addPhotos([photo("one.jpg"), photo("two.jpg")]);
+    await send(h, [photo("one.jpg"), photo("two.jpg")]);
     await settle();
     expect(h.screen().kind).toBe("signin");
     const after = h.sent.findIndex((r) => r.url.endsWith(`/${M1}/asset`));
@@ -389,7 +404,7 @@ describe("upload (flows §3.6)", () => {
     const h = harness({ stored: STORED });
     await inAlbum(h);
     h.override(`POST /v1/albums/${ALBUM_A}/media`, "network");
-    h.session.addPhotos([photo()]);
+    await send(h, [photo()]);
     await settle();
     h.session.leaveAlbum();
     expect(album(h).leaving).toBe(true);
@@ -402,6 +417,389 @@ describe("upload (flows §3.6)", () => {
     h.session.retryOffline();
     await settle();
     expect(h.sent.length, "the stopped upload does not resume").toBe(before);
+  });
+});
+
+// ── §3.6 The review, and captions ─────────────────────────────────────────
+
+describe("the review: previews and captions before anything is sent (flows §3.6)", () => {
+  const CAPTION = "Bañera con la abuela 🛁";
+
+  it("choosing opens the review: one preview at a time, in order, and no request and no preparation until Send", async () => {
+    const h = harness({ stored: STORED, imaging: (events) => recordedImaging(events) });
+    await inAlbum(h);
+    const from = h.sent.length;
+    const eventsFrom = h.events.length;
+    h.session.choosePhotos([photo("one.jpg"), photo("two.jpg"), photo("three.jpg")]);
+    await settle();
+    const r = album(h).review;
+    expect(r?.rows.map((x) => [x.name, x.preview.kind, x.caption])).toEqual([
+      ["one.jpg", "ready", ""],
+      ["two.jpg", "ready", ""],
+      ["three.jpg", "ready", ""],
+    ]);
+    expect(h.events.slice(eventsFrom)).toEqual(["preview one.jpg", "preview two.jpg", "preview three.jpg"]);
+    expect(h.sent.slice(from), "no request while the review is open").toEqual([]);
+    expect(album(h).items, "nothing queued").toEqual([]);
+    expect(h.env.plaintexts, "nothing encrypted").toEqual([]);
+  });
+
+  it("the caption goes into the metadata document, trimmed, and nowhere else; an empty one is left out", async () => {
+    const h = harness({ stored: STORED });
+    await inAlbum(h);
+    const from = h.sent.length;
+    await send(h, [photo("one.jpg"), photo("two.jpg")], { 0: `  ${CAPTION}\n`, 1: "   " });
+    await settle();
+    const posts = h.sent.slice(from).filter((r) => r.method === "POST");
+    expect(posts.map(metaDoc)).toEqual([
+      { width: 1600, height: 1200, name: "one.jpg", caption: CAPTION },
+      { width: 1600, height: 1200, name: "two.jpg" },
+    ]);
+    expect(album(h).items.map((i) => [i.status, i.caption])).toEqual([
+      ["ready", CAPTION],
+      ["ready", null],
+    ]);
+    // Nowhere outside the envelope: the fake envelope does not encrypt, so the metadata field is set aside.
+    const spellings = [CAPTION, encodeURIComponent(CAPTION), JSON.stringify(CAPTION).slice(1, -1), "abuela", Buffer.from(CAPTION).toString("base64").slice(0, 16)];
+    for (const req of h.sent) {
+      const body = req.method === "POST" && req.url.endsWith("/media") ? JSON.stringify({ ...(JSON.parse(req.body) as object), metadata: undefined }) : req.body;
+      for (const w of [req.url, ...Object.entries(req.headers).flat(), body]) for (const sp of spellings) expect(w).not.toContain(sp);
+    }
+  });
+
+  it("a caption is read back from the envelope when the album opens again", async () => {
+    const h = harness({ stored: STORED });
+    seed(h, { id: SEEDED, metadata: metaEnvelope(SEEDED, { width: 1600, height: 1200, caption: CAPTION, unknown: true }) });
+    seed(h, { id: SEEDED_2 });
+    const s = await inAlbum(h);
+    expect(s.items.map((i) => i.caption)).toEqual([CAPTION, null]);
+  });
+
+  it("280 code points are accepted, emoji counted as one each (560 UTF-16 units); 281 are not, and nothing is sent", async () => {
+    const h = harness({ stored: STORED });
+    await inAlbum(h);
+    const ok = "🛁".repeat(280);
+    expect(ok.length).toBe(560);
+    h.session.choosePhotos([photo()]);
+    await settle();
+    const key = album(h).review?.rows[0]?.key as string;
+    const from = h.sent.length;
+    h.session.setCaption(key, `${ok}🛁`);
+    h.session.sendReview();
+    await settle();
+    expect(album(h).review, "still open: the caption is too long").not.toBeNull();
+    expect(h.sent.slice(from)).toEqual([]);
+    h.session.setCaption(key, ok);
+    h.session.sendReview();
+    await settle();
+    expect(album(h).review).toBeNull();
+    expect(metaDoc(h.sent.find((r) => r.method === "POST") as { body: string })["caption"]).toBe(ok);
+  });
+
+  it("the longest caption, with the most escaping, still fits the relay's 4 KiB metadata cap beside a long filename", async () => {
+    const h = harness({ stored: STORED });
+    await inAlbum(h);
+    // Control characters escape to six bytes each in JSON: the worst case per code point.
+    await send(h, [photo(`${"n".repeat(250)}.jpg`)], { 0: `x${"\u0001".repeat(278)}x` });
+    await settle();
+    const post = h.sent.find((r) => r.method === "POST") as { body: string };
+    expect((metaDoc(post)["caption"] as string).length).toBe(280);
+    expect(album(h).items.at(-1)).toMatchObject({ status: "ready", localFailure: null });
+  });
+
+  it("a row taken out is never prepared or sent, and its preview is closed", async () => {
+    const h = harness({ stored: STORED, imaging: (events) => recordedImaging(events) });
+    await inAlbum(h);
+    h.session.choosePhotos([photo("one.jpg"), photo("wrong.jpg")]);
+    await settle();
+    const [, wrong] = album(h).review?.rows ?? [];
+    const pic = wrong?.preview.kind === "ready" ? (wrong.preview.picture as unknown as { closed: number }) : null;
+    h.session.unpickPhoto(wrong?.key as string);
+    expect(pic?.closed).toBe(1);
+    expect(album(h).review?.rows.map((x) => x.name)).toEqual(["one.jpg"]);
+    h.session.sendReview();
+    await settle();
+    expect(h.events).not.toContain("decode wrong.jpg");
+    expect(routes(h.sent).filter((r) => r.startsWith("POST /v1/albums/"))).toHaveLength(1);
+    expect(album(h).items.map((i) => i.status)).toEqual(["ready"]);
+  });
+
+  it("cancel closes every preview and sends nothing; so does taking out the last row", async () => {
+    const h = harness({ stored: STORED });
+    await inAlbum(h);
+    const from = h.sent.length;
+    h.session.choosePhotos([photo("one.jpg"), photo("two.jpg")]);
+    await settle();
+    h.session.cancelReview();
+    expect(album(h).review).toBeNull();
+    h.session.choosePhotos([photo("three.jpg")]);
+    await settle();
+    h.session.unpickPhoto(album(h).review?.rows[0]?.key as string);
+    expect(album(h).review).toBeNull();
+    expect(h.pictures).toHaveLength(3);
+    expect(h.pictures.every((p) => p.closed === 1)).toBe(true);
+    expect(h.sent.slice(from)).toEqual([]);
+  });
+
+  it("a preview that cannot be made shows as failed; the photo can still be sent, and preparation decides", async () => {
+    const h = harness({
+      stored: STORED,
+      preview: async () => {
+        throw new Error("cannot decode");
+      },
+    });
+    await inAlbum(h);
+    h.session.choosePhotos([photo()]);
+    await settle();
+    expect(album(h).review?.rows[0]?.preview.kind).toBe("failed");
+    h.session.sendReview();
+    await settle();
+    expect(album(h).items.at(-1)?.status).toBe("ready");
+  });
+
+  it("previews and preparation never decode at the same time (brief §11, memory)", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const h = harness({
+      stored: STORED,
+      imaging: (events) => recordedImaging(events),
+      preview: async (file, events) => {
+        events.push(`preview start ${file.name}`);
+        if (file.name === "two.jpg") await gate;
+        events.push(`preview end ${file.name}`);
+        return new FakePicture(file.size);
+      },
+    });
+    await inAlbum(h);
+    h.session.choosePhotos([photo("one.jpg")]);
+    await settle();
+    h.session.sendReview();
+    // The next choice arrives while the first photo is being prepared.
+    h.session.choosePhotos([photo("two.jpg")]);
+    await settle();
+    release();
+    await settle();
+    const ev = h.events.filter((e) => /^(preview|decode|encode)/.test(e));
+    const prepStart = ev.indexOf("decode one.jpg");
+    const prepEnd = ev.lastIndexOf(ev.filter((e) => e.startsWith("encode")).at(-1) as string);
+    const previewStart = ev.indexOf("preview start two.jpg");
+    const previewEnd = ev.indexOf("preview end two.jpg");
+    expect(prepStart).toBeGreaterThan(-1);
+    expect(previewEnd).toBeGreaterThan(previewStart);
+    expect(previewEnd < prepStart || previewStart > prepEnd, `no overlap: ${ev.join(", ")}`).toBe(true);
+    expect(album(h).items.at(-1)?.status).toBe("ready");
+    expect(album(h).review?.rows[0]?.preview.kind).toBe("ready");
+  });
+
+  it("nothing else opens over the review, and leaving the album closes every preview", async () => {
+    const h = harness({ stored: STORED });
+    seed(h, { id: SEEDED });
+    await inAlbum(h);
+    h.session.choosePhotos([photo("one.jpg"), photo("two.jpg")]);
+    await settle();
+    h.session.askRemove(SEEDED);
+    h.session.openViewer(SEEDED);
+    h.session.openInvite();
+    expect(album(h).confirm).toBeNull();
+    expect(album(h).viewer).toBeNull();
+    h.session.leaveAlbum(true);
+    expect(h.screen().kind).toBe("albums");
+    expect(h.pictures.every((p) => p.closed === 1)).toBe(true);
+  });
+});
+
+// ── The originals: read once when chosen, zeroed, capped ───────────────────
+
+/**
+ * A picked file as the test phone's browser behaved (Vivaldi for Android, found on the phone walk):
+ * readable when chosen, then not. `readable` reads succeed; every later one
+ * fails, through arrayBuffer() and through slice() alike. Every buffer it
+ * hands out is kept, so a test can check it was zeroed. `size` may be declared
+ * larger than the bytes, to test the cap without allocating 100 MB.
+ */
+class PickedFile extends File {
+  reads = 0;
+  readonly buffers: ArrayBuffer[] = [];
+  constructor(
+    name: string,
+    private readonly opts: { readable?: number; size?: number } = {},
+  ) {
+    super([spliceAfterSoi(fakeJpeg(4032, 3024), exifApp1())], name, { type: "image/jpeg" });
+  }
+  override get size(): number {
+    return this.opts.size ?? super.size;
+  }
+  private gone(): boolean {
+    return ++this.reads > (this.opts.readable ?? 1);
+  }
+  override async arrayBuffer(): Promise<ArrayBuffer> {
+    if (this.gone()) throw new DOMException("The requested file could not be read", "NotReadableError");
+    const b = await super.arrayBuffer();
+    this.buffers.push(b);
+    return b;
+  }
+  override slice(...a: Parameters<Blob["slice"]>): Blob {
+    if (!this.gone()) return super.slice(...a);
+    return new (class extends Blob {
+      override arrayBuffer(): Promise<ArrayBuffer> {
+        return Promise.reject(new DOMException("The requested file could not be read", "NotReadableError"));
+      }
+    })();
+  }
+}
+
+const zeroed = (f: PickedFile) => f.buffers.length > 0 && f.buffers.every((b) => new Uint8Array(b).every((x) => x === 0));
+
+describe("the originals: read once when chosen, never again, zeroed after use, capped", () => {
+  it("a file readable only when chosen still uploads: it is read exactly once, at choosing, and never again", async () => {
+    const h = harness({ stored: STORED });
+    await inAlbum(h);
+    const f = new PickedFile("late.jpg", { readable: 1 });
+    h.session.choosePhotos([f]);
+    expect(f.reads, "read at once, before the review is even drawn").toBe(1);
+    await settle();
+    h.session.sendReview();
+    await settle();
+    expect(album(h).items.at(-1)).toMatchObject({ status: "ready", localFailure: null });
+    expect(f.reads).toBe(1);
+  });
+
+  it("every file of a choice is read at once, not one after another", async () => {
+    const h = harness({ stored: STORED });
+    await inAlbum(h);
+    const files = [new PickedFile("a.jpg"), new PickedFile("b.jpg"), new PickedFile("c.jpg")];
+    h.session.choosePhotos(files);
+    expect(files.map((x) => x.reads)).toEqual([1, 1, 1]);
+  });
+
+  it("zeroed once prepared", async () => {
+    const h = harness({ stored: STORED });
+    await inAlbum(h);
+    const f = new PickedFile("one.jpg");
+    await send(h, [f]);
+    await settle();
+    expect(album(h).items.at(-1)?.status).toBe("ready");
+    expect(zeroed(f)).toBe(true);
+  });
+
+  it("zeroed when preparation fails too", async () => {
+    const png: Imaging = { decode: okImaging().decode, encode: async (_b, s) => new Blob([fakeJpeg(s.width, s.height)], { type: "image/png" }) };
+    const h = harness({ stored: STORED, imaging: png });
+    await inAlbum(h);
+    const f = new PickedFile("one.jpg");
+    await send(h, [f]);
+    await settle();
+    expect(album(h).items.at(-1)?.localFailure).toBe("not-encoded");
+    expect(zeroed(f)).toBe(true);
+  });
+
+  it("zeroed when taken out, and when the review is cancelled", async () => {
+    const h = harness({ stored: STORED });
+    await inAlbum(h);
+    const out = new PickedFile("out.jpg");
+    const stays = new PickedFile("stays.jpg");
+    h.session.choosePhotos([out, stays]);
+    await settle();
+    h.session.unpickPhoto(album(h).review?.rows[0]?.key as string);
+    expect(zeroed(out)).toBe(true);
+    expect(zeroed(stays), "the other is still needed").toBe(false);
+    h.session.cancelReview();
+    expect(zeroed(stays)).toBe(true);
+  });
+
+  it("zeroed when the album is left, in the review and in the queue", async () => {
+    const h = harness({ stored: STORED });
+    await inAlbum(h);
+    h.override(`POST /v1/albums/${ALBUM_A}/media`, "network");
+    const queued = [new PickedFile("q1.jpg"), new PickedFile("q2.jpg")];
+    await send(h, queued);
+    const inReview = new PickedFile("r.jpg");
+    h.session.choosePhotos([inReview]);
+    await settle();
+    h.session.leaveAlbum(true);
+    await settle();
+    for (const f of [...queued, inReview]) expect(zeroed(f), f.name).toBe(true);
+  });
+
+  it("a read that lands after the photo was taken out is zeroed on arrival", async () => {
+    const h = harness({ stored: STORED });
+    await inAlbum(h);
+    const f = new PickedFile("slow.jpg");
+    h.session.choosePhotos([f]);
+    // Taken out before the read lands.
+    h.session.cancelReview();
+    await settle();
+    expect(zeroed(f)).toBe(true);
+  });
+
+  it("a file that cannot be read when chosen says so; the others are sent, it is not", async () => {
+    const h = harness({ stored: STORED });
+    await inAlbum(h);
+    const from = h.sent.length;
+    h.session.choosePhotos([new PickedFile("gone.jpg", { readable: 0 }), new PickedFile("fine.jpg")]);
+    await settle();
+    expect(album(h).review?.rows.map((r) => [r.name, r.read])).toEqual([
+      ["gone.jpg", "unreadable"],
+      ["fine.jpg", "ok"],
+    ]);
+    h.session.sendReview();
+    await settle();
+    expect(routes(h.sent.slice(from)).filter((r) => r.startsWith("POST"))).toHaveLength(1);
+    expect(album(h).items.map((i) => i.status)).toEqual(["ready"]);
+  });
+
+  it("Send waits while any file is still being read, rather than sending the rest and dropping it", async () => {
+    const h = harness({ stored: STORED });
+    await inAlbum(h);
+    h.session.choosePhotos([new PickedFile("one.jpg")]);
+    await settle();
+    // A second photo joins while the first is already read.
+    h.session.choosePhotos([new PickedFile("two.jpg")]);
+    expect(album(h).review?.rows.map((r) => r.read)).toEqual(["ok", "reading"]);
+    h.session.sendReview();
+    expect(album(h).review, "not sent while two.jpg is reading").not.toBeNull();
+    await settle();
+    h.session.sendReview();
+    await settle();
+    expect(album(h).review).toBeNull();
+    expect(album(h).items.map((i) => i.status)).toEqual(["ready", "ready"]);
+  });
+
+  it(`a choice that would hold more than ${ORIGINALS_CAP} bytes is refused whole, and nothing of it is read`, async () => {
+    const h = harness({ stored: STORED });
+    await inAlbum(h);
+    const big = [new PickedFile("a.jpg", { size: 60_000_000 }), new PickedFile("b.jpg", { size: 40_000_001 })];
+    h.session.choosePhotos(big);
+    expect(album(h).chooseRefused).toBe(true);
+    expect(album(h).review).toBeNull();
+    expect(big.map((f) => f.reads)).toEqual([0, 0]);
+    // Exactly at the cap is accepted, and clears the refusal.
+    const fits = [new PickedFile("c.jpg", { size: 60_000_000 }), new PickedFile("d.jpg", { size: 40_000_000 })];
+    h.session.choosePhotos(fits);
+    expect(album(h).chooseRefused).toBe(false);
+    expect(album(h).review?.rows).toHaveLength(2);
+  });
+
+  it("the cap counts every original still held: the one being prepared, the queue and the review", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const base = okImaging();
+    // q1's preparation is held open, so q1 is "being prepared" and q2 waits in the queue.
+    const held: Imaging = { decode: async (f, r) => (await gate, base.decode(f, r)), encode: base.encode };
+    const h = harness({ stored: STORED, imaging: held });
+    await inAlbum(h);
+    const one = new PickedFile("x.jpg").size;
+    await send(h, [new PickedFile("q1.jpg"), new PickedFile("q2.jpg")]);
+    h.session.choosePhotos([new PickedFile("r.jpg")]);
+    await settle();
+    // Held: q1 (preparing) + q2 (queued) + r (review) = 3 × one. Exactly the cap fits; one byte more does not.
+    h.session.choosePhotos([new PickedFile("over.jpg", { size: ORIGINALS_CAP - 3 * one + 1 })]);
+    expect(album(h).chooseRefused, "each of the three counts").toBe(true);
+    h.session.choosePhotos([new PickedFile("fits.jpg", { size: ORIGINALS_CAP - 3 * one })]);
+    expect(album(h).chooseRefused).toBe(false);
+    h.session.cancelReview();
+    release();
+    await settle();
   });
 });
 
@@ -518,7 +916,7 @@ describe("remove (flows §3.7)", () => {
     const h = harness({ stored: STORED });
     await inAlbum(h);
     h.override(`PUT /v1/media/${M1}/asset`, "network");
-    h.session.addPhotos([photo()]);
+    await send(h, [photo()]);
     await settle();
     h.session.askRemove("local-1");
     expect(album(h).confirm).toBeNull();

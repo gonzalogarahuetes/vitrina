@@ -46,8 +46,8 @@ export const en = {
   /** Its metadata is unusable, so retrying cannot help. */
   "grid.cell.unavailable": "This photo can't be shown.",
 
-  /** Drawn into the pixels, two lines. Social, not forensic: names, never identifies or traces. */
-  watermark: (label: string, date: string) => [`Shared with ${label}`, date] as const,
+  /** Drawn into the pixels, one short line in a corner. Social, not forensic: names, never identifies or traces. */
+  watermark: (label: string, date: string) => `${label} · ${date}`,
 
   "viewer.back": "Back to album",
   "viewer.back-to-album": "Back to album",
@@ -198,6 +198,29 @@ export const en = {
   "upload.downscale": "A viewing-size copy of each photo is sent, not the original file.",
   "album.photo.a11y": (i: number, n: number) => `Photo ${i} of ${n}. Opens larger.`,
 
+  // The review, between choosing photos and sending them (flows §3.6, before step 1).
+  "upload.review.title": (n: number) => (n === 1 ? "1 photo chosen" : `${n} photos chosen`),
+  /** True by construction: nothing is prepared or requested before Send. */
+  "upload.review.intro": "Nothing is sent until you press Send. Take out any photo you didn't mean to choose.",
+  "upload.review.preview.a11y": (name: string) => `Preview of ${name}`,
+  "upload.review.preview.loading.a11y": (name: string) => `Preview of ${name}, loading`,
+  "upload.review.preview.failed": "No preview on this device",
+  /** Its bytes could not be read when chosen: the remedy is choosing it again. */
+  "upload.review.unreadable": "This photo couldn't be read. Pick it again.",
+  /** A choice over the cap on originals held at once (album.ts ORIGINALS_CAP). */
+  "upload.too-large": "Those photos are too large to add together. Choose fewer photos at a time.",
+  "upload.review.caption.label": "Caption (optional)",
+  /** May say the server can't read it. Nothing stronger (brief §3). */
+  "upload.review.caption.hint": "Shown below the photo. Our servers can't read it.",
+  /** Counted in characters as a person counts them (code points, as the password policy is). */
+  "upload.review.caption.count": (n: number) => `${n} of 280 characters`,
+  "upload.review.caption.too-long": "Use 280 characters or fewer.",
+  "upload.review.caption.invalid": "This caption has a character that can't be saved. Try typing it again.",
+  "upload.review.remove": "Take out",
+  "upload.review.remove.a11y": (name: string) => `Take out ${name}`,
+  "upload.review.send": (n: number) => (n === 1 ? "Send 1 photo" : `Send ${n} photos`),
+  "upload.review.cancel": "Cancel",
+
   // Per item, while this device moves it (flows §3.6's drawn states).
   "upload.queued": "Waiting its turn",
   "upload.preparing": "Preparing on this device…",
@@ -288,7 +311,7 @@ export const en = {
   /** Flows §3.8 step 2: the name the watermark carries (brief §5). */
   "invite.name.label": "Their name",
   /** Brief §5: the watermark is social, never "tracking". May say the relay can't read it (api-sketch §5.3), nothing stronger. */
-  "invite.name.hint": "It's written across every photo they open, like this: Shared with María. Our servers can't read it.",
+  "invite.name.hint": "It's written in a corner of every photo they open, with the date, like this: María · 6 Aug 2026. Our servers can't read it.",
   "invite.name.empty": "Write their name first.",
   "invite.name.too-long": "Use 60 characters or fewer.",
   /** ⟦copy: invite.mode⟧ — neither mode is stronger in every respect (encryption spec §6.5). QR first, as the default. */

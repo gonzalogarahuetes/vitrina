@@ -1,7 +1,8 @@
 <script lang="ts">
   /*
    * The owner's album (flows §3.4): every item in its real state, upload
-   * (§3.6), removal with its computed statement (§3.7), and the recipient's
+   * (§3.6, with its review step: previews and captions before anything is
+   * sent), removal with its computed statement (§3.7), and the recipient's
    * viewer for the full photo (§4.5), drawn without a watermark because the
    * owner is not a recipient. From here, the album's invite (§3.8) and its
    * people and access log (§3.9, §3.10).
@@ -11,6 +12,7 @@
   import type { Expiry } from "$lib/owner/session";
   import Viewer from "$lib/recipient/ui/Viewer.svelte";
   import MediaCell from "./MediaCell.svelte";
+  import Review from "./Review.svelte";
 
   let {
     album,
@@ -18,7 +20,11 @@
     onBack,
     onLeave,
     onStay,
-    onAdd,
+    onChoose,
+    onCaption,
+    onUnpick,
+    onCancelReview,
+    onSendReview,
     onOpen,
     onCloseViewer,
     onRetryThumb,
@@ -35,7 +41,12 @@
     onBack: () => void;
     onLeave: () => void;
     onStay: () => void;
-    onAdd: (files: File[]) => void;
+    /** Opens the review: nothing is prepared or sent until onSendReview. */
+    onChoose: (files: File[]) => void;
+    onCaption: (key: string, caption: string) => void;
+    onUnpick: (key: string) => void;
+    onCancelReview: () => void;
+    onSendReview: () => void;
     onOpen: (key: string) => void;
     onCloseViewer: () => void;
     onRetryThumb: (key: string) => void;
@@ -59,17 +70,28 @@
     return () => clearInterval(t);
   });
 
-  const viewable = $derived(album.items.filter((i) => i.status === "ready" && i.size !== null));
-  const confirmItem = $derived(album.confirm === null ? undefined : album.items.find((i) => i.key === album.confirm?.key));
+  const viewable = $derived(
+    album.items.filter((i) => i.status === "ready" && i.size !== null),
+  );
+  const confirmItem = $derived(
+    album.confirm === null
+      ? undefined
+      : album.items.find((i) => i.key === album.confirm?.key),
+  );
 
   function chosen(): void {
-    const files = input?.files === null || input?.files === undefined ? [] : Array.from(input.files);
+    const files =
+      input?.files === null || input?.files === undefined
+        ? []
+        : Array.from(input.files);
     // Cleared at once: the same photo can be chosen again, and the input holds nothing afterwards.
     if (input !== undefined) input.value = "";
-    if (files.length > 0) onAdd(files);
+    if (files.length > 0) onChoose(files);
   }
 
-  function statement(s: NonNullable<AlbumScreen["confirm"]>["statement"]): string {
+  function statement(
+    s: NonNullable<AlbumScreen["confirm"]>["statement"],
+  ): string {
     if (s === "never-ready") return en["remove.never-ready"];
     if (s === "unopened") return en["remove.unopened"];
     if (s === "opened") return en["remove.opened"];
@@ -77,39 +99,74 @@
   }
 </script>
 
-<main class="screen album" inert={album.viewer !== null || album.confirm !== null || album.leaving}>
+<main
+  class="screen album"
+  inert={album.viewer !== null ||
+    album.confirm !== null ||
+    album.review !== null ||
+    album.leaving}
+>
   <div class="top">
     <button class="btn ghost back" type="button" onclick={onBack}>
-      <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"
-        ><path d="M15 5l-7 7 7 7"></path></svg
+      <svg
+        width="28"
+        height="28"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2.2"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+        aria-hidden="true"><path d="M15 5l-7 7 7 7"></path></svg
       >
       <span>{en["album.back"]}</span>
     </button>
   </div>
 
-  <h1 class:failed-text={album.title === null}>{album.title ?? en["albums.failed.title"]}</h1>
+  <h1 class:failed-text={album.title === null}>
+    {album.title ?? en["albums.failed.title"]}
+  </h1>
 
   {#if expiry?.ending}
-    <p class="ending" role="status">{en["session.ending"](sessionEndTime(expiry.endsAt))}</p>
+    <p class="ending" role="status">
+      {en["session.ending"](sessionEndTime(expiry.endsAt))}
+    </p>
   {/if}
 
   {#if album.phase === "loading"}
     <p class="note" role="status">{en["album.loading"]}</p>
   {:else}
     <div class="sharing">
-      <button class="btn" type="button" onclick={onInvite}>{en["album.invite"]}</button>
-      <button class="btn ghost" type="button" onclick={onPeople}>{en["album.people"]}</button>
+      <button class="btn" type="button" onclick={onInvite}
+        >{en["album.invite"]}</button
+      >
+      <button class="btn ghost" type="button" onclick={onPeople}
+        >{en["album.people"]}</button
+      >
     </div>
 
     <div class="add">
       <label class="btn" for="add-photos">{en["album.add"]}</label>
-      <input id="add-photos" class="visually-hidden" type="file" accept="image/*" multiple bind:this={input} onchange={chosen} />
+      <input
+        id="add-photos"
+        class="visually-hidden"
+        type="file"
+        accept="image/*"
+        multiple
+        bind:this={input}
+        onchange={chosen}
+      />
+      {#if album.chooseRefused}
+        <p class="alert" role="alert">{en["upload.too-large"]}</p>
+      {/if}
       <p class="note">{en["upload.stripped"]}</p>
       <p class="note">{en["upload.downscale"]}</p>
     </div>
 
     {#if album.erasurePending > 0}
-      <p class="pending" role="status">{en["remove.pending"](album.erasurePending)}</p>
+      <p class="pending" role="status">
+        {en["remove.pending"](album.erasurePending)}
+      </p>
     {/if}
 
     {#if album.items.length === 0}
@@ -135,26 +192,58 @@
 </main>
 
 {#if album.confirm !== null}
-  <div class="sheet" role="alertdialog" aria-modal="true" aria-labelledby="remove-title" aria-describedby="remove-statement">
+  <div
+    class="sheet"
+    role="alertdialog"
+    aria-modal="true"
+    aria-labelledby="remove-title"
+    aria-describedby="remove-statement"
+  >
     <h2 id="remove-title">{en["remove.title"]}</h2>
-    <p id="remove-statement" role="status">{statement(album.confirm.statement)}</p>
+    <p id="remove-statement" role="status">
+      {statement(album.confirm.statement)}
+    </p>
     {#if album.confirm.removing}
       <p class="note" role="status">{en["remove.busy"]}</p>
     {:else}
-      <button class="btn danger" type="button" disabled={album.confirm.statement === null || confirmItem === undefined} onclick={onConfirmRemove}
-        >{en["remove.confirm"]}</button
+      <button
+        class="btn danger"
+        type="button"
+        disabled={album.confirm.statement === null || confirmItem === undefined}
+        onclick={onConfirmRemove}>{en["remove.confirm"]}</button
       >
-      <button class="btn ghost" type="button" onclick={onCancelRemove}>{en["remove.cancel"]}</button>
+      <button class="btn ghost" type="button" onclick={onCancelRemove}
+        >{en["remove.cancel"]}</button
+      >
     {/if}
   </div>
 {/if}
 
 {#if album.leaving}
-  <div class="sheet" role="alertdialog" aria-modal="true" aria-labelledby="leaving-text">
+  <div
+    class="sheet"
+    role="alertdialog"
+    aria-modal="true"
+    aria-labelledby="leaving-text"
+  >
     <p id="leaving-text">{en["album.leaving"]}</p>
-    <button class="btn" type="button" onclick={onStay}>{en["album.leaving.stay"]}</button>
-    <button class="btn ghost" type="button" onclick={onLeave}>{en["album.leaving.go"]}</button>
+    <button class="btn" type="button" onclick={onStay}
+      >{en["album.leaving.stay"]}</button
+    >
+    <button class="btn ghost" type="button" onclick={onLeave}
+      >{en["album.leaving.go"]}</button
+    >
   </div>
+{/if}
+
+{#if album.review !== null}
+  <Review
+    rows={album.review.rows}
+    {onCaption}
+    {onUnpick}
+    onCancel={onCancelReview}
+    onSend={onSendReview}
+  />
 {/if}
 
 {#if album.viewer !== null}
@@ -163,7 +252,8 @@
     viewer={album.viewer}
     standIn={item?.thumb.kind === "ready" ? item.thumb.picture : null}
     count={viewable.length}
-    watermark={[]}
+    watermark=""
+    caption={item?.caption ?? null}
     onClose={onCloseViewer}
   />
 {/if}

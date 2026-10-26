@@ -145,6 +145,8 @@ async function ownerWithPhoto(browser: Browser, relay: Relay) {
   await page.getByRole("button", { name: en["albums.open.a11y"](ALBUM_TITLE) }).click();
   await expect(page.getByRole("heading", { name: ALBUM_TITLE, exact: true })).toBeVisible();
   await page.locator("#add-photos").setInputFiles([{ name: "photo.jpg", mimeType: "image/jpeg", buffer: await canvasJpeg(page, 1200, 900) }]);
+  // The review (flows §3.6): no caption here; viewer.spec.ts covers captions.
+  await page.getByRole("button", { name: en["upload.review.send"](1) }).click();
   await expect(page.getByRole("button", { name: en["album.photo.a11y"](1, 1) })).toBeVisible({ timeout: 60_000 });
   const albumId = JSON.parse(relay.log.find((r) => r.method === "POST" && r.path === "/v1/albums")?.body ?? "{}").id as string;
   return { ctx, page, violations, urls, albumId };
@@ -204,7 +206,9 @@ test("the loop: a QR invite made in one context opens the album in another, and 
   await expect(r.page.getByRole("button", { name: en["grid.photo.a11y"](1, 1) })).toBeVisible({ timeout: 30_000 });
   expect(new URL(r.page.url()).hash, "the fragment is stripped").toBe("");
   await r.page.getByRole("button", { name: en["grid.photo.a11y"](1, 1) }).click();
-  await expect(r.page.getByRole("button", { name: en["viewer.zoom-in"] })).toBeEnabled({ timeout: 30_000 });
+  // Shown: Zoom in becomes available (an unavailable control is aria-disabled, not disabled).
+  await expect(r.page.getByRole("button", { name: en["viewer.zoom-in"] })).toBeVisible();
+  await expect(r.page.getByRole("button", { name: en["viewer.zoom-in"] })).not.toHaveAttribute("aria-disabled", "true", { timeout: 30_000 });
   await r.page.getByRole("button", { name: en["viewer.back"] }).click();
 
   // ── The owner: leave the share screen (asked first), see the open, revoke ──

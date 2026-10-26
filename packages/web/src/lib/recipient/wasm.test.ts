@@ -88,7 +88,7 @@ describe("the recipient path over the real envelope build", () => {
     const grid = session.current.screen;
     if (grid.kind !== "album") throw new Error(grid.kind);
     expect(grid.title).toBe("Verano 2026 · la playa");
-    expect(grid.watermark).toEqual(["Shared with María", "6 Aug 2026"]);
+    expect(grid.watermark).toBe("María · 6 Aug 2026");
     expect(grid.items.map((i) => i.size)).toEqual([{ w: 1600, h: 1200 }, { w: 1600, h: 1200 }]);
     expect(grid.items.map((i) => (i.thumb.kind === "ready" ? (i.thumb.picture as FakePicture).source : i.thumb.kind))).toEqual(["thumb one", "thumb two"]);
 

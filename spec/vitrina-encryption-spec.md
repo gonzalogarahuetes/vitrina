@@ -494,6 +494,7 @@ Filenames, capture timestamps, dimensions, and (Phase 3) duration are serialized
 | `height`   | yes      | Positive integer, as `width`                                                                                         |
 | `name`     | no       | The original filename. Permitted because it is inside the envelope; it never reaches the relay in plaintext         |
 | `taken_at` | no       | The capture time, as the camera recorded it                                                                          |
+| `caption`  | no       | The owner's description of the photo, UTF-8, written at upload. **Added 23 October 2026**, before the first real upload, under this section's additive rule. Clients bound its length (at most 280 code points) so the whole envelope stays inside the relay's 4 KiB metadata cap (api-sketch §9.6); the format sets no maximum. Changing it after upload is Phase 2 |
 
 **Readers MUST ignore unknown fields**, the opposite of the invite payload's rule (invite spec §6): Phase 3 adds `duration`, and a photo reader must not refuse a document that carries it. Changes are therefore additive only, and there is no version field. A missing or non-integer `width` or `height` makes that one asset unavailable, never the whole album.
 

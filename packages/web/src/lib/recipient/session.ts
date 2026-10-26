@@ -35,7 +35,13 @@ export type Thumb =
   /** Its metadata is missing or invalid: this one cell fails, for good, and nothing is fetched for it. */
   | { readonly kind: "unavailable" };
 
-export type Item = { readonly id: string; readonly thumb: Thumb; readonly size: { readonly w: number; readonly h: number } | null };
+export type Item = {
+  readonly id: string;
+  readonly thumb: Thumb;
+  readonly size: { readonly w: number; readonly h: number } | null;
+  /** The owner's caption from the metadata envelope (encryption spec §7). Shown as text, never drawn. */
+  readonly caption: string | null;
+};
 
 export type Viewer = {
   readonly index: number;
@@ -60,7 +66,8 @@ export type Screen =
       readonly kind: "album";
       readonly phase: "loading" | "ready";
       readonly title: string;
-      readonly watermark: readonly string[];
+      /** The watermark's one line; empty draws none. */
+      readonly watermark: string;
       readonly items: readonly Item[];
       readonly viewer: Viewer | null;
     };
@@ -95,19 +102,25 @@ const DEFAULT_RETRY_AFTER_S = 5;
 const decodeBlob = (b64: string) => decodeBase64urlRange(b64, 1, 64 * 1024 * 1024);
 
 /*
- * The metadata JSON, as the owner decided it: `width` and `height` are required
- * positive integers, of the image as encrypted; `name` and `taken_at` are
- * optional; unknown fields are ignored; there is no `v`. Null means this one
- * item's metadata is unusable, which fails its cell and nothing else.
+ * The metadata JSON, as encryption spec §7 fixes it: `width` and `height` are
+ * required positive integers, of the image as encrypted; `name`, `taken_at`
+ * and `caption` are optional; unknown fields are ignored; there is no `v`.
+ * Null means this one item's metadata is unusable, which fails its cell and
+ * nothing else. A caption that is missing, not a string, or only whitespace
+ * is no caption: it never makes the item unusable. Its length is not checked
+ * here: the format sets no maximum, and the relay's 4 KiB cap bounds it.
  */
 const positiveInt = (v: unknown): v is number => typeof v === "number" && Number.isInteger(v) && v > 0;
 
-export function readSize(json: string): { w: number; h: number } | null {
+export type Meta = { readonly size: { readonly w: number; readonly h: number }; readonly caption: string | null };
+
+export function readMeta(json: string): Meta | null {
   try {
     const v: unknown = JSON.parse(json);
     if (typeof v !== "object" || v === null || Array.isArray(v)) return null;
-    const { width, height } = v as { width?: unknown; height?: unknown };
-    return positiveInt(width) && positiveInt(height) ? { w: width, h: height } : null;
+    const { width, height, caption } = v as { width?: unknown; height?: unknown; caption?: unknown };
+    if (!positiveInt(width) || !positiveInt(height)) return null;
+    return { size: { w: width, h: height }, caption: typeof caption === "string" && caption.trim() !== "" ? caption : null };
   } catch {
     return null;
   }
@@ -137,8 +150,8 @@ export class RecipientSession {
    */
   private inviteKey: Uint8Array | null = null;
   private details: Promise<AlbumDetails> | null = null;
-  /** The decrypted label and today's date, as the watermark's two lines. Dropped with the key. */
-  private watermark: readonly string[] = [];
+  /** The decrypted label and today's date, as the watermark's line. Dropped with the key. */
+  private watermark = "";
 
   private halted = false;
   private online: { promise: Promise<void>; resolve: () => void } | null = null;
@@ -194,7 +207,7 @@ export class RecipientSession {
     this.material = null;
     this.inviteKey?.fill(0);
     this.inviteKey = null;
-    this.watermark = [];
+    this.watermark = "";
     this.details = null;
     this.api = null;
     this.albumIdBytes = null;
@@ -475,18 +488,19 @@ export class RecipientSession {
     const items: Item[] = details.media
       .filter((m) => m.status === "ready")
       .map((m) => {
-        let size: Item["size"] = null;
+        let meta: Meta | null = null;
         const env = envelopes.get(m.id);
         if (env !== undefined) {
           try {
             const plain = this.deps.envelope.decryptMeta(key, uuidToBytes(m.id), decodeBlob(env));
-            size = readSize(new TextDecoder().decode(plain));
+            meta = readMeta(new TextDecoder().decode(plain));
+            plain.fill(0);
           } catch (e) {
             if (e instanceof EnvelopeUnavailable) throw e;
           }
         }
-        const thumb: Thumb = size === null ? { kind: "unavailable" } : { kind: "loading" };
-        return { id: m.id, thumb, size };
+        const thumb: Thumb = meta === null ? { kind: "unavailable" } : { kind: "loading" };
+        return { id: m.id, thumb, size: meta?.size ?? null, caption: meta?.caption ?? null };
       });
 
     this.set({ kind: "album", phase: "ready", title, watermark: this.watermark, items, viewer: null });

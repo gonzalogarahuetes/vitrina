@@ -154,6 +154,40 @@ describe("the owner's album copy (flows §3.4, §3.6, §3.7)", () => {
   });
 });
 
+describe("the watermark (brief §5, flows §4.4)", () => {
+  it("is one short line: name · date, with nothing added", () => {
+    expect(en.watermark("María", "6 Aug 2026")).toBe("María · 6 Aug 2026");
+  });
+
+  it("never claims to identify, trace or track anyone", () => {
+    expect(en.watermark("María", "6 Aug 2026")).not.toMatch(/track|trace|identif|record|logged/i);
+    expect(en["invite.name.hint"]).not.toMatch(/track|trace|identif|stop|prevent|protect/i);
+  });
+
+  it("the invite's example is the watermark as drawn", () => {
+    expect(en["invite.name.hint"]).toContain(en.watermark("María", "6 Aug 2026"));
+  });
+});
+
+describe("the caption copy (flows §3.6, encryption spec §7)", () => {
+  it("may say the server can't read it, and nothing stronger (brief §3)", () => {
+    expect(en["upload.review.caption.hint"]).toMatch(/servers can't read it/i);
+    for (const [slot, s] of strings().filter(([slot]) => slot.startsWith("upload.review."))) {
+      expect(s, slot).not.toMatch(/\b(private|secret|safe|secure|protected|encrypted|nobody|no one|only you|only they)\b/i);
+    }
+  });
+
+  it("states the limit in characters, matching caption.ts", async () => {
+    const { CAPTION_MAX } = await import("$lib/owner/caption");
+    expect(en["upload.review.caption.too-long"]).toContain(String(CAPTION_MAX));
+    expect(en["upload.review.caption.count"](12)).toBe(`12 of ${CAPTION_MAX} characters`);
+  });
+
+  it("the review says nothing is sent until Send, which is true by construction (album.test.ts)", () => {
+    expect(en["upload.review.intro"]).toMatch(/nothing is sent until you press send/i);
+  });
+});
+
 describe("the invite copy (flows §3.8)", () => {
   const invite = () => strings().filter(([slot]) => slot.startsWith("invite."));
 

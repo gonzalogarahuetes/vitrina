@@ -213,8 +213,13 @@ test.describe("a reload of the same tab continues (flows §4.7)", () => {
     const violations = await watch(page);
     await relay(context, f, new URL(baseURL ?? "").origin);
 
+    // Onboarding starts the album request (flows §4.4) and may show before it is answered. Flipped
+    // while it is in flight, the old page hears the 403 first, forgets the invite as flows §4.6
+    // says, and the reload finds nothing: the dead page, not the revoked one. Seen 2 in 20.
+    const albumAnswered = page.waitForResponse((r) => new URL(r.url()).pathname === `/v1/albums/${f.albumId}`);
     await page.goto(`/v/${f.qrFragment}`);
     await expect(page.getByRole("button", { name: en["onboarding.continue"] })).toBeVisible();
+    await albumAnswered;
 
     f.qr.revoked = true;
     await page.reload();
