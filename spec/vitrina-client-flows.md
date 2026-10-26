@@ -134,9 +134,11 @@
 
 ### 3.6 Upload
 
-**Each item moves through this ladder.** Everything up to step 3 happens on the device.
+**Review first.** Choosing photos opens a review list, not the upload: a small preview of each photo, drawn on the device with its orientation applied; an optional caption per photo (at most 280 code points, encryption spec §7); a way to take a photo out of the selection; and one button to send them. **Nothing is prepared, encrypted or sent before that button.** It is the last chance to catch a wrong photo, which costs less than removing it afterwards (§3.7). _Added 23 October 2026: a caption has to exist before its photo is encrypted._
 
-1. **Prepare:** decode the image, strip EXIF and GPS (non-negotiable #11), downscale to a 1600 px long edge (non-negotiable #14), and generate the thumbnail (non-negotiable #13). The filename and capture time go only into the metadata envelope (non-negotiable #12; encryption spec §7).
+**Then each item moves through this ladder.** Everything up to step 3 happens on the device.
+
+1. **Prepare:** decode the image, strip EXIF and GPS (non-negotiable #11), downscale to a 1600 px long edge (non-negotiable #14), and generate the thumbnail (non-negotiable #13). The filename, the caption and the capture time go only into the metadata envelope (non-negotiable #12; encryption spec §7).
 2. **Encrypt:** generate the media id, then encrypt the asset, thumbnail and metadata envelopes under keys derived from `K_album`.
 3. `POST /v1/albums/{album_id}/media` creates the row as `pending`. A `409` means it was already created: go on to step 4 **with the same id**, never a new one (api-sketch §9.6).
 4. `PUT /v1/media/{media_id}/asset` and `PUT /v1/media/{media_id}/thumbnail`, in either order.

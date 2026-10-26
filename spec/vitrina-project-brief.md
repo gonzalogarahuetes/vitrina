@@ -69,7 +69,7 @@ The parent's device encrypts before upload. The relay stores and forwards opaque
 
 ## 5. Watermarking: client-side and visible
 
-Each rendered image carries a visible overlay: recipient name and date, e.g. _"Shared privately with María · 6 Aug 2026."_
+Each rendered image carries a visible overlay: recipient name and date, e.g. _"María · 6 Aug 2026"_, translucent, in a corner of whatever part of the photo is on screen, so it is in every capture at any zoom without covering the picture. _Shortened and moved to a corner on 23 October 2026, after the first version proved intrusive; what it must do did not change._
 
 This is generated **client-side, after decryption.** That means it is bypassable by anyone who opens DevTools and edits the JavaScript. This is an accepted trade, and the reasoning must be preserved so nobody "fixes" it later:
 
