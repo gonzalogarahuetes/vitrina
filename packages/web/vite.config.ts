@@ -87,6 +87,15 @@ export default defineConfig(({ command, mode }) => {
     test: {
       include: ["src/**/*.test.ts", "test/**/*.test.ts"],
       environment: "node",
+      // Vitest 5 persists transformed modules in node_modules/.vitest-cache,
+      // keyed by the module's own content. A module whose transform embeds an
+      // `import.meta.glob` result — lib/owner/wordlists/index.ts, the list
+      // loader — is then served stale when a file is added or removed beside
+      // it: es.txt arrived, index.ts did not change, and the cached loader
+      // kept offering English alone (26 October 2026). The other direction is
+      // worse, a removed list still "offered" and a green test. Off, so a run
+      // sees the folder as it is; the suite is seconds either way.
+      fsModuleCache: false,
     },
   };
 });

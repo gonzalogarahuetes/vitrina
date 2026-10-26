@@ -11,7 +11,8 @@
     "prepare": "svelte-kit sync || echo ''",
     "lint": "svelte-kit sync && eslint . && svelte-check --tsconfig ./tsconfig.json --fail-on-warnings",
     "test": "vitest run",
-    "test:browser": "playwright test"
+    "test:browser": "playwright test",
+    "wordlist:es": "node --experimental-strip-types scripts/build-wordlist-es.mjs"
   },
   "dependencies": {
     "@vitrina/envelope": "workspace:*",

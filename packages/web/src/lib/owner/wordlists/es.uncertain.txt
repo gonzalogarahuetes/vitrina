@@ -1,0 +1,138 @@
+# Words kept in es.txt but flagged `content:uncertain` on the review sheet,
+# because a fluent reader has to decide them. Same format as es.exclude.txt.
+# Each line says why. After review, move a word to es.exclude.txt to drop it,
+# or delete its line here to clear the flag; rebuild either way. Lines cleared on
+# 23 October 2026 were words the owner accepted on review (brief §15.3).
+
+# ── innocent words with a sexual or scatological second meaning somewhere ──
+huevo          # egg; ES vulgar (testicle) in the plural, the plural is excluded
+bola           # ball; same
+leche          # milk; ES vulgar (semen; "mala leche")
+caliente       # hot; "estar caliente" is sexual everywhere
+chaqueta       # jacket; MX "hacerse una chaqueta" is masturbation
+goma           # rubber, eraser; AR condom
+conejo         # rabbit; ES vulgar for the vulva
+palo           # stick; ES "echar un palo" is sex
+torta          # cake; also a slap, and ES slang for a lesbian ("tortillera")
+bollo          # bun; ES slang near "bollera"
+pepa           # seed; CO vulgar
+pompa          # bubble; MX "pompas" are buttocks
+recto          # straight; also the rectum
+querido        # dear; also "lover"
+querida        # dear; also "mistress"
+bombón         # chocolate; also "hottie"
+cuerno         # horn; "poner los cuernos" is cheating
+chorizo        # sausage; ES slang for a thief
+melón          # melon; ES slang for an idiot
+plátano        # banana; phallic slang
+banana         # same
+salchicha      # same
+pepino         # cucumber; same
+chupete        # dummy; harmless, listed so a reviewer sees the chup- stem was weighed
+pájaro         # bird; penis in several regions, and slur for a gay man in others
+pato           # duck; slur for a gay man in several regions
+paloma         # dove; penis in some regions
+mariposa       # butterfly; slur for a gay man in some regions
+mono           # monkey, cute; racial slur in some uses
+mona           # same
+macho          # male animal; also machismo
+hembra         # female animal; can read as crude for a woman
+cacho          # piece; AR vulgar in some uses, also "cuerno"
+chucho         # dog, cold shiver; vulgar in some regions
+cuco           # cute, and the bogeyman
+
+# ── everyday words that are also insults, or body-shaming ─────────────────
+gordo          # fat; LatAm affectionate for babies, insult elsewhere
+gorda
+gordito
+gordita
+flaco          # thin; same pattern
+flaca
+enano          # dwarf; fairy tales, also an insult
+loco           # crazy; playful and clinical
+loca
+viejo          # old; affectionate ("mi viejo") and dismissive
+vieja
+anciano        # elderly; respectful, but still an age word
+anciana
+calvo          # bald
+pelón          # bald; LatAm affectionate for a baby
+burro          # donkey; insult
+foca           # seal; same
+ballena        # whale; same
+cerdo          # pig; insult
+cerdito        # piglet; affectionate
+gallina        # hen; coward
+cabra          # goat; "estar como una cabra"
+rata           # rat; insult
+gusano         # worm; insult
+serpiente      # snake; fine as an animal
+alacrán        # scorpion; fine as an animal
+bestia         # beast; insult
+pesado         # heavy; "annoying"
+pesada
+flojo          # loose; "lazy" in LatAm
+floja
+chulo          # ES "cool", LatAm "pimp" or "cocky"
+chula
+payaso         # clown; insult
+pícaro         # mischievous; affectionate for a child
+golfo          # gulf; ES "rascal"
+borde          # edge; ES "rude"
+bárbaro        # AR "great"; also "barbarian"
+gruñón         # grumpy; the dwarf
+triste         # sad; not in the excluded categories, but a sad word
+tristeza
+malo           # bad
+mala
+basura         # rubbish; insult
+nena           # little girl; also condescending for a woman
+nene
+señora
+cara           # face; fine, listed because "caradura" was weighed
+ombligo        # navel
+muslo          # thigh
+tripa          # belly, gut
+vientre        # belly, womb
+hueso          # bone
+lunar          # mole, polka dot
+grano          # grain, pimple
+callo          # callus
+lombriz        # earthworm, also intestinal worm
+hongo          # mushroom, fungus
+pañal          # nappy; bodily, but a baby word
+joroba         # hump; "jorobar" is ES for "to annoy"
+rayos          # rays, lightning; also "¡rayos!"
+porras         # ES fried dough; also "¡porras!"
+hocico         # snout
+espada         # sword; toys, fairy tales
+monstruo       # monster; children love them
+fantasma       # ghost
+bruja          # witch; fairy tales
+brujo
+dragón         # dragon; fine, listed beside the others for a consistent decision
+pirata         # pirate; same
+guardia        # guard
+justicia       # justice
+paro           # ES "unemployment"; LatAm "strike"
+estado         # state; also condition
+ciudadano      # citizen
+
+# ── religious words that are also everyday or seasonal ────────────────────
+ángel          # angel; "angelito" for a baby
+angelito
+milagro        # miracle
+divina
+cruz           # cross
+velo           # veil
+pastor         # shepherd; also a pastor, and the dog
+navidad        # Christmas; family photos
+pascua         # Easter
+belén          # nativity scene, also a name
+reyes          # the Three Kings; also kings
+rey            # king; chess, stories; the monarchy in Spain
+reina          # queen
+príncipe       # prince
+princesa       # princess
+corona         # crown
+trono          # throne

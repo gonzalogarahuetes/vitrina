@@ -1,0 +1,67 @@
+es.txt — the Spanish passphrase wordlist (encryption spec §6.3, brief §15.2)
+
+es.txt is a derived work: 7,776 words selected from a frequency list, filtered
+with a dictionary and two treebanks, and reviewed by a fluent reader. It is
+built by packages/web/scripts/build-wordlist-es.mjs from the inputs below,
+which are not in this repository; es.sources.json pins each one by SHA-256 and
+the build refuses an input whose hash differs. The words are in the list; the
+frequency counts, lemmas, tags and glosses of the sources are not.
+
+Because the frequency list and the dictionary are share-alike, es.txt itself
+is licensed under CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0/).
+That licence covers this one file; nothing else in the repository is under it.
+
+----------------------------------------------------------------------------
+1. Frequency ranks: FrequencyWords, OpenSubtitles 2018, Spanish, full list
+----------------------------------------------------------------------------
+
+Source:    https://github.com/hermitdave/FrequencyWords (Hermit Dave)
+File:      https://raw.githubusercontent.com/hermitdave/FrequencyWords/master/content/2018/es/es_full.txt
+Retrieved: 22 October 2026
+Licence:   CC BY-SA 4.0 (content; the repository's code is MIT)
+           https://creativecommons.org/licenses/by-sa/4.0/
+Changes:   words selected and reordered; counts not reproduced.
+Derived from OpenSubtitles2018 (http://opus.nlpl.eu/OpenSubtitles2018.php),
+P. Lison and J. Tiedemann, "OpenSubtitles2016: Extracting Large Parallel
+Corpora from Movie and TV Subtitles", LREC 2016.
+
+----------------------------------------------------------------------------
+2. Part of speech, inflection and register: Wiktionary, Spanish entries
+----------------------------------------------------------------------------
+
+Source:    https://kaikki.org/dictionary/Spanish/ — the English Wiktionary's
+           Spanish entries, machine-readable, extracted with wiktextract
+           (Tatu Ylonen, "Wiktextract: Wiktionary as Machine-Readable
+           Structured Data", LREC 2022)
+File:      https://kaikki.org/dictionary/Spanish/kaikki.org-dictionary-Spanish.jsonl
+Retrieved: 22 October 2026
+Licence:   CC BY-SA 3.0 and GFDL, as Wiktionary's content
+           https://creativecommons.org/licenses/by-sa/3.0/
+           https://en.wiktionary.org/wiki/Wiktionary:Copyrights
+Changes:   used to classify words; no entry text is reproduced.
+
+----------------------------------------------------------------------------
+3. Part of speech in running text: Universal Dependencies, Spanish AnCora
+----------------------------------------------------------------------------
+
+Source:    https://github.com/UniversalDependencies/UD_Spanish-AnCora
+Files:     https://raw.githubusercontent.com/UniversalDependencies/UD_Spanish-AnCora/master/es_ancora-ud-train.conllu
+           https://raw.githubusercontent.com/UniversalDependencies/UD_Spanish-AnCora/master/es_ancora-ud-dev.conllu
+           https://raw.githubusercontent.com/UniversalDependencies/UD_Spanish-AnCora/master/es_ancora-ud-test.conllu
+Retrieved: 22 October 2026
+Licence:   CC BY 4.0, https://creativecommons.org/licenses/by/4.0/
+Cite:      Taulé, M., M.A. Martí, M. Recasens (2008), "AnCora: Multilevel
+           Annotated Corpora for Catalan and Spanish", LREC 2008.
+Changes:   used to count parts of speech; no text is reproduced.
+
+----------------------------------------------------------------------------
+4. Part of speech in running text: Universal Dependencies, Spanish GSD
+----------------------------------------------------------------------------
+
+Source:    https://github.com/UniversalDependencies/UD_Spanish-GSD
+Files:     https://raw.githubusercontent.com/UniversalDependencies/UD_Spanish-GSD/master/es_gsd-ud-train.conllu
+           https://raw.githubusercontent.com/UniversalDependencies/UD_Spanish-GSD/master/es_gsd-ud-dev.conllu
+           https://raw.githubusercontent.com/UniversalDependencies/UD_Spanish-GSD/master/es_gsd-ud-test.conllu
+Retrieved: 22 October 2026
+Licence:   CC BY-SA 3.0, https://creativecommons.org/licenses/by-sa/3.0/
+Changes:   used to count parts of speech; no text is reproduced.

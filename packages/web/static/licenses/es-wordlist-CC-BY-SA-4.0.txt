@@ -1,0 +1,35 @@
+Spanish passphrase wordlist
+
+The Spanish passphrase words are a selection of 7,776 words derived from the
+sources below, chosen and reviewed for Vitrina. The list is a derived work and
+is made available under the Creative Commons Attribution-ShareAlike 4.0
+International licence (CC BY-SA 4.0), https://creativecommons.org/licenses/by-sa/4.0/.
+The words are what the list carries; no frequency count, definition, tag or
+sentence from any source is reproduced.
+
+Frequency ranks: "FrequencyWords" by Hermit Dave, the Spanish full list for
+OpenSubtitles 2018, https://github.com/hermitdave/FrequencyWords, used under
+CC BY-SA 4.0, https://creativecommons.org/licenses/by-sa/4.0/. Derived from
+OpenSubtitles2018 (http://opus.nlpl.eu/OpenSubtitles2018.php): P. Lison and
+J. Tiedemann, "OpenSubtitles2016: Extracting Large Parallel Corpora from Movie
+and TV Subtitles", LREC 2016. Words selected and reordered; counts not reproduced.
+
+Part of speech, inflection and register: the Spanish entries of the English
+Wiktionary, https://en.wiktionary.org/, as extracted by wiktextract and
+published at https://kaikki.org/dictionary/Spanish/ (Tatu Ylonen,
+"Wiktextract: Wiktionary as Machine-Readable Structured Data", LREC 2022),
+used under CC BY-SA 3.0, https://creativecommons.org/licenses/by-sa/3.0/,
+and the GNU Free Documentation License. Used to classify words; no entry
+text is reproduced.
+
+Part of speech in running text: Universal Dependencies, UD_Spanish-AnCora,
+https://github.com/UniversalDependencies/UD_Spanish-AnCora, used under
+CC BY 4.0, https://creativecommons.org/licenses/by/4.0/. Taulé, M.,
+M.A. Martí, M. Recasens (2008), "AnCora: Multilevel Annotated Corpora for
+Catalan and Spanish", LREC 2008. Used to count parts of speech; no text is
+reproduced.
+
+Part of speech in running text: Universal Dependencies, UD_Spanish-GSD,
+https://github.com/UniversalDependencies/UD_Spanish-GSD, used under
+CC BY-SA 3.0, https://creativecommons.org/licenses/by-sa/3.0/. Used to count
+parts of speech; no text is reproduced.
