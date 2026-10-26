@@ -13,3 +13,8 @@ dist/
 # The server's local environment, copied from .env.example. Never committed.
 # Root only: packages/web/.env is committed on purpose (VITE_API_ORIGIN).
 /.env
+
+# Downloaded corpora the Spanish wordlist build reads (encryption spec §6.3).
+# Owner-supplied, like the font and the password blocklist; the hashes that
+# pin them live beside the list (packages/web/src/lib/owner/wordlists/).
+/corpus/

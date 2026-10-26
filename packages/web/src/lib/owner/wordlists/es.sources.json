@@ -1,0 +1,71 @@
+{
+  "list": "es.txt",
+  "built_by": "packages/web/scripts/build-wordlist-es.mjs",
+  "note": "Inputs live in corpus/ (gitignored). The build refuses to run when a file's SHA-256 differs from the one pinned here, so a changed upstream file cannot silently produce a different list. Human-readable attribution is in es.LICENSE.txt.",
+  "files": [
+    {
+      "name": "es_full.txt",
+      "role": "frequency ranks",
+      "url": "https://raw.githubusercontent.com/hermitdave/FrequencyWords/master/content/2018/es/es_full.txt",
+      "licence": "CC-BY-SA-4.0",
+      "retrieved": "2026-10-22",
+      "sha256": "3899d88da64aff6bea4d3f8580d27d60c12e2d3bc1674b9708bee541b9b1302c"
+    },
+    {
+      "name": "kaikki.org-dictionary-Spanish.jsonl",
+      "role": "part of speech, inflection, register",
+      "url": "https://kaikki.org/dictionary/Spanish/kaikki.org-dictionary-Spanish.jsonl",
+      "licence": "CC-BY-SA-3.0",
+      "retrieved": "2026-10-22",
+      "sha256": "7b23a5dc004a47b63edc2e79a34b246bbf59d1a3067a1843a5c554c0e252b97c"
+    },
+    {
+      "name": "es_ancora-ud-train.conllu",
+      "role": "lemma and part of speech",
+      "url": "https://raw.githubusercontent.com/UniversalDependencies/UD_Spanish-AnCora/master/es_ancora-ud-train.conllu",
+      "licence": "CC-BY-4.0",
+      "retrieved": "2026-10-22",
+      "sha256": "47b6fc49d6ed48a016e7fa5ad9f5c7ecf3ec21e9db005df3ea14d10f07c6deb6"
+    },
+    {
+      "name": "es_ancora-ud-dev.conllu",
+      "role": "lemma and part of speech",
+      "url": "https://raw.githubusercontent.com/UniversalDependencies/UD_Spanish-AnCora/master/es_ancora-ud-dev.conllu",
+      "licence": "CC-BY-4.0",
+      "retrieved": "2026-10-22",
+      "sha256": "1a132068062edf2654fb45b41cd4c59ba7e5c18e7c5f642ed5a9cc351fd9f0fe"
+    },
+    {
+      "name": "es_ancora-ud-test.conllu",
+      "role": "lemma and part of speech",
+      "url": "https://raw.githubusercontent.com/UniversalDependencies/UD_Spanish-AnCora/master/es_ancora-ud-test.conllu",
+      "licence": "CC-BY-4.0",
+      "retrieved": "2026-10-22",
+      "sha256": "679f1c05ca654aa26801c80319df45f8f97606718fb534b91755b48f3e67fa6f"
+    },
+    {
+      "name": "es_gsd-ud-train.conllu",
+      "role": "lemma and part of speech",
+      "url": "https://raw.githubusercontent.com/UniversalDependencies/UD_Spanish-GSD/master/es_gsd-ud-train.conllu",
+      "licence": "CC-BY-SA-3.0",
+      "retrieved": "2026-10-22",
+      "sha256": "9e527de0e45dca4a8ef00105a3ebd102da941964b35f01916a6baa6288130f7b"
+    },
+    {
+      "name": "es_gsd-ud-dev.conllu",
+      "role": "lemma and part of speech",
+      "url": "https://raw.githubusercontent.com/UniversalDependencies/UD_Spanish-GSD/master/es_gsd-ud-dev.conllu",
+      "licence": "CC-BY-SA-3.0",
+      "retrieved": "2026-10-22",
+      "sha256": "704fb19afc0a34cff476e1a70351b7026c4364f862e8e8388b02873852567c22"
+    },
+    {
+      "name": "es_gsd-ud-test.conllu",
+      "role": "lemma and part of speech",
+      "url": "https://raw.githubusercontent.com/UniversalDependencies/UD_Spanish-GSD/master/es_gsd-ud-test.conllu",
+      "licence": "CC-BY-SA-3.0",
+      "retrieved": "2026-10-22",
+      "sha256": "ecce253f44bffaa9803ae7ec0c10911c13e4f1fc3cb439dbd1db2cebe0a12741"
+    }
+  ]
+}

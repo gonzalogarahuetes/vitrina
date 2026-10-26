@@ -446,6 +446,7 @@ export const en = {
   "licences.intro": "Vitrina includes work by other people, used under these licences. Each link opens the licence text.",
   "licences.font": "The Atkinson Hyperlegible font — SIL Open Font License 1.1",
   "licences.wordlist.en": "The English passphrase words (EFF Large Wordlist) — CC BY 4.0",
+  "licences.wordlist.es": "The Spanish passphrase words, a selection built from OpenSubtitles word frequencies, Wiktionary and the Universal Dependencies Spanish treebanks — CC BY-SA 4.0",
   "licences.blocklist": "The very common passwords refused at sign-up (SecLists) — MIT License",
   "licences.back": "Back to Vitrina",
 } as const;

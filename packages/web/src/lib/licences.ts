@@ -19,5 +19,6 @@ export type Licence = {
 export const LICENCES: readonly Licence[] = [
   { file: "OFL-AtkinsonHyperlegible.txt", covers: "licences.font" },
   { file: "EFF-wordlist-CC-BY-4.0.txt", covers: "licences.wordlist.en", wordlist: "en" },
+  { file: "es-wordlist-CC-BY-SA-4.0.txt", covers: "licences.wordlist.es", wordlist: "es" },
   { file: "SecLists-MIT.txt", covers: "licences.blocklist" },
 ];
