@@ -10,7 +10,7 @@
     watermark,
     onOpen,
     onRetry,
-  }: { item: Item; index: number; count: number; watermark: readonly string[]; onOpen: () => void; onRetry: () => void } = $props();
+  }: { item: Item; index: number; count: number; watermark: string; onOpen: () => void; onRetry: () => void } = $props();
 
   let canvas: HTMLCanvasElement | undefined = $state();
 
@@ -18,7 +18,7 @@
   $effect(() => {
     const c = canvas;
     const thumb = item.thumb;
-    const lines = watermark;
+    const mark = watermark;
     if (c === undefined || thumb.kind !== "ready") return;
     const draw = (): void => {
       const size = c.clientWidth;
@@ -29,7 +29,7 @@
       // sRGB, as the JPEGs were encoded (owner/imaging.ts).
       const ctx = c.getContext("2d", { colorSpace: "srgb" });
       try {
-        if (ctx !== null) drawCell(ctx, thumb.picture, size, dpr, lines);
+        if (ctx !== null) drawCell(ctx, thumb.picture, size, dpr, mark);
       } catch {
         // The picture was closed underneath us (revoked mid-draw): nothing to show.
       }

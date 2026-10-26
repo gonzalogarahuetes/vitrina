@@ -46,8 +46,8 @@
       // sRGB, as the JPEGs were encoded (imaging.ts).
       const ctx = c.getContext("2d", { colorSpace: "srgb" });
       try {
-        // The owner's own view: no recipient, so no watermark lines.
-        if (ctx !== null) drawCell(ctx, thumb.picture, size, dpr, []);
+        // The owner's own view: no recipient, so no watermark.
+        if (ctx !== null) drawCell(ctx, thumb.picture, size, dpr, "");
       } catch {
         // Closed underneath us on the way out.
       }

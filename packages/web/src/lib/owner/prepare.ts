@@ -12,7 +12,8 @@
  *   4. the thumbnail the same way, 480 px, and one chunk at most (#13;
  *      api-sketch §11.3);
  *   5. the metadata document of encryption spec §7: the dimensions as
- *      encrypted, and the original filename (#12), which exists nowhere else.
+ *      encrypted, the original filename (#12), which exists nowhere else, and
+ *      the owner's caption, if they wrote one, which likewise exists nowhere else.
  *
  * Stripping is structural, so it is TESTED on the output rather than assumed:
  * both JPEGs are scanned (jpeg-scan.ts) and anything found fails the item
@@ -197,9 +198,15 @@ async function decode(file: File, imaging: Imaging): Promise<Bitmap | null> {
   return full;
 }
 
+/**
+ * `caption` is the owner's text as it will be stored (caption.ts's
+ * captionValue, already checked), or null for none. It goes into the metadata
+ * document and nowhere else.
+ */
 export async function prepare(
   file: File,
   imaging: Imaging,
+  caption: string | null = null,
 ): Promise<PrepareResult> {
   let bitmap: Bitmap | null;
   try {
@@ -242,12 +249,14 @@ export async function prepare(
     return { ok: false, error: "thumb-too-large" };
   }
 
-  // Encryption spec §7, fixed 15 October 2026. No taken_at in v1: reading it means parsing EXIF.
+  // Encryption spec §7, fixed 15 October 2026; `caption` added 23 October. No taken_at
+  // in v1: reading it means parsing EXIF.
   const doc: Record<string, unknown> = {
     width: size.width,
     height: size.height,
   };
   if (file.name !== "") doc["name"] = file.name;
+  if (caption !== null && caption !== "") doc["caption"] = caption;
   const meta = new TextEncoder().encode(
     JSON.stringify(doc),
   ) as Uint8Array<ArrayBuffer>;

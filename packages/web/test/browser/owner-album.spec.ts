@@ -8,13 +8,15 @@
  * landscape with orientation 6, as a phone stores a portrait, and is larger
  * than 1600 px, so the downscaled-decode path runs.
  *
- *   1. One walk: open an album, add two photos, see each move through its
- *      states to the server's ready, see the thumbnails drawn the right way
- *      up, open the full photo, remove one (202, then 204 on the retry).
- *   2. Every request: no filename in any path, query, header or body; uploads
+ *   1. One walk: open an album, choose two photos, see the review (canvas
+ *      previews, no request while it is open), caption one, send, see each
+ *      move through its states to the server's ready, see the thumbnails
+ *      drawn the right way up, open the full photo with its caption below it,
+ *      remove one (202, then 204 on the retry).
+ *   2. Every request: no filename and no caption in any path, query, header or body; uploads
  *      are octet-stream envelopes; the thumbnail is one chunk; the create's
  *      id is the PUTs' id; no full asset before the viewer.
- *   3. Storage at the end, the filenames added to the secrets.
+ *   3. Storage at the end, the filenames and the caption added to the secrets.
  *   4. No CSP violation and no uncaught error.
  *   5. A lost create response: the resend meets 409 and goes on with the same id.
  *   6. Ready only on the server's word: held as processing, the item waits.
@@ -37,8 +39,23 @@ const ARGON = 60_000;
 const ANDROID = "IMG_20260612_bathtime.jpg";
 const IPHONE = "IMG_4821 school gate.JPG";
 const CHUNK = 262144;
+/** Tags, an ampersand, an emoji and a second line: shown literally, as text, or the test fails. */
+const CAPTION = "Bañera con la abuela <b>¡sí!</b> & 🛁\nsegunda línea";
 
 type Relay = ReturnType<typeof fakeRelay>;
+
+/** Every spelling of a caption that could leak: as typed, JSON-escaped, URL-encoded, as UTF-8 bytes, base64. */
+function captionSpellings(c: string): string[] {
+  const utf8 = Buffer.from(c, "utf8");
+  return [c, c.split("\n")[0] as string, "abuela", JSON.stringify(c).slice(1, -1), encodeURIComponent(c), utf8.toString("latin1"), utf8.toString("base64").slice(0, 16), utf8.toString("base64url").slice(0, 16)];
+}
+
+function assertNoCaption(log: readonly Logged[], caption: string): void {
+  for (const r of log) {
+    const where = [r.path, r.search, r.hash, r.body, ...Object.values(r.headers), r.bytes?.toString("latin1") ?? ""];
+    for (const s of captionSpellings(caption)) for (const w of where) expect(w, `caption in ${r.method} ${r.path}`).not.toContain(s);
+  }
+}
 
 /** Every spelling of a filename that could leak. */
 function spellings(name: string): string[] {
@@ -99,8 +116,21 @@ async function signedUpInAlbum(browser: Browser, relay: Relay) {
   return { ctx, page, violations };
 }
 
-async function add(page: Page, files: { name: string; buffer: Buffer }[]): Promise<void> {
+/**
+ * Choose files, then the review (flows §3.6): a preview per photo, drawn to
+ * canvas, no request at all while it is open, optional captions, then Send.
+ */
+async function add(page: Page, files: { name: string; buffer: Buffer }[], opts: { relay?: Relay; captions?: string[] } = {}): Promise<void> {
+  const before = opts.relay?.log.length;
   await page.locator("#add-photos").setInputFiles(files.map((f) => ({ ...f, mimeType: "image/jpeg" })));
+  const review = page.getByRole("dialog", { name: en["upload.review.title"](files.length) });
+  await expect(review).toBeVisible();
+  await expect(review.locator('li[data-preview="ready"], li[data-preview="failed"]')).toHaveCount(files.length, { timeout: 30_000 });
+  expect(await review.locator("img").count(), "previews are canvas, never an image element").toBe(0);
+  for (const [i, c] of (opts.captions ?? []).entries()) await review.locator("li").nth(i).getByLabel(en["upload.review.caption.label"]).fill(c);
+  if (opts.relay !== undefined) expect(opts.relay.log.length, "no request while the review is open").toBe(before);
+  await review.getByRole("button", { name: en["upload.review.send"](files.length) }).click();
+  await expect(review).toHaveCount(0);
 }
 
 const cells = (page: Page) => page.locator("li.cell");
@@ -131,10 +161,34 @@ test("the owner's album: add a portrait and a landscape phone photo, see them re
   // Stored and shown 2000×1500, GPS and all.
   const landscape = await phonePhoto(page, 2000, 1500, 1);
   const before = relay.log.length;
-  await add(page, [
-    { name: IPHONE, buffer: portrait },
-    { name: ANDROID, buffer: landscape },
-  ]);
+
+  // ── The review: a wrong photo taken out, then nothing was ever sent for it ──
+  await page.locator("#add-photos").setInputFiles([{ name: "wrong.jpg", mimeType: "image/jpeg", buffer: landscape }]);
+  await page.getByRole("button", { name: en["upload.review.remove.a11y"]("wrong.jpg") }).click();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  expect(relay.log.length, "nothing sent for a photo taken out").toBe(before);
+
+  // ── The caption field: counted in code points, refused past 280 ─────────
+  await page.locator("#add-photos").setInputFiles([{ name: "long.jpg", mimeType: "image/jpeg", buffer: landscape }]);
+  const field = page.getByRole("dialog").getByLabel(en["upload.review.caption.label"]);
+  await field.fill("🛁".repeat(281));
+  await expect(page.getByText(en["upload.review.caption.too-long"])).toBeVisible();
+  await expect(page.getByRole("button", { name: en["upload.review.send"](1) })).toBeDisabled();
+  await field.fill("🛁".repeat(280));
+  expect(await field.inputValue(), "no maxlength cut it short: 280 emoji are 560 UTF-16 units").toHaveLength(560);
+  await expect(page.getByText(en["upload.review.caption.count"](280))).toBeVisible();
+  await expect(page.getByRole("button", { name: en["upload.review.send"](1) })).toBeEnabled();
+  await page.getByRole("button", { name: en["upload.review.cancel"] }).click();
+  expect(relay.log.length, "nothing sent on cancel").toBe(before);
+
+  await add(
+    page,
+    [
+      { name: IPHONE, buffer: portrait },
+      { name: ANDROID, buffer: landscape },
+    ],
+    { relay, captions: [CAPTION] },
+  );
 
   await expect(cells(page)).toHaveCount(2);
   await expect(cells(page).locator("canvas")).toHaveCount(2, { timeout: 60_000 });
@@ -170,9 +224,16 @@ test("the owner's album: add a portrait and a landscape phone photo, see them re
   }
   expect(sent.some((r) => r.path.endsWith("/asset") && r.method === "GET"), "no full asset before the viewer").toBe(false);
 
-  // ── The viewer: the full photo, fetched now and only now ─────────────────
+  // ── The viewer: the full photo, fetched now and only now, its caption as text below it ──
   await cells(page).nth(0).getByRole("button", { name: en["album.photo.a11y"](1, 2) }).click();
-  await expect(page.getByRole("button", { name: en["viewer.zoom-in"] })).toBeEnabled({ timeout: 30_000 });
+  // Shown: Zoom in becomes available (an unavailable control is aria-disabled, not disabled).
+  await expect(page.getByRole("button", { name: en["viewer.zoom-in"] })).toBeVisible();
+  await expect(page.getByRole("button", { name: en["viewer.zoom-in"] })).not.toHaveAttribute("aria-disabled", "true", { timeout: 30_000 });
+  const caption = page.locator("#viewer-caption");
+  await expect(caption).toHaveText(CAPTION, { useInnerText: true });
+  expect(await caption.locator("b").count(), "plain text, never markup").toBe(0);
+  const [frameBox, captionBox] = await Promise.all([page.locator(".viewer .frame").boundingBox(), caption.boundingBox()]);
+  expect((captionBox?.y ?? 0) >= (frameBox?.y ?? 0) + (frameBox?.height ?? 0) - 0.5, "below the photo, never over it").toBe(true);
   const assetGets = relay.log.filter((r) => r.method === "GET" && r.path.endsWith("/asset"));
   expect(assetGets.map((r) => r.headers["range"])).toEqual(["bytes=0-"]);
   await page.getByRole("button", { name: en["viewer.back"] }).click();
@@ -194,9 +255,10 @@ test("the owner's album: add a portrait and a landscape phone photo, see them re
   await page.getByRole("button", { name: en["album.back"] }).click();
   await expect(page.getByText(en["albums.count"](1))).toBeVisible();
 
-  assertNoFilenames(relay.log, [ANDROID, IPHONE]);
+  assertNoFilenames(relay.log, [ANDROID, IPHONE, "wrong.jpg", "long.jpg"]);
+  assertNoCaption(relay.log, CAPTION);
   const dump = await dumpStorage(page);
-  expect(storageViolations(dump, [...spellings(ANDROID), ...spellings(IPHONE)], { owner: true }), "storage").toEqual([]);
+  expect(storageViolations(dump, [...spellings(ANDROID), ...spellings(IPHONE), ...captionSpellings(CAPTION)], { owner: true }), "storage").toEqual([]);
   expect(await violations(), "CSP violations and page errors").toEqual([]);
   await ctx.close();
 });
@@ -363,6 +425,13 @@ test("the filename audit notices a filename in a request", () => {
   expect(() => assertNoFilenames(leak, [ANDROID])).toThrow(/filename in PUT/);
   const inBytes: Logged[] = [{ method: "PUT", path: "/v1/media/x/asset", search: "", hash: "", body: "", bytes: Buffer.from(`xx${ANDROID}xx`), headers: {} }];
   expect(() => assertNoFilenames(inBytes, [ANDROID])).toThrow(/filename in PUT/);
+});
+
+test("the caption audit notices a caption in a request, in any spelling", () => {
+  for (const leak of [CAPTION, encodeURIComponent(CAPTION), JSON.stringify(CAPTION), Buffer.from(CAPTION).toString("base64")]) {
+    const log: Logged[] = [{ method: "POST", path: "/v1/albums/x/media", search: "", hash: "", body: `{"metadata":"…","note":${JSON.stringify(leak)}}`, headers: {} }];
+    expect(() => assertNoCaption(log, CAPTION)).toThrow(/caption in POST/);
+  }
 });
 
 test("the storage check notices a filename written to sessionStorage", async ({ browser }) => {

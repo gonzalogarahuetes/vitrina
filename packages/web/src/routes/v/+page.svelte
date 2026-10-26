@@ -115,6 +115,7 @@
         standIn={item?.thumb.kind === "ready" ? item.thumb.picture : null}
         count={screen.items.length}
         watermark={screen.watermark}
+        caption={item?.caption ?? null}
         onClose={() => session?.closeViewer()}
       />
     {/if}

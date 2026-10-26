@@ -9,7 +9,7 @@
   import { en } from "$lib/copy/en";
   import * as ownerKeys from "$lib/keys/owner-open";
   import { OwnerSession, type State } from "$lib/owner/session";
-  import { browserImaging } from "$lib/owner/imaging";
+  import { browserImaging, browserPreview } from "$lib/owner/imaging";
   import Album from "$lib/owner/ui/Album.svelte";
   import AccessLog from "$lib/owner/ui/AccessLog.svelte";
   import Albums from "$lib/owner/ui/Albums.svelte";
@@ -59,6 +59,7 @@
         return () => clearTimeout(t);
       },
       imaging: browserImaging,
+      preview: browserPreview,
       // Bytes straight to a bitmap: no object URL is ever created for a decrypted image.
       decodeImage: (bytes) => createImageBitmap(new Blob([bytes as Uint8Array<ArrayBuffer>])),
       newMediaId: () => crypto.randomUUID(),
@@ -159,7 +160,11 @@
     onBack={() => session?.leaveAlbum()}
     onLeave={() => session?.leaveAlbum(true)}
     onStay={() => session?.stayInAlbum()}
-    onAdd={(files) => session?.addPhotos(files)}
+    onChoose={(files) => session?.choosePhotos(files)}
+    onCaption={(key, caption) => session?.setCaption(key, caption)}
+    onUnpick={(key) => session?.unpickPhoto(key)}
+    onCancelReview={() => session?.cancelReview()}
+    onSendReview={() => session?.sendReview()}
     onOpen={(key) => session?.openViewer(key)}
     onCloseViewer={() => session?.closeViewer()}
     onRetryThumb={(key) => session?.retryThumb(key)}

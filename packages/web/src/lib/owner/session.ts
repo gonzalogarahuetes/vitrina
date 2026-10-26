@@ -143,6 +143,8 @@ export type Deps = {
   readonly imaging: Imaging;
   /** createImageBitmap(new Blob([bytes])) in the browser: no URL is made for a decrypted image. */
   readonly decodeImage: (bytes: Uint8Array) => Promise<Picture>;
+  /** The upload review's small, upright preview of a chosen photo, for the screen only (preview.ts). */
+  readonly preview: (file: File) => Promise<Picture>;
   /** crypto.randomUUID() in the browser: the media id, which is the envelopes' asset_id. */
   readonly newMediaId: () => string;
   /** The passphrase wordlists, dynamically imported: a chunk only passphrase invite creation loads. */
@@ -869,6 +871,7 @@ export class OwnerSession {
         albumKey,
         imaging: d.imaging,
         decodeImage: d.decodeImage,
+        preview: d.preview,
         newMediaId: d.newMediaId,
         now: d.now,
         sleep: d.sleep,
@@ -885,7 +888,7 @@ export class OwnerSession {
       id,
     );
     this.album = album;
-    this.set({ kind: "album", id, title: view.title, phase: "loading", items: [], viewer: null, confirm: null, erasurePending: 0, leaving: false });
+    this.set({ kind: "album", id, title: view.title, phase: "loading", items: [], viewer: null, confirm: null, review: null, chooseRefused: false, erasurePending: 0, leaving: false });
     album.start();
   }
 
@@ -928,8 +931,21 @@ export class OwnerSession {
     this.afterLeave = null;
     this.inAlbum((a) => a.askLeave(false));
   }
-  addPhotos(files: readonly File[]): void {
-    this.inAlbum((a) => a.add(files));
+  /** Opens the review (flows §3.6): nothing is prepared or sent until sendReview. */
+  choosePhotos(files: readonly File[]): void {
+    this.inAlbum((a) => a.choose(files));
+  }
+  setCaption(key: string, caption: string): void {
+    this.inAlbum((a) => a.setCaption(key, caption));
+  }
+  unpickPhoto(key: string): void {
+    this.inAlbum((a) => a.unpick(key));
+  }
+  cancelReview(): void {
+    this.inAlbum((a) => a.cancelReview());
+  }
+  sendReview(): void {
+    this.inAlbum((a) => a.sendReview());
   }
   resendPhoto(key: string): void {
     this.inAlbum((a) => a.resend(key));
@@ -971,7 +987,7 @@ export class OwnerSession {
   private leaveAlbumFor(next: "invite" | "people"): void {
     const s = this.state.screen;
     const a = this.album;
-    if (s.kind !== "album" || a === null || s.phase !== "ready" || s.confirm !== null || s.viewer !== null) return;
+    if (s.kind !== "album" || a === null || s.phase !== "ready" || s.confirm !== null || s.viewer !== null || s.review !== null) return;
     if (a.busy) {
       this.afterLeave = next;
       return a.askLeave(true);

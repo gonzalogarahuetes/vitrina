@@ -776,7 +776,7 @@ describe("the watermark", () => {
   it("is the decrypted label and the date", async () => {
     const h = harness();
     await toGrid(h);
-    expect(albumScreen(h).watermark).toEqual(["Shared with María", "6 Aug 2026"]);
+    expect(albumScreen(h).watermark).toBe("María · 6 Aug 2026");
   });
 });
 
@@ -898,6 +898,41 @@ describe("metadata", () => {
       expect(albumScreen(h).viewer).toBeNull();
     });
   }
+
+  it("a caption is read from the envelope, exactly as written; a missing one is none", async () => {
+    const h = harness();
+    const caption = "Bañera con la abuela 🛁\nsegunda línea";
+    h.album.meta.set(media(1).id, JSON.stringify({ width: 1200, height: 1600, caption, future: 1 }));
+    await toGrid(h);
+    const [first, second] = albumScreen(h).items;
+    expect(first?.caption).toBe(caption);
+    expect(second?.caption, "the harness's default document has no caption").toBeNull();
+  });
+
+  const noCaption: [string, unknown][] = [
+    ["a number", 280],
+    ["null", null],
+    ["an object", { text: "hi" }],
+    ["only whitespace", "  \n\t "],
+  ];
+  for (const [what, caption] of noCaption) {
+    it(`a caption that is ${what} is no caption, and the photo still opens`, async () => {
+      const h = harness();
+      h.album.meta.set(media(1).id, JSON.stringify({ width: 1200, height: 1600, caption }));
+      await toGrid(h);
+      const item = albumScreen(h).items[0];
+      expect(item?.caption).toBeNull();
+      expect(item?.thumb.kind).toBe("ready");
+    });
+  }
+
+  it("a caption longer than the client bound is still shown: the format sets no maximum (encryption spec §7)", async () => {
+    const h = harness();
+    const caption = "x".repeat(600);
+    h.album.meta.set(media(1).id, JSON.stringify({ width: 1200, height: 1600, caption }));
+    await toGrid(h);
+    expect(albumScreen(h).items[0]?.caption).toBe(caption);
+  });
 
   it("a metadata envelope that will not open fails its cell only", async () => {
     const h = harness();

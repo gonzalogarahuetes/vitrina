@@ -9,6 +9,7 @@
  * bitmap, as the recipient's decrypted images do (render.test.ts enforces it).
  */
 import type { Bitmap, Dims, Imaging, Resize } from "./prepare";
+import { makePreview } from "./preview";
 
 async function decode(file: Blob, resize: Resize | null): Promise<Bitmap> {
   const resizeOpts: ImageBitmapOptions =
@@ -105,3 +106,24 @@ export const browserImaging: Imaging = {
   decode,
   encode: makeEncode(() => document.createElement("canvas")),
 };
+
+/** preview.ts's Shrink: drawn on a canvas, kept as a bitmap, the canvas's store released at once. No URL. */
+async function shrink(bitmap: Bitmap, size: Dims): Promise<Bitmap> {
+  const canvas = document.createElement("canvas");
+  canvas.width = size.width;
+  canvas.height = size.height;
+  try {
+    const ctx = canvas.getContext("2d", { colorSpace: "srgb" });
+    if (ctx === null) throw new Error("no 2d context");
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = "high";
+    ctx.drawImage(bitmap as unknown as ImageBitmap, 0, 0, size.width, size.height);
+    return await createImageBitmap(canvas);
+  } finally {
+    canvas.width = 0;
+    canvas.height = 0;
+  }
+}
+
+/** The review step's preview of a chosen photo, for the screen only (preview.ts). */
+export const browserPreview = (file: Blob): Promise<Bitmap> => makePreview(file, decode, shrink);
