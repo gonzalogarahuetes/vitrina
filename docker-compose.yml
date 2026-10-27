@@ -82,7 +82,7 @@ services:
   # One-shot, like createbucket: provisions the schema as part of `up`. There
   # is deliberately no way to bring up Postgres without this running.
   migrate:
-    image: node:22.14.0-slim # must match NODE_VERSION in .github/workflows/ci.yml
+    image: node:22.23.4-slim # must match NODE_VERSION in .github/workflows/ci.yml
     depends_on:
       vitrina-postgres:
         condition: service_healthy
