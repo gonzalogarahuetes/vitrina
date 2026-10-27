@@ -5,11 +5,13 @@
    * tag failing locally, so nothing is counted and the copy says nothing about
    * attempts. Sign-out is offered for a shared device or the wrong account.
    */
-  import { en } from "$lib/copy/en";
+  import { copy } from "$lib/copy/language.svelte";
   import type { UnlockPhase } from "$lib/owner/session";
   import Alert from "$lib/ui/Alert.svelte";
   import DerivationWait from "$lib/ui/DerivationWait.svelte";
   import PasswordField from "./PasswordField.svelte";
+
+  const t = $derived(copy());
 
   let {
     phase,
@@ -42,39 +44,39 @@
 </script>
 
 <main class="screen unlock" inert={signingOut}>
-  <h1>{en["unlock.prompt"]}</h1>
+  <h1>{t["unlock.prompt"]}</h1>
   {#if phase === "unavailable"}
-    <Alert text={en["unlock.unavailable"]} />
-    <button class="btn" type="button" onclick={onRetry}>{en["unlock.retry"]}</button>
+    <Alert text={t["unlock.unavailable"]} />
+    <button class="btn" type="button" onclick={onRetry}>{t["unlock.retry"]}</button>
   {:else}
     <form onsubmit={submit} novalidate>
       <fieldset disabled={busy}>
-        <PasswordField id="unlock-password" label={en["unlock.password.label"]} autocomplete="current-password" invalid={phase === "wrong"} bind:value={password} />
+        <PasswordField id="unlock-password" label={t["unlock.password.label"]} autocomplete="current-password" invalid={phase === "wrong"} bind:value={password} />
       </fieldset>
       {#if phase === "wrong"}
-        <Alert text={en["unlock.wrong"]} />
+        <Alert text={t["unlock.wrong"]} />
       {:else if phase === "empty"}
-        <Alert text={en["unlock.empty"]} />
+        <Alert text={t["unlock.empty"]} />
       {/if}
       {#if busy}
         <DerivationWait layout="stacked" />
       {:else}
-        <button class="btn" type="submit">{en["unlock.submit"]}</button>
+        <button class="btn" type="submit">{t["unlock.submit"]}</button>
       {/if}
     </form>
   {/if}
   <div class="bottom">
-    <button class="btn ghost" type="button" disabled={busy} onclick={() => onAskSignOut(true)}>{en["unlock.signout"]}</button>
+    <button class="btn ghost" type="button" disabled={busy} onclick={() => onAskSignOut(true)}>{t["unlock.signout"]}</button>
   </div>
 </main>
 
 {#if signingOut}
   <div class="scrim">
     <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="signout-title">
-      <h2 id="signout-title">{en["unlock.signout.confirm"]}</h2>
-      <p>{en["unlock.signout.consequence"]}</p>
-      <button class="btn" type="button" onclick={onSignOut}>{en["unlock.signout.yes"]}</button>
-      <button class="btn ghost" type="button" onclick={() => onAskSignOut(false)}>{en["unlock.signout.no"]}</button>
+      <h2 id="signout-title">{t["unlock.signout.confirm"]}</h2>
+      <p>{t["unlock.signout.consequence"]}</p>
+      <button class="btn" type="button" onclick={onSignOut}>{t["unlock.signout.yes"]}</button>
+      <button class="btn ghost" type="button" onclick={() => onAskSignOut(false)}>{t["unlock.signout.no"]}</button>
     </div>
   </div>
 {/if}

@@ -4,9 +4,12 @@
    * next_before, each photo shown by the owner's own thumbnail. "Opened",
    * only the permitted column of api-sketch §11.6, and the sparse-log line.
    */
-  import { en, logTime } from "$lib/copy/en";
+  import { copy, format } from "$lib/copy/language.svelte";
   import type { LogEntryView, LogScreen } from "$lib/owner/people";
   import LogThumb from "./LogThumb.svelte";
+
+  const t = $derived(copy());
+  const fmt = $derived(format());
 
   let {
     log,
@@ -20,11 +23,11 @@
 
   const now = new Date();
 
-  const title = $derived(log.recipientId === null ? en["log.title"] : log.recipientLabel === null ? en["log.title.person.unnamed"] : en["log.title.person"](log.recipientLabel));
+  const title = $derived(log.recipientId === null ? t["log.title"] : log.recipientLabel === null ? t["log.title.person.unnamed"] : t["log.title.person"](log.recipientLabel));
 
   function line(e: LogEntryView): string {
-    if (e.event === "album_opened") return e.label === null ? en["log.entry.album.unnamed"] : en["log.entry.album"](e.label);
-    return e.label === null ? en["log.entry.photo.unnamed"] : en["log.entry.photo"](e.label);
+    if (e.event === "album_opened") return e.label === null ? t["log.entry.album.unnamed"] : t["log.entry.album"](e.label);
+    return e.label === null ? t["log.entry.photo.unnamed"] : t["log.entry.photo"](e.label);
   }
 </script>
 
@@ -34,16 +37,16 @@
       <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"
         ><path d="M15 5l-7 7 7 7"></path></svg
       >
-      <span>{en["log.back"]}</span>
+      <span>{t["log.back"]}</span>
     </button>
   </div>
   <h1>{title}</h1>
-  <p class="note">{en["log.sparse"]}</p>
+  <p class="note">{t["log.sparse"]}</p>
 
   {#if log.phase === "loading"}
-    <p class="note" role="status">{en["log.loading"]}</p>
+    <p class="note" role="status">{t["log.loading"]}</p>
   {:else if log.entries.length === 0}
-    <p class="note">{log.recipientId === null ? en["log.none"] : en["log.none.person"]}</p>
+    <p class="note">{log.recipientId === null ? t["log.none"] : t["log.none.person"]}</p>
   {:else}
     <ol class="entries">
       {#each log.entries as e (e.id)}
@@ -53,18 +56,18 @@
           {/if}
           <div class="what">
             <p>{line(e)}</p>
-            <p class="when"><time datetime={e.occurredAt}>{logTime(new Date(e.occurredAt), now)}</time></p>
+            <p class="when"><time datetime={e.occurredAt}>{fmt.logTime(new Date(e.occurredAt), now)}</time></p>
           </div>
         </li>
       {/each}
     </ol>
     {#if log.phase === "more"}
-      <p class="note" role="status">{en["log.more.busy"]}</p>
+      <p class="note" role="status">{t["log.more.busy"]}</p>
     {:else if log.hasMore}
-      <button class="btn ghost" type="button" onclick={onMore}>{en["log.more"]}</button>
+      <button class="btn ghost" type="button" onclick={onMore}>{t["log.more"]}</button>
     {/if}
   {/if}
-  <p class="note">{en["log.counts"]}</p>
+  <p class="note">{t["log.counts"]}</p>
 </main>
 
 <style>

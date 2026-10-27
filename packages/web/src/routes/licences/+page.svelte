@@ -4,25 +4,27 @@
    * licence text in static/licenses/. Plain links to plain files: a full page
    * load (data-sveltekit-reload), never a client route.
    */
-  import { en } from "$lib/copy/en";
+  import { copy } from "$lib/copy/language.svelte";
   import { asset, resolve } from "$app/paths";
   import { LICENCES } from "$lib/licences";
+
+  const t = $derived(copy());
 </script>
 
 <svelte:head>
-  <title>{en["licences.title"]} · Vitrina</title>
+  <title>{t["licences.title"]} · Vitrina</title>
 </svelte:head>
 
 <main class="screen licences">
-  <h1>{en["licences.title"]}</h1>
-  <p>{en["licences.intro"]}</p>
+  <h1>{t["licences.title"]}</h1>
+  <p>{t["licences.intro"]}</p>
   <ul>
     {#each LICENCES as l (l.file)}
-      <li><a href={asset(`/licenses/${l.file}`)} data-sveltekit-reload data-licence={l.file}>{en[l.covers] as string}</a></li>
+      <li><a href={asset(`/licenses/${l.file}`)} data-sveltekit-reload data-licence={l.file}>{t[l.covers] as string}</a></li>
     {/each}
   </ul>
   <div class="bottom">
-    <a class="btn ghost" href={resolve("/")}>{en["licences.back"]}</a>
+    <a class="btn ghost" href={resolve("/")}>{t["licences.back"]}</a>
   </div>
 </main>
 

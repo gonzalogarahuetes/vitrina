@@ -6,7 +6,7 @@
    */
   import { onMount } from "svelte";
   import { api } from "$lib/api";
-  import { en } from "$lib/copy/en";
+  import { copy, language } from "$lib/copy/language.svelte";
   import * as ownerKeys from "$lib/keys/owner-open";
   import { OwnerSession, type State } from "$lib/owner/session";
   import { browserImaging, browserPreview } from "$lib/owner/imaging";
@@ -21,6 +21,8 @@
   import Message from "$lib/recipient/ui/Message.svelte";
   import { sessionStore } from "$lib/session/owner-session";
   import type { LayoutData } from "./$types";
+
+  const t = $derived(copy());
 
   let { data }: { data: LayoutData } = $props();
 
@@ -65,8 +67,10 @@
       newMediaId: () => crypto.randomUUID(),
       // Bundled, a chunk of its own, loaded only when passphrase mode is chosen. check-build.mjs enforces it.
       loadWordlists: () => import("$lib/owner/wordlists").then((m) => m.WORDLISTS),
-      // The interface is English only for now (brief §15.3); the passphrase language defaults to it when a list exists.
-      displayLanguage: "en",
+      // The interface language when an invite is opened: the passphrase language defaults to it when a list exists (brief §15.2).
+      get displayLanguage() {
+        return language.current;
+      },
       origin: location.origin,
     });
     session = s;
@@ -89,7 +93,7 @@
 </svelte:head>
 
 {#if screen.kind === "checking"}
-  <Message text={en["owner.checking"]} role="status" />
+  <Message text={t["owner.checking"]} role="status" />
 {:else if screen.kind === "signin"}
   {#key screen.email}
     <SignIn
@@ -111,9 +115,9 @@
   />
 {:else if screen.kind === "signup-uncertain"}
   <main class="screen" role="alert">
-    <h1>{en["signup.uncertain"]}</h1>
+    <h1>{t["signup.uncertain"]}</h1>
     <div class="bottom">
-      <button class="btn" type="button" onclick={() => session?.backToSignin(screen.email)}>{en["signup.uncertain.signin"]}</button>
+      <button class="btn" type="button" onclick={() => session?.backToSignin(screen.email)}>{t["signup.uncertain.signin"]}</button>
     </div>
   </main>
 {:else if screen.kind === "unlock"}
@@ -127,17 +131,17 @@
   />
 {:else if screen.kind === "cannot-unlock"}
   <main class="screen" role="alert">
-    <h1>{en["signin.cannot-unlock"]}</h1>
+    <h1>{t["signin.cannot-unlock"]}</h1>
     <div class="bottom">
-      <button class="btn" type="button" onclick={() => session?.backToSignin()}>{en["signin.back"]}</button>
+      <button class="btn" type="button" onclick={() => session?.backToSignin()}>{t["signin.back"]}</button>
     </div>
   </main>
 {:else if screen.kind === "device-failed"}
   <!-- Flows §2's third exit. Never a wrong password. A trapped instance is unusable, so the remedy is a reload. -->
   <main class="screen" role="alert">
-    <h1>{en["derive.failed.owner"]}</h1>
+    <h1>{t["derive.failed.owner"]}</h1>
     <div class="bottom">
-      <button class="btn" type="button" onclick={() => location.reload()}>{en["derive.failed.retry"]}</button>
+      <button class="btn" type="button" onclick={() => location.reload()}>{t["derive.failed.retry"]}</button>
     </div>
   </main>
 {:else if screen.kind === "albums"}
@@ -200,10 +204,10 @@
   <AccessLog log={screen} onBack={() => session?.closeLog()} onMore={() => session?.moreLog()} />
 {:else if screen.kind === "signed-out-partial"}
   <main class="screen" role="alert">
-    <h1>{en["logout.partial"](screen.scope === "everywhere")}</h1>
+    <h1>{t["logout.partial"](screen.scope === "everywhere")}</h1>
     <div class="bottom actions">
-      <button class="btn" type="button" disabled={screen.retrying} onclick={() => session?.logout(screen.scope)}>{en["logout.retry"]}</button>
-      <button class="btn ghost" type="button" disabled={screen.retrying} onclick={() => session?.leaveAfterPartial()}>{en["logout.leave"]}</button>
+      <button class="btn" type="button" disabled={screen.retrying} onclick={() => session?.logout(screen.scope)}>{t["logout.retry"]}</button>
+      <button class="btn ghost" type="button" disabled={screen.retrying} onclick={() => session?.leaveAfterPartial()}>{t["logout.leave"]}</button>
     </div>
   </main>
 {/if}
@@ -211,14 +215,14 @@
 {#if ui.rateLimited && !ui.offline}
   <!-- A token route's 429, waited out in place (flows §0). Credential routes pause their form instead. -->
   <div class="offline" role="status">
-    <span>{en["wait.rate-limited"]}</span>
+    <span>{t["wait.rate-limited"]}</span>
   </div>
 {/if}
 
 {#if ui.offline}
   <div class="offline" role="alert">
-    <span>{en["offline.owner"]}</span>
-    <button class="btn" type="button" onclick={() => session?.retryOffline()}>{en["offline.retry"]}</button>
+    <span>{t["offline.owner"]}</span>
+    <button class="btn" type="button" onclick={() => session?.retryOffline()}>{t["offline.retry"]}</button>
   </div>
 {/if}
 

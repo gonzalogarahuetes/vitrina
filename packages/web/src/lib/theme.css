@@ -48,6 +48,8 @@
   --target: 60px;
   --radius: 14px;
   --gutter: 28px;
+  /* The language switcher's row above every screen (routes/+layout.svelte): one target and its margin. */
+  --language-bar: 64px;
 }
 
 * {
@@ -163,14 +165,15 @@ button {
   color: var(--ink-muted);
 }
 
+/* Below the language bar, so the screen and the bar together fill the viewport and no more. */
 .screen {
-  min-height: 100dvh;
+  min-height: calc(100dvh - var(--language-bar));
   max-width: 640px;
   margin: 0 auto;
   display: flex;
   flex-direction: column;
   gap: 28px;
-  padding: 64px var(--gutter) var(--gutter);
+  padding: 16px var(--gutter) var(--gutter);
 }
 
 .screen.centred {

@@ -6,7 +6,7 @@
    */
   import { onMount } from "svelte";
   import { api } from "$lib/api";
-  import { en } from "$lib/copy/en";
+  import { copy, language, watermarkLine } from "$lib/copy/language.svelte";
   import { parseInvite } from "$lib/invite/parse";
   import { openInviteKey, openPassphraseKey } from "$lib/keys/open";
   import { takeCapturedInvite } from "$lib/recipient/entry";
@@ -18,6 +18,8 @@
   import Passphrase from "$lib/recipient/ui/Passphrase.svelte";
   import Viewer from "$lib/recipient/ui/Viewer.svelte";
   import type { LayoutData } from "../$types";
+
+  const t = $derived(copy());
 
   let { data }: { data: LayoutData } = $props();
 
@@ -47,6 +49,7 @@
       sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
       nextFrames: twoFrames,
       now: () => new Date(),
+      watermarkLine,
     });
     session = s;
     const unsubscribe = s.subscribe((next) => (ui = next));
@@ -73,6 +76,12 @@
     };
   });
 
+  // A switch of language rewrites the watermark's date in the new language (brief §5).
+  $effect(() => {
+    void language.current;
+    session?.relocalise();
+  });
+
   const screen = $derived(ui.screen);
 </script>
 
@@ -81,17 +90,17 @@
 </svelte:head>
 
 {#if screen.kind === "starting"}
-  <Message text={en["open.loading"]} role="status" />
+  <Message text={t["open.loading"]} role="status" />
 {:else if screen.kind === "dead"}
-  <Message text={en.dead} />
+  <Message text={t.dead} />
 {:else if screen.kind === "newer-version"}
-  <Message text={en["open.newer-version"]} />
+  <Message text={t["open.newer-version"]} />
 {:else if screen.kind === "not-recognised"}
-  <Message text={en.notrecognised} />
+  <Message text={t.notrecognised} />
 {:else if screen.kind === "revoked"}
-  <Message text={en.revoked} kind="closed" />
+  <Message text={t.revoked} kind="closed" />
 {:else if screen.kind === "device-failed"}
-  <Message text={en["derive.failed"]} kind="device" />
+  <Message text={t["derive.failed"]} kind="device" />
 {:else if screen.kind === "passphrase"}
   <Passphrase phase={screen.phase} onSubmit={(words) => session?.submitPassphrase(words)} />
 {:else if screen.kind === "onboarding"}
@@ -124,8 +133,8 @@
 
 {#if ui.offline}
   <div class="offline" role="alert">
-    <span>{en.offline}</span>
-    <button class="btn" type="button" onclick={() => session?.retryOffline()}>{en["offline.retry"]}</button>
+    <span>{t.offline}</span>
+    <button class="btn" type="button" onclick={() => session?.retryOffline()}>{t["offline.retry"]}</button>
   </div>
 {/if}
 

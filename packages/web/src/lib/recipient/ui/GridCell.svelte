@@ -1,7 +1,9 @@
 <script lang="ts">
-  import { en } from "$lib/copy/en";
+  import { copy } from "$lib/copy/language.svelte";
   import { drawCell } from "$lib/recipient/render";
   import type { Item } from "$lib/recipient/session";
+
+  const t = $derived(copy());
 
   let {
     item,
@@ -43,21 +45,21 @@
 
 <div class="cell">
   {#if item.thumb.kind === "ready"}
-    <button class="open" type="button" onclick={onOpen} aria-label={en["grid.photo.a11y"](index + 1, count)}>
+    <button class="open" type="button" onclick={onOpen} aria-label={t["grid.photo.a11y"](index + 1, count)}>
       <canvas bind:this={canvas} aria-hidden="true"></canvas>
     </button>
   {:else if item.thumb.kind === "loading"}
-    <div class="loading" role="img" aria-label={en["grid.cell.loading.a11y"](index + 1, count)}></div>
+    <div class="loading" role="img" aria-label={t["grid.cell.loading.a11y"](index + 1, count)}></div>
   {:else if item.thumb.kind === "unavailable"}
-    <div class="failed unavailable" role="img" aria-label={en["grid.cell.unavailable"]}>
-      <span aria-hidden="true">{en["grid.cell.unavailable"]}</span>
+    <div class="failed unavailable" role="img" aria-label={t["grid.cell.unavailable"]}>
+      <span aria-hidden="true">{t["grid.cell.unavailable"]}</span>
     </div>
   {:else}
     <button class="failed" type="button" onclick={onRetry}>
       <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"
         ><path d="M20 11a8 8 0 1 0-2.3 5.7"></path><path d="M20 4v7h-7"></path></svg
       >
-      <span>{en["grid.cell.failed"]}</span>
+      <span>{t["grid.cell.failed"]}</span>
     </button>
   {/if}
 </div>

@@ -16,6 +16,9 @@
  *   3. A 409: the share screen shows the second attempt's secrets only.
  *   4. The share screen is shown once: leaving asks, and afterwards the page,
  *      storage and history hold nothing of it.
+ *   5. The passphrase language defaults to the interface language (brief
+ *      §15.2): Spanish words when the interface is Spanish, and still
+ *      changeable.
  *
  * And in every test, across every request and all storage: no K_invite in
  * any spelling, no passphrase word, no raw token except as a recipient's own
@@ -24,7 +27,10 @@
 import { expect, test, type Browser, type BrowserContext, type Page } from "@playwright/test";
 import { createHash } from "node:crypto";
 import jsQR from "jsqr";
+import { readFileSync } from "node:fs";
 import { en } from "../../src/lib/copy/en.ts";
+import { es } from "../../src/lib/copy/es.ts";
+import { autonym } from "../../src/lib/copy/format.ts";
 import { storageViolations } from "../storage-allowlist.ts";
 import { dumpStorage, text, watch } from "./helpers.ts";
 import { fakeRelay, type Logged } from "./relay.ts";
@@ -61,15 +67,56 @@ function labelSpellings(label: string): string[] {
 /**
  * The passphrase as it could leak. A single short word may occur by chance in
  * ordinary request text ("content-type"), so each word is searched for only
- * where a leak would put it: as a JSON string, a path segment or a query
- * value. The whole passphrase is searched for everywhere, in every joining.
+ * where a leak would put it: as a JSON string or a whole query value. The
+ * whole passphrase is searched for everywhere, in every joining.
+ *
+ * Not in a path: a path is checked against api-sketch §11.8 instead
+ * (assertRoutesOnly), because the passphrase lists hold the API's own words.
+ * EFF has "album", "recipient" and "revoke"; the Spanish list has "media".
+ * Searched for as "/word", a clean run failed about one time in 500 (a
+ * "recipient" passphrase and POST /v1/albums/{id}/recipients, 26 October
+ * 2026, repeat 18 of 20), and as a whole segment it still would, on
+ * GET /v1/recipient/key.
  */
-function passphraseSpellings(words: readonly string[]): string[] {
+function passphraseSpellings(words: readonly string[]): (string | RegExp)[] {
   const joined = [" ", "", "-", "+", "%20", ","].map((sep) => words.join(sep));
   const utf8 = Buffer.from(words.join(" "), "utf8");
   const encoded = [utf8.toString("base64"), utf8.toString("base64url"), utf8.toString("hex")];
-  return [...joined, ...encoded, ...words.flatMap((w) => [`"${w}"`, `/${w}`, `=${w}`])];
+  const esc = (w: string) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const value = (v: string) => new RegExp(`=${esc(v)}(?=[&#]|$)`);
+  const placed = words.flatMap((w) => [`"${w}"`, value(w), value(encodeURIComponent(w))]);
+  return [...joined, ...encoded, ...placed];
 }
+
+/** Api-sketch §11.8, every route, each id a UUID. A path that is one of these has nowhere for a word to be. */
+const ROUTES = [
+  "/v1/albums",
+  "/v1/albums/{id}",
+  "/v1/albums/{id}/access-log",
+  "/v1/albums/{id}/access-log/entries",
+  "/v1/albums/{id}/metadata",
+  "/v1/albums/{id}/media",
+  "/v1/albums/{id}/recipients",
+  "/v1/media/{id}",
+  "/v1/media/{id}/asset",
+  "/v1/media/{id}/thumbnail",
+  "/v1/owner/key",
+  "/v1/recipient",
+  "/v1/recipient/key",
+  "/v1/recipients/{id}/revoke",
+  "/v1/login",
+  "/v1/login/params",
+  "/v1/logout",
+  "/v1/logout/all",
+  "/v1/signup",
+].map((r) => new RegExp(`^${r.replaceAll("{id}", "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")}$`));
+
+/** Every request's path is a §11.8 route with UUIDs where its ids go: nothing else, a word included, rode in a path. */
+function assertRoutesOnly(log: readonly Logged[]): void {
+  for (const r of log) expect(ROUTES.some((route) => route.test(r.path)), `${r.method} ${r.path} is an api-sketch §11.8 route`).toBe(true);
+}
+
+const found = (place: string, s: string | RegExp): boolean => (typeof s === "string" ? place.includes(s) : s.test(place));
 
 /** Everything a request carried, as text: path, query, fragment, body, every header, and the raw body bytes. */
 function carried(r: Logged, skipAuthorization = false): string[] {
@@ -79,10 +126,10 @@ function carried(r: Logged, skipAuthorization = false): string[] {
   return [r.path, r.search, r.hash, r.body, ...headers, r.bytes?.toString("latin1") ?? ""];
 }
 
-function assertAbsent(log: readonly Logged[], secrets: readonly string[], what: string, opts: { exceptBearer?: string } = {}): void {
+function assertAbsent(log: readonly Logged[], secrets: readonly (string | RegExp)[], what: string, opts: { exceptBearer?: string } = {}): void {
   for (const r of log) {
     const isOwnBearer = opts.exceptBearer !== undefined && r.headers["authorization"] === `Bearer ${opts.exceptBearer}`;
-    for (const place of carried(r, isOwnBearer)) for (const s of secrets) expect(place.includes(s), `${what} in ${r.method} ${r.path}`).toBe(false);
+    for (const place of carried(r, isOwnBearer)) for (const s of secrets) expect(found(place, s), `${what} in ${r.method} ${r.path}`).toBe(false);
   }
 }
 
@@ -123,9 +170,27 @@ async function canvasJpeg(page: Page, w: number, h: number): Promise<Buffer> {
   return Buffer.from(bytes);
 }
 
+/**
+ * Every context a test here opens, closed when it ends. Left open, each owner
+ * context keeps an unlocked session, its WASM and its Argon2id memory alive in
+ * the worker's browser; under --repeat-each=20 they piled up until WebKit
+ * stopped answering mid-test (26 October 2026: a .check() that never returned,
+ * 17 live contexts in the trace). The other specs already close theirs.
+ */
+const opened: BrowserContext[] = [];
+test.afterEach(async () => {
+  await Promise.all(opened.splice(0).map((c) => c.close()));
+});
+
+async function newContext(browser: Browser): Promise<BrowserContext> {
+  const ctx = await browser.newContext();
+  opened.push(ctx);
+  return ctx;
+}
+
 /** Signed up, one album, one photo at ready: an owner with something to share. */
 async function ownerWithPhoto(browser: Browser, relay: Relay) {
-  const ctx = await browser.newContext();
+  const ctx = await newContext(browser);
   await relay.attach(ctx);
   const page = await ctx.newPage();
   const violations = await watch(page);
@@ -165,7 +230,7 @@ async function createInvite(page: Page, mode: "qr" | "passphrase"): Promise<void
 }
 
 async function recipientContext(browser: Browser, relay: Relay): Promise<{ ctx: BrowserContext; page: Page; violations: () => Promise<string[]> }> {
-  const ctx = await browser.newContext();
+  const ctx = await newContext(browser);
   await relay.attach(ctx);
   const page = await ctx.newPage();
   return { ctx, page, violations: await watch(page) };
@@ -232,7 +297,7 @@ test("the loop: a QR invite made in one context opens the album in another, and 
   await owner.page.getByRole("button", { name: en["log.back"] }).click();
 
   await person.getByRole("button", { name: en["people.revoke"] }).click();
-  await expect(owner.page.getByRole("alertdialog")).toContainText(en["revoke.confirm"]);
+  await expect(owner.page.getByRole("alertdialog")).toContainText(en["revoke.confirm"](LABEL));
   await owner.page.getByRole("alertdialog").getByRole("button", { name: en["revoke.yes"] }).click();
   await expect(owner.page.getByText(en["revoke.done"])).toBeVisible();
   expect(relay.log.filter((x) => x.path.endsWith("/revoke")).map((x) => [x.method, x.body, x.headers["content-type"]])).toEqual([["POST", "", undefined]]);
@@ -284,12 +349,46 @@ test("a passphrase invite: the derivation wait, the words with no copy button, a
   await expect(r.page.getByRole("button", { name: en["grid.photo.a11y"](1, 1) })).toBeVisible({ timeout: 30_000 });
 
   const token = param(link, "t");
+  assertRoutesOnly(relay.log);
   assertAbsent(relay.log, [...passphraseSpellings(words), ...labelSpellings(LABEL)], "the passphrase or the label");
   assertAbsent(relay.log, spellingsOf(token), "the raw token", { exceptBearer: token });
-  expect(storageViolations(await dumpStorage(owner.page), [...passphraseSpellings(words), ...spellingsOf(token), LABEL], { owner: true })).toEqual([]);
-  expect(storageViolations(await dumpStorage(r.page), [...passphraseSpellings(words), LABEL], { recipientInvite: fragmentOf(link) })).toEqual([]);
+  // Storage is searched as text by storage-allowlist.ts: the string spellings. Storage holds no URLs, so no segment form is lost.
+  const stored = passphraseSpellings(words).filter((x): x is string => typeof x === "string");
+  expect(storageViolations(await dumpStorage(owner.page), [...stored, ...spellingsOf(token), LABEL], { owner: true })).toEqual([]);
+  expect(storageViolations(await dumpStorage(r.page), [...stored, LABEL], { recipientInvite: fragmentOf(link) })).toEqual([]);
   expect(await owner.violations()).toEqual([]);
   expect(await r.violations()).toEqual([]);
+});
+
+test("the passphrase search: a word in a path is a path that is no route, and elsewhere a whole JSON string or query value", () => {
+  const req = (path: string, search = "", body = ""): Logged => ({ method: "POST", path, search, hash: "", body, headers: {} });
+  const fails = (check: () => void) => {
+    try {
+      check();
+      return false;
+    } catch {
+      return true;
+    }
+  };
+  const id = "c58c3542-e1ed-4aa2-aa94-db1ac128a913";
+  const words = ["recipient", "album", "revoke", "media", "sullen"];
+  const word = (r: Logged) => fails(() => assertAbsent([r], passphraseSpellings(words), "a word"));
+  const route = (r: Logged) => fails(() => assertRoutesOnly([r]));
+
+  // The routes themselves, which hold these words as their own: never a finding.
+  for (const path of [`/v1/albums/${id}/recipients`, "/v1/recipient", "/v1/recipient/key", `/v1/recipients/${id}/revoke`, `/v1/media/${id}/asset`]) {
+    expect(route(req(path)), path).toBe(false);
+    expect(word(req(path)), path).toBe(false);
+  }
+  // A word in a path: no longer a route.
+  for (const path of ["/v1/sullen", `/v1/albums/${id}/sullen`, `/v1/albums/sullen`, "/v1/recipient/key/sullen", `/v1/media/sullen/asset`, "/sullen/v1/recipient", "/v1/recipient/"]) expect(route(req(path)), path).toBe(true);
+  // A word where a request carries text.
+  expect(word(req("/v1/recipient", "?w=sullen"))).toBe(true);
+  expect(word(req("/v1/recipient", "?w=sullen&z=1"))).toBe(true);
+  expect(word(req("/v1/recipient", "?w=sullenly"))).toBe(false);
+  expect(word(req("/v1/recipient", "", '{"w":"recipient"}'))).toBe(true);
+  expect(word(req("/v1/recipient", "", '{"kind":"passphrase"}'))).toBe(false);
+  expect(word(req("/v1/recipient", "", words.join(" ")))).toBe(true);
 });
 
 test("a 409 regenerates: the share screen carries only the second attempt's token and key", async ({ browser }) => {
@@ -359,5 +458,46 @@ test("a lost create response, then a 409: the new invite is shared, and the row 
   const people = owner.page.locator("li.person");
   await expect(people).toHaveCount(2);
   await expect(owner.page.locator("li.person.revoked")).toHaveCount(1);
+  expect(await owner.violations()).toEqual([]);
+});
+
+test("the passphrase language defaults to the interface language, and stays changeable (brief §15.2)", async ({ browser }) => {
+  test.setTimeout(240_000);
+  const relay = fakeRelay({ expiresInMs: 14 * 24 * 60 * 60 * 1000 });
+  const owner = await ownerWithPhoto(browser, relay);
+  const page = owner.page;
+  const choice = (name: string) => page.locator("[data-language-switch]").first().getByRole("button", { name, exact: true });
+  const SPANISH_WORDS = new Set(readFileSync(new URL("../../src/lib/owner/wordlists/es.txt", import.meta.url), "utf8").split(/\r?\n/).filter((w) => w !== ""));
+
+  // English interface: the default is English.
+  await page.getByRole("button", { name: en["album.invite"] }).click();
+  await page.locator('input[name="invite-mode"][value="passphrase"]').check();
+  await expect(page.getByLabel(en["invite.language"])).toHaveValue("en");
+  await page.getByRole("button", { name: en["invite.back"] }).click();
+  await expect(page.getByRole("heading", { name: ALBUM_TITLE, exact: true })).toBeVisible();
+
+  // Spanish interface: the default is Spanish, the example watermark carries a Spanish date, and English is still offered.
+  await choice(autonym("es")).click();
+  await page.getByRole("button", { name: es["album.invite"] }).click();
+  await expect(page.getByRole("heading", { name: es["invite.title"] })).toBeVisible();
+  const example = await page.evaluate(() => new Intl.DateTimeFormat("es-ES", { day: "numeric", month: "short", year: "numeric" }).format(new Date(2026, 7, 6)));
+  await expect(page.getByText(es["invite.name.hint"](es.watermark("María", example)))).toBeVisible();
+  await page.getByLabel(es["invite.name.label"]).fill(LABEL);
+  await page.locator('input[name="invite-mode"][value="passphrase"]').check();
+  const select = page.getByLabel(es["invite.language"]);
+  await expect(select).toHaveValue("es");
+  await expect(select.locator("option")).toHaveText(["Inglés", "Español"]);
+  await select.selectOption("en");
+  await select.selectOption("es");
+
+  await page.getByRole("button", { name: es["invite.create"] }).click();
+  await expect(page.getByRole("heading", { name: es["invite.share.title"](LABEL) })).toBeVisible({ timeout: ARGON });
+  await expect(page.getByText(es["invite.passphrase.language"]("español"))).toBeVisible();
+  await expect(page.getByText(es["invite.housekey.passphrase"])).toBeVisible();
+  const words = await page.locator("[data-passphrase] li").allTextContents();
+  expect(words.length).toBeGreaterThanOrEqual(5);
+  for (const w of words) expect(SPANISH_WORDS.has(w.trim()), `${w} is from the Spanish list`).toBe(true);
+  assertRoutesOnly(relay.log);
+  assertAbsent(relay.log, passphraseSpellings(words.map((w) => w.trim())), "the Spanish passphrase");
   expect(await owner.violations()).toEqual([]);
 });

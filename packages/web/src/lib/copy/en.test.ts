@@ -5,7 +5,8 @@
  * must not claim that account existence is private (brief §11).
  */
 import { describe, expect, it } from "vitest";
-import { en } from "./en";
+import { PASSPHRASE_WORDS } from "$lib/keys/owner-open";
+import { WATERMARK_EXAMPLE, en, enFormat } from "./en";
 
 function strings(): [string, string][] {
   const out: [string, string][] = [];
@@ -15,7 +16,14 @@ function strings(): [string, string][] {
     else if (typeof value === "function") {
       const f = value as (...a: unknown[]) => unknown;
       for (const args of [[1], [3], [true], [false], ["María", "6 Aug 2026"], ["Thu 29 Oct, 12:00"]]) {
-        const r = f(...args);
+        // A count slot refuses a non-number (format.ts plural): no string for that kind of argument.
+        let r: unknown;
+        try {
+          r = f(...args);
+        } catch (e) {
+          if (e instanceof TypeError) continue;
+          throw e;
+        }
         for (const s of Array.isArray(r) ? r : [r]) out.push([slot, String(s)]);
       }
     }
@@ -81,7 +89,7 @@ describe("credential.paused (flows §0, a 429 on a credential route)", () => {
   });
 
   it("counts down in plain words, never to zero", async () => {
-    const { pauseLeft } = await import("./en");
+    const { pauseLeft } = (await import("./en")).enFormat;
     expect(pauseLeft(900_000)).toBe("about 15 minutes");
     expect(pauseLeft(61_000)).toBe("about 2 minutes");
     expect(pauseLeft(60_000)).toBe("about 1 minute");
@@ -143,7 +151,7 @@ describe("the owner's album copy (flows §3.4, §3.6, §3.7)", () => {
   });
 
   it("stuckFor and stuckSince read as plain words", async () => {
-    const { stuckFor, stuckSince } = await import("./en");
+    const { stuckFor, stuckSince } = (await import("./en")).enFormat;
     expect(stuckFor(30_000)).toBe("about a minute");
     expect(stuckFor(10 * 60_000)).toBe("about 10 minutes");
     expect(stuckFor(2 * 3600_000)).toBe("about 2 hours");
@@ -155,17 +163,20 @@ describe("the owner's album copy (flows §3.4, §3.6, §3.7)", () => {
 });
 
 describe("the watermark (brief §5, flows §4.4)", () => {
+  const EXAMPLE = en.watermark(WATERMARK_EXAMPLE.label, enFormat.watermarkDate(WATERMARK_EXAMPLE.date));
+
   it("is one short line: name · date, with nothing added", () => {
     expect(en.watermark("María", "6 Aug 2026")).toBe("María · 6 Aug 2026");
   });
 
   it("never claims to identify, trace or track anyone", () => {
     expect(en.watermark("María", "6 Aug 2026")).not.toMatch(/track|trace|identif|record|logged/i);
-    expect(en["invite.name.hint"]).not.toMatch(/track|trace|identif|stop|prevent|protect/i);
+    expect(en["invite.name.hint"](EXAMPLE)).not.toMatch(/track|trace|identif|stop|prevent|protect/i);
   });
 
-  it("the invite's example is the watermark as drawn", () => {
-    expect(en["invite.name.hint"]).toContain(en.watermark("María", "6 Aug 2026"));
+  it("the invite's example is the watermark as drawn, brief §5's", () => {
+    expect(EXAMPLE).toBe("María · 6 Aug 2026");
+    expect(en["invite.name.hint"](EXAMPLE)).toContain(EXAMPLE);
   });
 });
 
@@ -192,12 +203,20 @@ describe("the invite copy (flows §3.8)", () => {
   const invite = () => strings().filter(([slot]) => slot.startsWith("invite."));
 
   it("neither mode is presented as stronger in every respect: each says what it gives and what it costs", () => {
-    for (const mode of ["qr", "passphrase"] as const) {
-      expect(en[`invite.mode.${mode}.gives`].length, mode).toBeGreaterThan(20);
-      expect(en[`invite.mode.${mode}.costs`].length, mode).toBeGreaterThan(20);
-    }
     const modeCopy = strings().filter(([slot]) => slot.startsWith("invite.mode"));
     expect(modeCopy.filter(([, s]) => /\b(recommended|safer|safest|weaker|weakest|stronger|strongest|more secure|less secure|best|better)\b/i.test(s))).toEqual([]);
+  });
+
+  it("each mode says the practical difference, and nothing about servers or stolen data (owner's hand walk, 26 October 2026)", () => {
+    expect(en["invite.mode.qr.detail"]).toMatch(/whoever has it can open the album/i);
+    expect(en["invite.mode.passphrase.detail"]).toMatch(/link alone isn't enough/i);
+    const modeCopy = strings().filter(([slot]) => slot.startsWith("invite.mode"));
+    expect(modeCopy.filter(([, s]) => /server|stolen|steal|data|attack|guess/i.test(s))).toEqual([]);
+  });
+
+  it("the passphrase mode's word count is the one the invite generates", () => {
+    expect(PASSPHRASE_WORDS).toBe(5);
+    expect(en["invite.mode.passphrase.detail"]).toMatch(/\bfive words\b/);
   });
 
   it("the house-key line says whoever holds it can open the album, until revoked (invite spec §3, brief §11)", () => {
@@ -222,7 +241,8 @@ describe("the invite copy (flows §3.8)", () => {
 
   it("the passphrase language is the recipient's, not the app's (brief §15.2)", () => {
     expect(en["invite.language.hint"]).toMatch(/they speak/i);
-    expect(en["invite.language.hint"]).toMatch(/doesn't have to be the language of this app/i);
+    // The rule, not one wording of it: the passphrase need not be in the interface's language.
+    expect(en["invite.language.hint"]).toMatch(/doesn't have to be (in )?the (same )?language\b[^.]*\b(app|you)\b/i);
   });
 
   it("the link and the passphrase go by separate channels (encryption spec §6.5)", () => {
@@ -240,14 +260,21 @@ describe("the invite copy (flows §3.8)", () => {
   });
 });
 
+describe("removal and revoke say what happens from now on, and nothing about the past (brief §8, owner's hand walk, 26 October 2026)", () => {
+  it("no sentence about what was already seen, taken back or undone", () => {
+    const slots = strings().filter(([slot]) => /^(remove|revoke)\./.test(slot));
+    expect(slots.length).toBeGreaterThan(10);
+    expect(slots.filter(([, s]) => /already seen|already opened|take(n)? back|\bundo\b|undone|retroactiv/i.test(s))).toEqual([]);
+  });
+});
+
 describe("the revoke copy (flows §3.9, brief §8)", () => {
   const revoke = () => strings().filter(([slot]) => slot.startsWith("revoke."));
 
-  it("is immediate and stops future access only", () => {
-    expect(en["revoke.confirm"]).toMatch(/at once/i);
-    expect(en["revoke.confirm"]).toMatch(/can't take back/i);
+  it("stops access from now on, named or not", () => {
+    expect(en["revoke.confirm"]("María")).toBe("From now on, María won't be able to open the album.");
+    expect(en["revoke.confirm.unnamed"]).toMatch(/^From now on, /);
     expect(en["revoke.done"]).toMatch(/from now on/i);
-    expect(en["revoke.done"]).toMatch(/can't be taken back/i);
   });
 
   it("never implies that anything already seen is withdrawn, deleted or undecryptable", () => {

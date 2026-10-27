@@ -5,10 +5,12 @@
    * wrong photo out. Nothing is prepared, encrypted or sent before "Send".
    * Over the album, which is inert while this is open.
    */
-  import { en } from "$lib/copy/en";
+  import { copy } from "$lib/copy/language.svelte";
   import { checkCaption } from "$lib/owner/caption";
   import { OwnerAlbum, type ReviewRow as Row } from "$lib/owner/album";
   import ReviewRow from "./ReviewRow.svelte";
+
+  const t = $derived(copy());
 
   let {
     rows,
@@ -36,16 +38,16 @@
 
 <div class="review" role="dialog" aria-modal="true" aria-labelledby="review-title">
   <div class="inner">
-    <h2 id="review-title" tabindex="-1" bind:this={heading}>{en["upload.review.title"](rows.length)}</h2>
-    <p class="note">{en["upload.review.intro"]}</p>
+    <h2 id="review-title" tabindex="-1" bind:this={heading}>{t["upload.review.title"](rows.length)}</h2>
+    <p class="note">{t["upload.review.intro"]}</p>
     <ul class="rows">
       {#each rows as row (row.key)}
         <ReviewRow {row} onCaption={(c) => onCaption(row.key, c)} onUnpick={() => onUnpick(row.key)} />
       {/each}
     </ul>
     <div class="actions">
-      <button class="btn" type="button" disabled={!sendable} onclick={onSend}>{en["upload.review.send"](toSend.length)}</button>
-      <button class="btn ghost" type="button" onclick={onCancel}>{en["upload.review.cancel"]}</button>
+      <button class="btn" type="button" disabled={!sendable} onclick={onSend}>{t["upload.review.send"](toSend.length)}</button>
+      <button class="btn ghost" type="button" onclick={onCancel}>{t["upload.review.cancel"]}</button>
     </div>
   </div>
 </div>

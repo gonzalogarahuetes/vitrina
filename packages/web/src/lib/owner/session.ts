@@ -149,7 +149,7 @@ export type Deps = {
   readonly newMediaId: () => string;
   /** The passphrase wordlists, dynamically imported: a chunk only passphrase invite creation loads. */
   readonly loadWordlists: () => Promise<readonly Wordlist[]>;
-  /** The owner's display language, the default passphrase language (brief §15.2). */
+  /** The owner's display language, the default passphrase language (brief §15.2). Read each time an invite opens. */
   readonly displayLanguage: string;
   /** location.origin: the relay a web invite names (invite spec §1). */
   readonly origin: string;

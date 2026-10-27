@@ -7,6 +7,7 @@
  * "unwrap" returns whatever outcome the test asked for.
  */
 import { createApiClient } from "$lib/api/client";
+import { en, enFormat } from "$lib/copy/en";
 import { guard, type Envelope } from "$lib/envelope";
 import { uuidToBytes } from "$lib/ids";
 import type { Invite, ParseResult } from "$lib/invite/types";
@@ -160,7 +161,9 @@ export class FakePicture implements Picture {
   }
 }
 
-export function harness(opts: { fragment?: string; unwrap?: UnwrapError | "ok"; inviteOpen?: OpenInviteError | "ok"; invite?: Invite } = {}) {
+export function harness(
+  opts: { fragment?: string; unwrap?: UnwrapError | "ok"; inviteOpen?: OpenInviteError | "ok"; invite?: Invite; watermarkLine?: Deps["watermarkLine"] } = {},
+) {
   const r = relay();
   const env = fakeEnvelope();
   const pictures: FakePicture[] = [];
@@ -222,6 +225,7 @@ export function harness(opts: { fragment?: string; unwrap?: UnwrapError | "ok"; 
       framesAwaited++;
     },
     now: () => new Date("2026-08-06T12:00:00Z"),
+    watermarkLine: opts.watermarkLine ?? ((label, at) => en.watermark(label, enFormat.watermarkDate(at))),
     forgetInvite: () => {
       forgotten++;
     },

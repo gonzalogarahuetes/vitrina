@@ -1,8 +1,10 @@
 <script lang="ts">
   /* A log entry's photo: the owner's own thumbnail, drawn to canvas as the album draws it, or the removed state. */
-  import { en } from "$lib/copy/en";
+  import { copy } from "$lib/copy/language.svelte";
   import type { LogPhoto } from "$lib/owner/people";
   import { drawCell } from "$lib/recipient/render";
+
+  const t = $derived(copy());
 
   let { photo }: { photo: LogPhoto } = $props();
 
@@ -26,13 +28,13 @@
 </script>
 
 {#if photo.kind === "removed"}
-  <p class="removed">{en["log.photo.removed"]}</p>
+  <p class="removed">{t["log.photo.removed"]}</p>
 {:else if photo.thumb.kind === "ready"}
-  <div class="thumb" role="img" aria-label={en["log.photo.a11y"]}><canvas class="thumb" bind:this={canvas} aria-hidden="true"></canvas></div>
+  <div class="thumb" role="img" aria-label={t["log.photo.a11y"]}><canvas class="thumb" bind:this={canvas} aria-hidden="true"></canvas></div>
 {:else if photo.thumb.kind === "loading"}
-  <div class="thumb blank" role="img" aria-label={en["log.photo.loading.a11y"]}></div>
+  <div class="thumb blank" role="img" aria-label={t["log.photo.loading.a11y"]}></div>
 {:else if photo.thumb.kind === "failed" || photo.thumb.kind === "unavailable"}
-  <p class="removed">{en["log.photo.failed"]}</p>
+  <p class="removed">{t["log.photo.failed"]}</p>
 {/if}
 
 <style>

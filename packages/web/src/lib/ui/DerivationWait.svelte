@@ -5,14 +5,16 @@
    * figure: Argon2id reports none. The hosting form disables its input while
    * this shows, so nothing can be edited or submitted again.
    */
-  import { en } from "$lib/copy/en";
+  import { copy } from "$lib/copy/language.svelte";
+
+  const t = $derived(copy());
 
   let { layout = "inline" }: { layout?: "inline" | "stacked" } = $props();
 </script>
 
 <div class="wait {layout}" role="status">
   <div class="rings" aria-hidden="true"><div class="ring"></div><div class="ring two"></div><div class="dot"></div></div>
-  <span>{en["derive.wait"]}</span>
+  <span>{t["derive.wait"]}</span>
 </div>
 
 <style>

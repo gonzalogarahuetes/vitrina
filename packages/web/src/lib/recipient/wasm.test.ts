@@ -9,6 +9,7 @@
  * unwraps it with the bytes the invite carried. Nothing here reads K_album.
  */
 import { createApiClient } from "$lib/api/client";
+import { en, enFormat } from "$lib/copy/en";
 import { loadEnvelope } from "$lib/envelope";
 import { uuidToBytes } from "$lib/ids";
 import { openInviteKey } from "$lib/keys/open";
@@ -77,6 +78,7 @@ describe("the recipient path over the real envelope build", () => {
       sleep: async () => undefined,
       nextFrames: async () => undefined,
       now: () => new Date("2026-08-06T12:00:00Z"),
+      watermarkLine: (label, at) => en.watermark(label, enFormat.watermarkDate(at)),
       forgetInvite: () => undefined,
     });
 

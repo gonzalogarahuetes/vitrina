@@ -6,12 +6,14 @@
    * whitespace before the value is read, and the client must not transform
    * the address at all (api-sketch §7.5).
    */
-  import { en } from "$lib/copy/en";
+  import { copy } from "$lib/copy/language.svelte";
   import type { SigninNotice, SigninPhase } from "$lib/owner/session";
   import Alert from "$lib/ui/Alert.svelte";
   import DerivationWait from "$lib/ui/DerivationWait.svelte";
   import PasswordField from "./PasswordField.svelte";
   import Paused from "./Paused.svelte";
+
+  const t = $derived(copy());
 
   let {
     phase,
@@ -52,23 +54,23 @@
 </script>
 
 <main class="screen">
-  <h1>{en["signin.title"]}</h1>
+  <h1>{t["signin.title"]}</h1>
   {#if notice === "session-ended"}
-    <p class="note" role="status">{en["session.ended"]}</p>
+    <p class="note" role="status">{t["session.ended"]}</p>
   {:else if notice === "signed-out"}
-    <p class="note" role="status">{en["signed-out"]}</p>
+    <p class="note" role="status">{t["signed-out"]}</p>
   {/if}
 
   {#if phase === "unavailable"}
-    <Alert text={en["signin.unavailable"]} />
+    <Alert text={t["signin.unavailable"]} />
     <button class="btn" type="button" onclick={() => onRetry(email)}
-      >{en["signin.retry"]}</button
+      >{t["signin.retry"]}</button
     >
   {:else}
     <form onsubmit={submit} novalidate>
       <fieldset disabled={busy}>
         <div class="group">
-          <label for="signin-email">{en["signin.email.label"]}</label>
+          <label for="signin-email">{t["signin.email.label"]}</label>
           <input
             id="signin-email"
             class="field"
@@ -83,7 +85,7 @@
         </div>
         <PasswordField
           id="signin-password"
-          label={en["signin.password.label"]}
+          label={t["signin.password.label"]}
           autocomplete="current-password"
           invalid={phase === "failed"}
           bind:value={password}
@@ -91,7 +93,7 @@
       </fieldset>
 
       {#if phase === "failed"}
-        <Alert text={en["signin.failed"]} />
+        <Alert text={t["signin.failed"]} />
       {:else if phase === "paused" && pausedUntil !== null}
         <Paused until={pausedUntil} />
       {/if}
@@ -99,12 +101,12 @@
       {#if phase === "deriving"}
         <DerivationWait layout="stacked" />
       {:else if phase === "busy"}
-        <p class="note" role="status">{en["signin.busy"]}</p>
+        <p class="note" role="status">{t["signin.busy"]}</p>
       {:else}
         <button
           class="btn"
           type="submit"
-          disabled={!ready || phase === "paused"}>{en["signin.submit"]}</button
+          disabled={!ready || phase === "paused"}>{t["signin.submit"]}</button
         >
       {/if}
     </form>
@@ -113,7 +115,7 @@
   {#if !busy}
     <div class="bottom">
       <button class="btn ghost" type="button" onclick={onSignup}
-        >{en["signin.to-signup"]}</button
+        >{t["signin.to-signup"]}</button
       >
     </div>
   {/if}

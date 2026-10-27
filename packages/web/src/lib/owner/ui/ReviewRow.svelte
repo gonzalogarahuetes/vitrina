@@ -7,10 +7,12 @@
    * The caption field has no `maxlength`: that counts UTF-16 units, and the
    * limit is 280 code points (caption.ts). The count appears near the limit.
    */
-  import { en } from "$lib/copy/en";
+  import { copy } from "$lib/copy/language.svelte";
   import { CAPTION_COUNT_FROM, captionLength, checkCaption } from "$lib/owner/caption";
   import type { ReviewRow } from "$lib/owner/album";
   import { drawCell } from "$lib/recipient/render";
+
+  const t = $derived(copy());
 
   let { row, onCaption, onUnpick }: { row: ReviewRow; onCaption: (caption: string) => void; onUnpick: () => void } = $props();
 
@@ -42,24 +44,24 @@
 <li class="row" data-pick={row.key} data-read={row.read} data-preview={row.preview.kind}>
   <div class="top">
     {#if row.preview.kind === "ready"}
-      <div class="thumb" role="img" aria-label={en["upload.review.preview.a11y"](row.name)}><canvas bind:this={canvas} aria-hidden="true"></canvas></div>
+      <div class="thumb" role="img" aria-label={t["upload.review.preview.a11y"](row.name)}><canvas bind:this={canvas} aria-hidden="true"></canvas></div>
     {:else if row.preview.kind === "loading" || row.read === "reading"}
-      <div class="thumb blank" role="img" aria-label={en["upload.review.preview.loading.a11y"](row.name)}></div>
+      <div class="thumb blank" role="img" aria-label={t["upload.review.preview.loading.a11y"](row.name)}></div>
     {:else if row.read === "unreadable"}
       <div class="thumb blank failed" aria-hidden="true"></div>
     {:else}
-      <div class="thumb blank failed"><span>{en["upload.review.preview.failed"]}</span></div>
+      <div class="thumb blank failed"><span>{t["upload.review.preview.failed"]}</span></div>
     {/if}
     <div class="side">
       <span class="name">{row.name}</span>
-      <button class="btn ghost small" type="button" aria-label={en["upload.review.remove.a11y"](row.name)} onclick={onUnpick}>{en["upload.review.remove"]}</button>
+      <button class="btn ghost small" type="button" aria-label={t["upload.review.remove.a11y"](row.name)} onclick={onUnpick}>{t["upload.review.remove"]}</button>
     </div>
   </div>
 
   {#if row.read === "unreadable"}
-    <p class="alert" role="alert">{en["upload.review.unreadable"]}</p>
+    <p class="alert" role="alert">{t["upload.review.unreadable"]}</p>
   {:else}
-  <label for={id}>{en["upload.review.caption.label"]}</label>
+  <label for={id}>{t["upload.review.caption.label"]}</label>
   <textarea
     {id}
     class="field"
@@ -71,14 +73,14 @@
     value={row.caption}
     oninput={(e) => onCaption(e.currentTarget.value)}
   ></textarea>
-  <p class="note" id={`${id}-hint`}>{en["upload.review.caption.hint"]}</p>
+  <p class="note" id={`${id}-hint`}>{t["upload.review.caption.hint"]}</p>
   {#if showCount}
-    <p class="note count" id={`${id}-count`} aria-live="polite">{en["upload.review.caption.count"](count)}</p>
+    <p class="note count" id={`${id}-count`} aria-live="polite">{t["upload.review.caption.count"](count)}</p>
   {/if}
   {#if check === "too-long"}
-    <p class="alert" id={`${id}-error`}>{en["upload.review.caption.too-long"]}</p>
+    <p class="alert" id={`${id}-error`}>{t["upload.review.caption.too-long"]}</p>
   {:else if check === "invalid"}
-    <p class="alert" id={`${id}-error`}>{en["upload.review.caption.invalid"]}</p>
+    <p class="alert" id={`${id}-error`}>{t["upload.review.caption.invalid"]}</p>
   {/if}
   {/if}
 </li>

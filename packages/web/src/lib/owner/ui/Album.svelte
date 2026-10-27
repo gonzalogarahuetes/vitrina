@@ -7,12 +7,15 @@
    * owner is not a recipient. From here, the album's invite (§3.8) and its
    * people and access log (§3.9, §3.10).
    */
-  import { en, sessionEndTime } from "$lib/copy/en";
+  import { copy, format } from "$lib/copy/language.svelte";
   import type { AlbumScreen } from "$lib/owner/album";
   import type { Expiry } from "$lib/owner/session";
   import Viewer from "$lib/recipient/ui/Viewer.svelte";
   import MediaCell from "./MediaCell.svelte";
   import Review from "./Review.svelte";
+
+  const t = $derived(copy());
+  const fmt = $derived(format());
 
   let {
     album,
@@ -92,10 +95,10 @@
   function statement(
     s: NonNullable<AlbumScreen["confirm"]>["statement"],
   ): string {
-    if (s === "never-ready") return en["remove.never-ready"];
-    if (s === "unopened") return en["remove.unopened"];
-    if (s === "opened") return en["remove.opened"];
-    return en["remove.checking"];
+    if (s === "never-ready") return t["remove.never-ready"];
+    if (s === "unopened") return t["remove.unopened"];
+    if (s === "opened") return t["remove.opened"];
+    return t["remove.checking"];
   }
 </script>
 
@@ -119,34 +122,34 @@
         stroke-linejoin="round"
         aria-hidden="true"><path d="M15 5l-7 7 7 7"></path></svg
       >
-      <span>{en["album.back"]}</span>
+      <span>{t["album.back"]}</span>
     </button>
   </div>
 
   <h1 class:failed-text={album.title === null}>
-    {album.title ?? en["albums.failed.title"]}
+    {album.title ?? t["albums.failed.title"]}
   </h1>
 
   {#if expiry?.ending}
     <p class="ending" role="status">
-      {en["session.ending"](sessionEndTime(expiry.endsAt))}
+      {t["session.ending"](fmt.sessionEndTime(expiry.endsAt))}
     </p>
   {/if}
 
   {#if album.phase === "loading"}
-    <p class="note" role="status">{en["album.loading"]}</p>
+    <p class="note" role="status">{t["album.loading"]}</p>
   {:else}
     <div class="sharing">
       <button class="btn" type="button" onclick={onInvite}
-        >{en["album.invite"]}</button
+        >{t["album.invite"]}</button
       >
       <button class="btn ghost" type="button" onclick={onPeople}
-        >{en["album.people"]}</button
+        >{t["album.people"]}</button
       >
     </div>
 
     <div class="add">
-      <label class="btn" for="add-photos">{en["album.add"]}</label>
+      <label class="btn" for="add-photos">{t["album.add"]}</label>
       <input
         id="add-photos"
         class="visually-hidden"
@@ -157,20 +160,20 @@
         onchange={chosen}
       />
       {#if album.chooseRefused}
-        <p class="alert" role="alert">{en["upload.too-large"]}</p>
+        <p class="alert" role="alert">{t["upload.too-large"]}</p>
       {/if}
-      <p class="note">{en["upload.stripped"]}</p>
-      <p class="note">{en["upload.downscale"]}</p>
+      <p class="note">{t["upload.stripped"]}</p>
+      <p class="note">{t["upload.downscale"]}</p>
     </div>
 
     {#if album.erasurePending > 0}
       <p class="pending" role="status">
-        {en["remove.pending"](album.erasurePending)}
+        {t["remove.pending"](album.erasurePending)}
       </p>
     {/if}
 
     {#if album.items.length === 0}
-      <p class="note">{en["album.empty"]}</p>
+      <p class="note">{t["album.empty"]}</p>
     {:else}
       <ul class="cells">
         {#each album.items as item (item.key)}
@@ -199,21 +202,21 @@
     aria-labelledby="remove-title"
     aria-describedby="remove-statement"
   >
-    <h2 id="remove-title">{en["remove.title"]}</h2>
+    <h2 id="remove-title">{t["remove.title"]}</h2>
     <p id="remove-statement" role="status">
       {statement(album.confirm.statement)}
     </p>
     {#if album.confirm.removing}
-      <p class="note" role="status">{en["remove.busy"]}</p>
+      <p class="note" role="status">{t["remove.busy"]}</p>
     {:else}
       <button
         class="btn danger"
         type="button"
         disabled={album.confirm.statement === null || confirmItem === undefined}
-        onclick={onConfirmRemove}>{en["remove.confirm"]}</button
+        onclick={onConfirmRemove}>{t["remove.confirm"]}</button
       >
       <button class="btn ghost" type="button" onclick={onCancelRemove}
-        >{en["remove.cancel"]}</button
+        >{t["remove.cancel"]}</button
       >
     {/if}
   </div>
@@ -226,12 +229,12 @@
     aria-modal="true"
     aria-labelledby="leaving-text"
   >
-    <p id="leaving-text">{en["album.leaving"]}</p>
+    <p id="leaving-text">{t["album.leaving"]}</p>
     <button class="btn" type="button" onclick={onStay}
-      >{en["album.leaving.stay"]}</button
+      >{t["album.leaving.stay"]}</button
     >
     <button class="btn ghost" type="button" onclick={onLeave}
-      >{en["album.leaving.go"]}</button
+      >{t["album.leaving.go"]}</button
     >
   </div>
 {/if}
