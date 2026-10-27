@@ -421,6 +421,14 @@ _B.7, completed 20 August 2026. This is what a recipient reads after opening an 
 >
 > The link is the key: keep it to yourself. Screenshots leave marks, and all invitations are revocable.
 
+**Spanish reference text, signed off by the owner on 27 October 2026** (§15.3). Every clause was checked against the table below; the choices that table forces in Spanish are «llave», never «clave»; «marca», never «rastro» or «huella»; «automáticamente»; and «tienes acceso», which keeps the invitation a permission that can be withdrawn rather than a gift.
+
+> Alguien ha abierto una ventana para compartir algo contigo: tienes acceso a un álbum que ha elegido para ti, y puedes visitarlo tantas veces como quieras.
+>
+> No se guarda nada automáticamente en tu móvil ni en tu ordenador. No hay ningún archivo que reenviar. Nuestros servidores no pueden leer las fotos.
+>
+> El enlace es la llave: no lo compartas con nadie. Las capturas de pantalla llevan una marca y todas las invitaciones se pueden revocar.
+
 ### Why each clause is worded as it is
 
 Recorded because every one of these was a correction, and a future edit that "improves" the copy will otherwise reintroduce a claim that took several drafts to remove.

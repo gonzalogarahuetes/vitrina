@@ -51,9 +51,9 @@ describe("es has exactly en's slots (no screen falls back to English)", () => {
   });
 });
 
-/** Brief §16 in Spanish, as signed off by the owner on 26 October 2026. An edit here is an edit to the reference text. */
+/** Brief §16 in Spanish, as signed off by the owner on 27 October 2026, recorded in the brief. An edit here is an edit to the reference text. */
 const SIGNED_OFF_16 = [
-  "Alguien ha abierto una ventana para compartir algo contigo: te ha dado acceso a un álbum que ha elegido, y puedes visitarlo tantas veces como quieras.",
+  "Alguien ha abierto una ventana para compartir algo contigo: tienes acceso a un álbum que ha elegido para ti, y puedes visitarlo tantas veces como quieras.",
   "No se guarda nada automáticamente en tu móvil ni en tu ordenador. No hay ningún archivo que reenviar. Nuestros servidores no pueden leer las fotos.",
   "El enlace es la llave: no lo compartas con nadie. Las capturas de pantalla llevan una marca y todas las invitaciones se pueden revocar.",
 ];

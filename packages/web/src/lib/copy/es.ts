@@ -21,7 +21,7 @@ const n_ = (n: number): string => number(L, n);
 export const es: Copy = {
   /** Brief §16, Spanish reference text. Its third paragraph is the house-key presentation. */
   "onboarding.text": [
-    "Alguien ha abierto una ventana para compartir algo contigo: te ha dado acceso a un álbum que ha elegido, y puedes visitarlo tantas veces como quieras.",
+    "Alguien ha abierto una ventana para compartir algo contigo: tienes acceso a un álbum que ha elegido para ti, y puedes visitarlo tantas veces como quieras.",
     "No se guarda nada automáticamente en tu móvil ni en tu ordenador. No hay ningún archivo que reenviar. Nuestros servidores no pueden leer las fotos.",
     "El enlace es la llave: no lo compartas con nadie. Las capturas de pantalla llevan una marca y todas las invitaciones se pueden revocar.",
   ],
