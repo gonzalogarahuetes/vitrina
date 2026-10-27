@@ -25,6 +25,8 @@
  */
 import { expect, test, type Browser, type Locator, type Page } from "@playwright/test";
 import { en } from "../../src/lib/copy/en.ts";
+import { LANGUAGES } from "../../src/lib/copy/index.ts";
+import { autonym } from "../../src/lib/copy/format.ts";
 import { storageViolations } from "../storage-allowlist.ts";
 import { dumpStorage, watch } from "./helpers.ts";
 import { fakeRelay, type Logged } from "./relay.ts";
@@ -442,7 +444,8 @@ test("the viewer: the watermark in the photo's corner at every zoom and pan, ges
   // ── Keyboard: every control, labelled, in visual order; focus kept at a limit ──
   await button(page, en["viewer.fit"]).click();
   await pressWhileEnabled(page, en["viewer.zoom-in"]);
-  const visualOrder = [en["viewer.back"], en["viewer.pan-up"], en["viewer.pan-left"], en["viewer.pan-right"], en["viewer.pan-down"], en["viewer.zoom-out"], en["viewer.fit"], en["viewer.zoom-in"]];
+  // The language switcher sits in the viewer's top row after Back, offering the languages not in use (brief §15: on every screen).
+  const visualOrder = [en["viewer.back"], ...LANGUAGES.filter((l) => l !== "en").map(autonym), en["viewer.pan-up"], en["viewer.pan-left"], en["viewer.pan-right"], en["viewer.pan-down"], en["viewer.zoom-out"], en["viewer.fit"], en["viewer.zoom-in"]];
   const named = await page.locator(".viewer button").evaluateAll((bs) =>
     bs.map((b) => ({ name: b.getAttribute("aria-label") ?? b.textContent?.trim() ?? "", tabindex: b.getAttribute("tabindex"), disabled: (b as HTMLButtonElement).disabled })),
   );

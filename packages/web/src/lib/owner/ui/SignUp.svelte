@@ -5,12 +5,14 @@
    * before submission. The address input is type="text" for SignIn.svelte's
    * reason: it is sent exactly as typed.
    */
-  import { en } from "$lib/copy/en";
+  import { copy } from "$lib/copy/language.svelte";
   import type { SignupPhase } from "$lib/owner/session";
   import Alert from "$lib/ui/Alert.svelte";
   import DerivationWait from "$lib/ui/DerivationWait.svelte";
   import PasswordField from "./PasswordField.svelte";
   import Paused from "./Paused.svelte";
+
+  const t = $derived(copy());
 
   let {
     phase,
@@ -30,13 +32,13 @@
   const ready = $derived(email.trim() !== "" && password !== "");
   const passwordProblem = $derived(
     phase === "too-short"
-      ? en["signup.too-short"]
+      ? t["signup.too-short"]
       : phase === "too-long"
-        ? en["signup.too-long"]
+        ? t["signup.too-long"]
         : phase === "common"
-          ? en["signup.common"]
+          ? t["signup.common"]
           : phase === "invalid"
-            ? en["signup.invalid"]
+            ? t["signup.invalid"]
             : null,
   );
 
@@ -53,11 +55,11 @@
 </script>
 
 <main class="screen">
-  <h1>{en["signup.title"]}</h1>
+  <h1>{t["signup.title"]}</h1>
   <form onsubmit={submit} novalidate>
     <fieldset disabled={busy}>
       <div class="group">
-        <label for="signup-email">{en["signup.email.label"]}</label>
+        <label for="signup-email">{t["signup.email.label"]}</label>
         <input
           id="signup-email"
           class="field"
@@ -70,20 +72,20 @@
           bind:value={email}
         />
         {#if phase === "taken"}
-          <Alert text={en["signup.taken"]} />
-          <button class="btn ghost" type="button" onclick={() => onSignin(email)}>{en["signup.taken.signin"]}</button>
+          <Alert text={t["signup.taken"]} />
+          <button class="btn ghost" type="button" onclick={() => onSignin(email)}>{t["signup.taken.signin"]}</button>
         {/if}
       </div>
       <div class="group">
         <PasswordField
           id="signup-password"
-          label={en["signup.password.label"]}
+          label={t["signup.password.label"]}
           autocomplete="new-password"
           invalid={passwordProblem !== null}
           describedby="signup-policy"
           bind:value={password}
         />
-        <p id="signup-policy" class="note">{en["signup.policy"]}</p>
+        <p id="signup-policy" class="note">{t["signup.policy"]}</p>
         {#if passwordProblem !== null}
           <Alert text={passwordProblem} />
         {/if}
@@ -94,11 +96,11 @@
       <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"
         ><circle cx="8" cy="15" r="4"></circle><path d="M11 12l9-9"></path><path d="M17 6l3 3"></path></svg
       >
-      <strong>{en["signup.loss"]}</strong>
+      <strong>{t["signup.loss"]}</strong>
     </div>
 
     {#if phase === "failed"}
-      <Alert text={en["signup.failed"]} />
+      <Alert text={t["signup.failed"]} />
     {:else if phase === "paused" && pausedUntil !== null}
       <Paused until={pausedUntil} />
     {/if}
@@ -106,15 +108,15 @@
     {#if phase === "deriving"}
       <DerivationWait />
     {:else if phase === "busy"}
-      <p class="note" role="status">{en["signup.busy"]}</p>
+      <p class="note" role="status">{t["signup.busy"]}</p>
     {:else}
-      <button class="btn" type="submit" disabled={!ready || phase === "paused"}>{en["signup.submit"]}</button>
+      <button class="btn" type="submit" disabled={!ready || phase === "paused"}>{t["signup.submit"]}</button>
     {/if}
   </form>
 
   {#if !busy}
     <div class="bottom">
-      <button class="btn ghost" type="button" onclick={() => onSignin("")}>{en["signup.to-signin"]}</button>
+      <button class="btn ghost" type="button" onclick={() => onSignin("")}>{t["signup.to-signin"]}</button>
     </div>
   {/if}
 </main>

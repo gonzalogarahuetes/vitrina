@@ -5,9 +5,12 @@
    * is listed with its failure, never dropped. Counts are items, not photos.
    */
   import { resolve } from "$app/paths";
-  import { en, sessionEndTime } from "$lib/copy/en";
+  import { copy, format } from "$lib/copy/language.svelte";
   import type { AlbumView, CreatePhase, Expiry, LogoutScope } from "$lib/owner/session";
   import Alert from "$lib/ui/Alert.svelte";
+
+  const t = $derived(copy());
+  const fmt = $derived(format());
 
   let {
     phase,
@@ -49,21 +52,21 @@
 </script>
 
 <main class="screen albums" inert={busy}>
-  <h1>{en["albums.title"]}</h1>
+  <h1>{t["albums.title"]}</h1>
 
   {#if expiry?.ending}
-    <p class="ending" role="status">{en["session.ending"](sessionEndTime(expiry.endsAt))}</p>
+    <p class="ending" role="status">{t["session.ending"](fmt.sessionEndTime(expiry.endsAt))}</p>
   {/if}
 
   {#if phase === "loading"}
-    <p class="note" role="status">{en["albums.loading"]}</p>
+    <p class="note" role="status">{t["albums.loading"]}</p>
   {:else}
     {#if create === "closed"}
-      <button class="btn" type="button" onclick={onOpenCreate}>{en["album.create"]}</button>
+      <button class="btn" type="button" onclick={onOpenCreate}>{t["album.create"]}</button>
     {:else}
       <form class="create" onsubmit={submit} novalidate>
         <fieldset disabled={creating}>
-          <label for="album-title">{en["album.title.label"]}</label>
+          <label for="album-title">{t["album.title.label"]}</label>
           <input
             id="album-title"
             class="field"
@@ -73,47 +76,47 @@
             aria-describedby="album-title-note"
             bind:value={title}
           />
-          <p id="album-title-note" class="note">{en["album.title"]}</p>
+          <p id="album-title-note" class="note">{t["album.title"]}</p>
         </fieldset>
         {#if create === "empty"}
-          <Alert text={en["album.title.empty"]} />
+          <Alert text={t["album.title.empty"]} />
         {:else if create === "too-long"}
-          <Alert text={en["album.title.too-long"]} />
+          <Alert text={t["album.title.too-long"]} />
         {:else if create === "failed"}
-          <Alert text={en["album.create.failed"]} />
+          <Alert text={t["album.create.failed"]} />
         {/if}
         {#if creating}
-          <p class="note" role="status">{en["album.create.busy"]}</p>
+          <p class="note" role="status">{t["album.create.busy"]}</p>
         {:else}
-          <button class="btn" type="submit">{en["album.create.submit"]}</button>
-          <button class="btn ghost" type="button" onclick={onCloseCreate}>{en["album.create.cancel"]}</button>
+          <button class="btn" type="submit">{t["album.create.submit"]}</button>
+          <button class="btn ghost" type="button" onclick={onCloseCreate}>{t["album.create.cancel"]}</button>
         {/if}
       </form>
     {/if}
 
     {#if albums.length === 0}
-      <p class="note">{en["albums.empty"]}</p>
+      <p class="note">{t["albums.empty"]}</p>
     {:else}
       <ul class="list">
         {#each albums as album (album.id)}
           <li class="album" class:failed={album.failed !== null} data-album={album.id}>
             {#if album.failed === "key"}
               <!-- Its key would not open: there is nothing this device can show inside it. -->
-              <span class="name failed-text">{en["albums.failed.key"]}</span>
-              <span class="count">{en["albums.count"](album.mediaCount)}</span>
+              <span class="name failed-text">{t["albums.failed.key"]}</span>
+              <span class="count">{t["albums.count"](album.mediaCount)}</span>
             {:else}
               <button
                 class="open"
                 type="button"
-                aria-label={album.title === null ? en["albums.open.untitled.a11y"] : en["albums.open.a11y"](album.title)}
+                aria-label={album.title === null ? t["albums.open.untitled.a11y"] : t["albums.open.a11y"](album.title)}
                 onclick={() => onOpen(album.id)}
               >
                 {#if album.failed === null}
                   <span class="name">{album.title}</span>
                 {:else}
-                  <span class="name failed-text">{en["albums.failed.title"]}</span>
+                  <span class="name failed-text">{t["albums.failed.title"]}</span>
                 {/if}
-                <span class="count">{en["albums.count"](album.mediaCount)}</span>
+                <span class="count">{t["albums.count"](album.mediaCount)}</span>
               </button>
             {/if}
           </li>
@@ -124,12 +127,12 @@
 
   <div class="bottom out">
     {#if busy}
-      <p class="note" role="status">{en["logout.busy"]}</p>
+      <p class="note" role="status">{t["logout.busy"]}</p>
     {:else}
-      <button class="btn ghost" type="button" onclick={() => onLogout("device")}>{en["logout.device"]}</button>
-      <button class="btn ghost" type="button" onclick={() => onLogout("everywhere")}>{en["logout.everywhere"]}</button>
+      <button class="btn ghost" type="button" onclick={() => onLogout("device")}>{t["logout.device"]}</button>
+      <button class="btn ghost" type="button" onclick={() => onLogout("everywhere")}>{t["logout.everywhere"]}</button>
     {/if}
-    <a class="licences-link" href={resolve("/licences")}>{en["licences.link"]}</a>
+    <a class="licences-link" href={resolve("/licences")}>{t["licences.link"]}</a>
   </div>
 </main>
 

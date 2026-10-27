@@ -1,7 +1,9 @@
 <script lang="ts">
-  import { en } from "$lib/copy/en";
+  import { copy } from "$lib/copy/language.svelte";
   import type { PassphrasePhase } from "$lib/recipient/session";
   import DerivationWait from "$lib/ui/DerivationWait.svelte";
+
+  const t = $derived(copy());
 
   let { phase, onSubmit }: { phase: PassphrasePhase; onSubmit: (words: readonly string[]) => void } = $props();
 
@@ -19,14 +21,14 @@
 </script>
 
 <main class="screen">
-  <h1>{en["recipient.passphrase.title"]}</h1>
+  <h1>{t["recipient.passphrase.title"]}</h1>
   <form onsubmit={submit} novalidate>
     <fieldset disabled={busy}>
-      <legend>{en["recipient.passphrase.label"]}</legend>
-      <p class="hint">{en["pass.entry"]}</p>
+      <legend>{t["recipient.passphrase.label"]}</legend>
+      <p class="hint">{t["pass.entry"]}</p>
       {#each words as _, i (i)}
         <div class="row">
-          <label for="word-{i}"><span aria-hidden="true">{i + 1}</span><span class="visually-hidden">{en["recipient.passphrase.word"](i + 1)}</span></label>
+          <label for="word-{i}"><span aria-hidden="true">{i + 1}</span><span class="visually-hidden">{t["recipient.passphrase.word"](i + 1)}</span></label>
           <input
             id="word-{i}"
             class="field"
@@ -43,16 +45,16 @@
     </fieldset>
 
     {#if phase === "empty"}
-      <div class="alert" role="alert">{@render warn()}<span>{en["pass.empty"]}</span></div>
+      <div class="alert" role="alert">{@render warn()}<span>{t["pass.empty"]}</span></div>
     {:else if phase === "wrong"}
-      <div class="alert" role="alert">{@render warn()}<span>{en["pass.wrong"]}</span></div>
+      <div class="alert" role="alert">{@render warn()}<span>{t["pass.wrong"]}</span></div>
     {/if}
 
     {#if phase === "deriving"}
       <!-- The derivation wait (flows §2): no progress figure, the input cannot be edited or resubmitted. -->
       <DerivationWait />
     {:else}
-      <button class="btn" type="submit" disabled={busy}>{en["recipient.passphrase.submit"]}</button>
+      <button class="btn" type="submit" disabled={busy}>{t["recipient.passphrase.submit"]}</button>
     {/if}
   </form>
 
@@ -60,7 +62,7 @@
     <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"
       ><circle cx="8" cy="15" r="4"></circle><path d="M11 12l9-9"></path><path d="M17 6l3 3"></path></svg
     >
-    <span>{en["pass.lost"]}</span>
+    <span>{t["pass.lost"]}</span>
   </div>
 </main>
 

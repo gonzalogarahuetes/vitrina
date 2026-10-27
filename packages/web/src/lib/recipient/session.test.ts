@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { en, enFormat } from "$lib/copy/en";
+import { es, esFormat } from "$lib/copy/es";
 import { EnvelopeUnavailable } from "$lib/envelope";
 import type { UnwrapError } from "$lib/keys/types";
 import {
@@ -777,6 +779,23 @@ describe("the watermark", () => {
     const h = harness();
     await toGrid(h);
     expect(albumScreen(h).watermark).toBe("María · 6 Aug 2026");
+  });
+
+  it("follows the interface language: relocalise rewrites the same label and day in the new one", async () => {
+    let lang: "en" | "es" = "en";
+    const h = harness({ watermarkLine: (label, at) => (lang === "en" ? en : es).watermark(label, (lang === "en" ? enFormat : esFormat).watermarkDate(at)) });
+    await toGrid(h);
+    expect(albumScreen(h).watermark).toBe("María · 6 Aug 2026");
+    lang = "es";
+    h.session.relocalise();
+    expect(albumScreen(h).watermark).toBe(`María · ${esFormat.watermarkDate(new Date("2026-08-06T12:00:00Z"))}`);
+    expect(albumScreen(h).watermark).not.toMatch(/Aug/);
+  });
+
+  it("relocalise before the grid, or after the key is dropped, changes nothing and throws nothing", () => {
+    const h = harness();
+    expect(() => h.session.relocalise()).not.toThrow();
+    expect(h.session.current.screen.kind).toBe("starting");
   });
 });
 

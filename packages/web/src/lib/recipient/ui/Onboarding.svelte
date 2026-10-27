@@ -1,5 +1,7 @@
 <script lang="ts">
-  import { en } from "$lib/copy/en";
+  import { copy } from "$lib/copy/language.svelte";
+
+  const t = $derived(copy());
 
   let { onContinue }: { onContinue: () => void } = $props();
 </script>
@@ -10,12 +12,12 @@
   >
   <!-- Brief §16, verbatim. Nothing else on this screen may soften its third paragraph. -->
   <div class="text">
-    {#each en["onboarding.text"] as paragraph (paragraph)}
+    {#each t["onboarding.text"] as paragraph (paragraph)}
       <p>{paragraph}</p>
     {/each}
   </div>
   <div class="bottom">
-    <button class="btn" type="button" onclick={onContinue}>{en["onboarding.continue"]}</button>
+    <button class="btn" type="button" onclick={onContinue}>{t["onboarding.continue"]}</button>
   </div>
 </main>
 

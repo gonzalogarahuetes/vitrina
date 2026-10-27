@@ -14,6 +14,10 @@
  *   3. Revoke, reload: the revoked screen, and the entry is gone, so a
  *      further reload is the dead page.
  *
+ *   4. In Spanish (brief §15): onboarding is brief §16's Spanish reference
+ *      text, the grid is Spanish, a switch to English mid-visit holds, and the
+ *      reload starts again from the device's language, storing nothing new.
+ *
  * Storage at each stop is judged by test/storage-allowlist.ts with the one
  * entry flows §4.7 permits; K_invite in any other place fails it.
  */
@@ -21,6 +25,8 @@ import { expect, test, type BrowserContext, type Route } from "@playwright/test"
 import { randomBytes, randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { en } from "../../src/lib/copy/en.ts";
+import { es } from "../../src/lib/copy/es.ts";
+import { autonym } from "../../src/lib/copy/format.ts";
 import { storageViolations } from "../storage-allowlist.ts";
 import { apiOrigin, dumpStorage, text, watch } from "./helpers.ts";
 
@@ -230,6 +236,40 @@ test.describe("a reload of the same tab continues (flows §4.7)", () => {
 
     await page.reload();
     await text(en.dead)(page);
+    expect(await violations()).toEqual([]);
+  });
+});
+
+test.describe("the recipient's path on a device set to Spanish (brief §15, §16)", () => {
+  test.use({ locale: "es-ES" });
+  let f: Fixtures;
+  test.beforeAll(async () => {
+    f = await fixtures();
+  });
+
+  test("onboarding is §16's Spanish text, the grid is Spanish, a switch holds for the visit, and a reload starts in Spanish again", async ({ page, context, baseURL }) => {
+    const violations = await watch(page);
+    await relay(context, f, new URL(baseURL ?? "").origin);
+    const choice = (name: string) => page.locator("[data-language-switch]").first().getByRole("button", { name, exact: true });
+
+    await page.goto(`/v/${f.qrFragment}`);
+    for (const paragraph of es["onboarding.text"]) await expect(page.getByText(paragraph, { exact: true })).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.lang)).toBe("es");
+    await page.getByRole("button", { name: es["onboarding.continue"] }).click();
+    await expect(page.getByRole("button", { name: es["grid.photo.a11y"](1, 1) })).toBeVisible();
+
+    await choice(autonym("en")).click();
+    await expect(page.getByRole("button", { name: en["grid.photo.a11y"](1, 1) })).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.lang)).toBe("en");
+
+    await page.reload();
+    await page.waitForLoadState("load");
+    await expect(page.getByRole("button", { name: es["onboarding.continue"] })).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.lang)).toBe("es");
+
+    const dump = await dumpStorage(page);
+    expect(dump.sessionStorage[INVITE_ENTRY]).toBe(f.qrFragment);
+    expect(storageViolations(dump, [...f.inviteSecrets, f.qr.token], { recipientInvite: f.qrFragment }), "nothing but the one permitted entry").toEqual([]);
     expect(await violations()).toEqual([]);
   });
 });

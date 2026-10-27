@@ -1,7 +1,9 @@
 <script lang="ts">
-  import { en } from "$lib/copy/en";
+  import { copy } from "$lib/copy/language.svelte";
   import type { Item } from "$lib/recipient/session";
   import GridCell from "./GridCell.svelte";
+
+  const t = $derived(copy());
 
   let {
     title,
@@ -23,7 +25,7 @@
 <main class="grid-screen">
   <header>
     {#if loading}
-      <p role="status">{en["open.loading"]}</p>
+      <p role="status">{t["open.loading"]}</p>
     {:else}
       <h1>{title}</h1>
     {/if}
@@ -34,7 +36,7 @@
       <svg width="72" height="72" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" aria-hidden="true"
         ><rect x="8" y="10" width="32" height="28" rx="3"></rect><path d="M8 30h32"></path></svg
       >
-      <p>{en["grid.empty"]}</p>
+      <p>{t["grid.empty"]}</p>
     </div>
   {:else}
     <div class="cells">
@@ -49,7 +51,7 @@
   .grid-screen {
     max-width: 960px;
     margin: 0 auto;
-    min-height: 100dvh;
+    min-height: calc(100dvh - var(--language-bar));
     display: flex;
     flex-direction: column;
   }

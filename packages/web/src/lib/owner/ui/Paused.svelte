@@ -6,7 +6,10 @@
    * reader is not read a new sentence every second.
    */
   import { onMount } from "svelte";
-  import { en, pauseLeft } from "$lib/copy/en";
+  import { copy, format } from "$lib/copy/language.svelte";
+
+  const t = $derived(copy());
+  const fmt = $derived(format());
 
   let { until }: { until: number } = $props();
 
@@ -15,7 +18,7 @@
     const t = setInterval(() => (now = Date.now()), 1000);
     return () => clearInterval(t);
   });
-  const text = $derived(en["credential.paused"](pauseLeft(until - now)));
+  const text = $derived(t["credential.paused"](fmt.pauseLeft(until - now)));
 </script>
 
 <div class="paused" role="status">

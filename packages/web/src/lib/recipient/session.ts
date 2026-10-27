@@ -18,7 +18,6 @@
  * because a reload may recover from a trap.
  */
 import { ApiFailure, NetworkFailure, UnexpectedResponse, type ApiClient } from "$lib/api/client";
-import { en, watermarkDate } from "$lib/copy/en";
 import { EnvelopeUnavailable, type Envelope, type Poison } from "$lib/envelope";
 import { uuidFromBytes, uuidToBytes } from "$lib/ids";
 import type { ParseInvite } from "$lib/invite/types";
@@ -89,6 +88,11 @@ export type Deps = {
   /** Two animation frames, so the derivation-wait screen is painted before Argon2id blocks. */
   readonly nextFrames: () => Promise<void>;
   readonly now: () => Date;
+  /**
+   * The watermark's one line from the label and the day it was opened, in the
+   * interface language at the time of the call (copy and format, lib/copy).
+   */
+  readonly watermarkLine: (label: string, at: Date) => string;
 };
 
 /** Thrown through an in-flight operation once the session has reached a terminal screen. */
@@ -150,7 +154,9 @@ export class RecipientSession {
    */
   private inviteKey: Uint8Array | null = null;
   private details: Promise<AlbumDetails> | null = null;
-  /** The decrypted label and today's date, as the watermark's line. Dropped with the key. */
+  /** The decrypted label and the day it was opened, the watermark's input. Dropped with the key. */
+  private mark: { readonly label: string; readonly at: Date } | null = null;
+  /** The watermark's line, as watermarkLine last wrote it from `mark`. Dropped with the key. */
   private watermark = "";
 
   private halted = false;
@@ -175,6 +181,18 @@ export class RecipientSession {
   private set(screen: Screen): void {
     this.state = { ...this.state, screen };
     for (const l of this.listeners) l(this.state);
+  }
+
+  /**
+   * The interface language changed: the watermark's line is written again, so
+   * its date is never in a language the screen around it is not. Same label,
+   * same day.
+   */
+  relocalise(): void {
+    if (this.mark === null) return;
+    this.watermark = this.deps.watermarkLine(this.mark.label, this.mark.at);
+    const a = this.album();
+    if (a !== null) this.set({ ...a, watermark: this.watermark });
   }
 
   private setOffline(offline: boolean): void {
@@ -207,6 +225,7 @@ export class RecipientSession {
     this.material = null;
     this.inviteKey?.fill(0);
     this.inviteKey = null;
+    this.mark = null;
     this.watermark = "";
     this.details = null;
     this.api = null;
@@ -434,7 +453,8 @@ export class RecipientSession {
       // After a successful unwrap this is corrupted data (flows §4.4).
       return this.terminal("dead");
     }
-    this.watermark = en.watermark(label, watermarkDate(this.deps.now()));
+    this.mark = { label, at: this.deps.now() };
+    this.watermark = this.deps.watermarkLine(label, this.mark.at);
     // §9.4 writes no log and may run during onboarding. §9.5 waits for the grid.
     const albumId = this.albumId;
     if (albumId === null) throw new Halted();

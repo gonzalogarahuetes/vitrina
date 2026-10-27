@@ -14,10 +14,13 @@
    * `touch-action: none` is on the photo's frame only. The page's own zoom is
    * never disabled: people with poor eyesight need it for everything else.
    */
-  import { en } from "$lib/copy/en";
+  import { copy } from "$lib/copy/language.svelte";
   import { Gestures } from "$lib/recipient/gestures";
   import { FIT, canPan, canZoom, drawViewer, panArrows, panBy, zoomBy, type Direction, type Picture, type Size, type View } from "$lib/recipient/render";
   import type { Viewer } from "$lib/recipient/session";
+  import LanguageSwitch from "$lib/ui/LanguageSwitch.svelte";
+
+  const t = $derived(copy());
 
   let {
     viewer,
@@ -150,12 +153,12 @@
     if (zooms.out) view = FIT;
   }
 
-  const ARROWS: readonly { dir: Direction; label: string; path: string }[] = [
-    { dir: "up", label: en["viewer.pan-up"], path: "M5 15l7-7 7 7" },
-    { dir: "left", label: en["viewer.pan-left"], path: "M15 5l-7 7 7 7" },
-    { dir: "right", label: en["viewer.pan-right"], path: "M9 5l7 7-7 7" },
-    { dir: "down", label: en["viewer.pan-down"], path: "M5 9l7 7 7-7" },
-  ];
+  const ARROWS: readonly { dir: Direction; label: string; path: string }[] = $derived([
+    { dir: "up", label: t["viewer.pan-up"], path: "M5 15l7-7 7 7" },
+    { dir: "left", label: t["viewer.pan-left"], path: "M15 5l-7 7 7 7" },
+    { dir: "right", label: t["viewer.pan-right"], path: "M9 5l7 7-7 7" },
+    { dir: "down", label: t["viewer.pan-down"], path: "M5 9l7 7 7-7" },
+  ]);
 </script>
 
 <main class="viewer">
@@ -164,8 +167,9 @@
       <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"
         ><path d="M15 5l-7 7 7 7"></path></svg
       >
-      <span>{en["viewer.back"]}</span>
+      <span>{t["viewer.back"]}</span>
     </button>
+    <LanguageSwitch compact />
   </div>
 
   {#if hasStage}
@@ -173,7 +177,7 @@
       <div
         class="frame"
         role="img"
-        aria-label={en["viewer.photo.a11y"](viewer.index + 1, count)}
+        aria-label={t["viewer.photo.a11y"](viewer.index + 1, count)}
         aria-describedby={caption !== null ? "viewer-caption" : undefined}
         bind:this={frame}
       >
@@ -188,7 +192,7 @@
         {/if}
       {/each}
       {#if viewer.phase === "loading"}
-        <div class="loading" role="status"><span>{en["viewer.loading"]}</span></div>
+        <div class="loading" role="status"><span>{t["viewer.loading"]}</span></div>
       {/if}
     </div>
 
@@ -202,21 +206,21 @@
         <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"
           ><circle cx="11" cy="11" r="7"></circle><path d="M8 11h6"></path><path d="M20 20l-4-4"></path></svg
         >
-        <span>{en["viewer.zoom-out"]}</span>
+        <span>{t["viewer.zoom-out"]}</span>
       </button>
-      <button class="ctl" type="button" aria-disabled={!zooms.out} onclick={fit}>{en["viewer.fit"]}</button>
+      <button class="ctl" type="button" aria-disabled={!zooms.out} onclick={fit}>{t["viewer.fit"]}</button>
       <button class="ctl" type="button" aria-disabled={!zooms.in} onclick={() => zoom(1)}>
         <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"
           ><circle cx="11" cy="11" r="7"></circle><path d="M8 11h6M11 8v6"></path><path d="M20 20l-4-4"></path></svg
         >
-        <span>{en["viewer.zoom-in"]}</span>
+        <span>{t["viewer.zoom-in"]}</span>
       </button>
     </div>
   {:else}
     <div class="gone" role="alert" class:failed={viewer.phase === "failed"}>
-      <h1>{viewer.phase === "removed" ? en["viewer.removed"] : en["viewer.failed"]}</h1>
+      <h1>{viewer.phase === "removed" ? t["viewer.removed"] : t["viewer.failed"]}</h1>
       <div class="bottom">
-        <button class="btn" type="button" onclick={onClose}>{en["viewer.back-to-album"]}</button>
+        <button class="btn" type="button" onclick={onClose}>{t["viewer.back-to-album"]}</button>
       </div>
     </div>
   {/if}
@@ -237,6 +241,9 @@
     padding: 8px 12px;
     display: flex;
     align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 8px;
     min-height: 76px;
   }
   .stage {

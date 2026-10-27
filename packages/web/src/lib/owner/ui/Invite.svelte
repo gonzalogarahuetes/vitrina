@@ -10,11 +10,14 @@
    * spoken or written, never pasted beside the link. Closing the tab while
    * the share screen is up asks first, as leaving it in the app does.
    */
-  import { en, languageName } from "$lib/copy/en";
+  import { copy, format, watermarkExample } from "$lib/copy/language.svelte";
   import { LABEL_MAX_CODE_POINTS, type InviteMode, type InviteScreen } from "$lib/owner/invite";
   import Alert from "$lib/ui/Alert.svelte";
   import DerivationWait from "$lib/ui/DerivationWait.svelte";
   import QrCode from "./QrCode.svelte";
+
+  const t = $derived(copy());
+  const fmt = $derived(format());
 
   let {
     invite,
@@ -76,15 +79,15 @@
   function problemText(p: InviteScreen["problem"]): string | null {
     switch (p) {
       case "label-empty":
-        return en["invite.name.empty"];
+        return t["invite.name.empty"];
       case "label-too-long":
-        return en["invite.name.too-long"];
+        return t["invite.name.too-long"];
       case "no-language":
-        return en["invite.language.choose"];
+        return t["invite.language.choose"];
       case "failed":
-        return en["invite.failed"];
+        return t["invite.failed"];
       case "device":
-        return en["invite.device"];
+        return t["invite.device"];
       default:
         return null;
     }
@@ -99,60 +102,60 @@
   </main>
 {:else if invite.step === "share" && share !== null}
   <main class="screen share" inert={invite.leaving}>
-    <h1>{en["invite.share.title"](share.label)}</h1>
+    <h1>{t["invite.share.title"](share.label)}</h1>
 
     {#if share.kind === "qr"}
-      <QrCode text={share.link} label={en["invite.qr.a11y"](share.label)} />
-      <p class="housekey">{en["invite.housekey"]}</p>
+      <QrCode text={share.link} label={t["invite.qr.a11y"](share.label)} />
+      <p class="housekey">{t["invite.housekey"]}</p>
     {:else}
-      <p class="channels">{en["invite.channels"]}</p>
+      <p class="channels">{t["invite.channels"]}</p>
     {/if}
 
     <section class="link" aria-labelledby="invite-link-label">
-      <h2 id="invite-link-label">{en["invite.link.label"]}</h2>
+      <h2 id="invite-link-label">{t["invite.link.label"]}</h2>
       <p class="url" data-invite-link>{share.link}</p>
       <div class="actions">
         {#if canShare}
-          <button class="btn" type="button" onclick={() => shareLink(share.link)}>{en["invite.link.share"]}</button>
+          <button class="btn" type="button" onclick={() => shareLink(share.link)}>{t["invite.link.share"]}</button>
         {/if}
-        <button class="btn" class:ghost={canShare} type="button" onclick={() => copyLink(share.link)}>{en["invite.link.copy"]}</button>
+        <button class="btn" class:ghost={canShare} type="button" onclick={() => copyLink(share.link)}>{t["invite.link.copy"]}</button>
       </div>
       {#if copied === "ok"}
-        <p class="note" role="status">{en["invite.link.copied"]}</p>
+        <p class="note" role="status">{t["invite.link.copied"]}</p>
       {:else if copied === "failed"}
-        <Alert text={en["invite.link.copy-failed"]} />
+        <Alert text={t["invite.link.copy-failed"]} />
       {/if}
       {#if share.kind === "passphrase"}
-        <p class="housekey">{en["invite.housekey.passphrase"]}</p>
+        <p class="housekey">{t["invite.housekey.passphrase"]}</p>
       {/if}
     </section>
 
     {#if share.kind === "passphrase"}
       <section class="words" aria-labelledby="invite-words-label">
-        <h2 id="invite-words-label">{en["invite.passphrase.label"]}</h2>
+        <h2 id="invite-words-label">{t["invite.passphrase.label"]}</h2>
         <!-- Shown to be read out or written down. Deliberately no copy button. -->
         <ol data-passphrase>
           {#each share.words as word, i (i)}
             <li>{word}</li>
           {/each}
         </ol>
-        <p class="note">{en["invite.passphrase.language"](languageName(share.language))}</p>
+        <p class="note">{t["invite.passphrase.language"](fmt.languageName(share.language))}</p>
       </section>
     {/if}
 
-    <p class="once">{en["invite.once"]}</p>
+    <p class="once">{t["invite.once"]}</p>
 
     <div class="bottom">
-      <button class="btn" type="button" onclick={() => onAskLeave(true)}>{en["invite.done"]}</button>
+      <button class="btn" type="button" onclick={() => onAskLeave(true)}>{t["invite.done"]}</button>
     </div>
   </main>
 
   {#if invite.leaving}
     <div class="sheet" role="alertdialog" aria-modal="true" aria-labelledby="invite-leave-title" aria-describedby="invite-leave-text">
-      <h2 id="invite-leave-title">{en["invite.leave.title"]}</h2>
-      <p id="invite-leave-text">{en["invite.leave.consequence"]}</p>
-      <button class="btn" type="button" onclick={() => onAskLeave(false)}>{en["invite.leave.stay"]}</button>
-      <button class="btn ghost" type="button" onclick={onLeave}>{en["invite.leave.confirm"]}</button>
+      <h2 id="invite-leave-title">{t["invite.leave.title"]}</h2>
+      <p id="invite-leave-text">{t["invite.leave.consequence"]}</p>
+      <button class="btn" type="button" onclick={() => onAskLeave(false)}>{t["invite.leave.stay"]}</button>
+      <button class="btn ghost" type="button" onclick={onLeave}>{t["invite.leave.confirm"]}</button>
     </div>
   {/if}
 {:else}
@@ -162,14 +165,14 @@
         <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"
           ><path d="M15 5l-7 7 7 7"></path></svg
         >
-        <span>{en["invite.back"]}</span>
+        <span>{t["invite.back"]}</span>
       </button>
     </div>
-    <h1>{en["invite.title"]}</h1>
+    <h1>{t["invite.title"]}</h1>
 
     <form onsubmit={submit} novalidate>
       <fieldset class="group" disabled={busy}>
-        <label for="invite-name">{en["invite.name.label"]}</label>
+        <label for="invite-name">{t["invite.name.label"]}</label>
         <input
           id="invite-name"
           class="field"
@@ -180,25 +183,23 @@
           aria-describedby="invite-name-hint"
           bind:value={label}
         />
-        <p id="invite-name-hint" class="note">{en["invite.name.hint"]}</p>
+        <p id="invite-name-hint" class="note">{t["invite.name.hint"](watermarkExample())}</p>
       </fieldset>
 
       <fieldset class="group modes" disabled={busy}>
-        <legend>{en["invite.mode"]}</legend>
+        <legend>{t["invite.mode"]}</legend>
         <label class="opt" class:on={invite.mode === "qr"}>
           <input type="radio" name="invite-mode" value="qr" checked={invite.mode === "qr"} onchange={() => onMode("qr")} />
           <span class="opt-text">
-            <span class="opt-name">{en["invite.mode.qr"]}</span>
-            <span>{en["invite.mode.qr.gives"]}</span>
-            <span>{en["invite.mode.qr.costs"]}</span>
+            <span class="opt-name">{t["invite.mode.qr"]}</span>
+            <span>{t["invite.mode.qr.detail"]}</span>
           </span>
         </label>
         <label class="opt" class:on={invite.mode === "passphrase"}>
           <input type="radio" name="invite-mode" value="passphrase" checked={invite.mode === "passphrase"} onchange={() => onMode("passphrase")} />
           <span class="opt-text">
-            <span class="opt-name">{en["invite.mode.passphrase"]}</span>
-            <span>{en["invite.mode.passphrase.gives"]}</span>
-            <span>{en["invite.mode.passphrase.costs"]}</span>
+            <span class="opt-name">{t["invite.mode.passphrase"]}</span>
+            <span>{t["invite.mode.passphrase.detail"]}</span>
           </span>
         </label>
       </fieldset>
@@ -206,20 +207,20 @@
       {#if invite.mode === "passphrase"}
         <fieldset class="group" disabled={busy}>
           {#if invite.languages === "loading" || invite.languages === "idle"}
-            <p class="note" role="status">{en["invite.language.loading"]}</p>
+            <p class="note" role="status">{t["invite.language.loading"]}</p>
           {:else if invite.languages === "failed"}
-            <Alert text={en["invite.language.failed"]} />
-            <button class="btn ghost" type="button" onclick={onRetryLanguages}>{en["invite.language.retry"]}</button>
+            <Alert text={t["invite.language.failed"]} />
+            <button class="btn ghost" type="button" onclick={onRetryLanguages}>{t["invite.language.retry"]}</button>
           {:else if languages !== null && languages.length === 0}
-            <p class="note" role="status">{en["invite.language.none"]}</p>
+            <p class="note" role="status">{t["invite.language.none"]}</p>
           {:else if languages !== null}
-            <label for="invite-language">{en["invite.language"]}</label>
+            <label for="invite-language">{t["invite.language"]}</label>
             <select id="invite-language" class="field" aria-describedby="invite-language-hint" value={invite.language ?? ""} onchange={(e) => onLanguage(e.currentTarget.value)}>
               {#each languages as code (code)}
-                <option value={code}>{languageName(code)}</option>
+                <option value={code}>{fmt.languageLabel(code)}</option>
               {/each}
             </select>
-            <p id="invite-language-hint" class="note">{en["invite.language.hint"]}</p>
+            <p id="invite-language-hint" class="note">{t["invite.language.hint"]}</p>
           {/if}
         </fieldset>
       {/if}
@@ -229,9 +230,9 @@
       {/if}
 
       {#if invite.step === "creating"}
-        <p class="note" role="status">{en["invite.creating"]}</p>
+        <p class="note" role="status">{t["invite.creating"]}</p>
       {:else}
-        <button class="btn" type="submit" disabled={invite.mode === "passphrase" && (languages === null || languages.length === 0)}>{en["invite.create"]}</button>
+        <button class="btn" type="submit" disabled={invite.mode === "passphrase" && (languages === null || languages.length === 0)}>{t["invite.create"]}</button>
       {/if}
     </form>
   </main>

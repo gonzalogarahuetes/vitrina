@@ -5,9 +5,12 @@
    * device is doing with it or what the server last said. No item is drawn as
    * done before `ready`.
    */
-  import { en, stuckFor, stuckSince } from "$lib/copy/en";
+  import { copy, format } from "$lib/copy/language.svelte";
   import type { MediaItem } from "$lib/owner/album";
   import { drawCell } from "$lib/recipient/render";
+
+  const t = $derived(copy());
+  const fmt = $derived(format());
 
   let {
     item,
@@ -60,15 +63,15 @@
 
   const localText = $derived(
     item.local === "queued"
-      ? en["upload.queued"]
+      ? t["upload.queued"]
       : item.local === "preparing"
-        ? en["upload.preparing"]
+        ? t["upload.preparing"]
         : item.local === "encrypting"
-          ? en["upload.encrypting"]
+          ? t["upload.encrypting"]
           : item.local === "uploading"
-            ? en["upload.uploading"]
+            ? t["upload.uploading"]
             : item.local === "waiting"
-              ? en["upload.waiting"]
+              ? t["upload.waiting"]
               : null,
   );
 
@@ -76,16 +79,16 @@
     item.localFailure === null
       ? null
       : item.localFailure === "not-stripped"
-        ? en["upload.not-stripped"]
+        ? t["upload.not-stripped"]
         : item.localFailure === "refused"
-          ? en["upload.refused"]
-          : en["upload.not-prepared"],
+          ? t["upload.refused"]
+          : t["upload.not-prepared"],
   );
 
   const stalledText = $derived.by(() => {
     if (!item.stalled || item.updatedAt === null) return null;
     const since = new Date(item.updatedAt);
-    return en["upload.stalled"](stuckFor(now.getTime() - since.getTime()), stuckSince(since, now));
+    return t["upload.stalled"](fmt.stuckFor(now.getTime() - since.getTime()), fmt.stuckSince(since, now));
   });
 
   const ready = $derived(item.status === "ready" && item.local === null);
@@ -95,15 +98,15 @@
 <li class="cell" data-media={item.id ?? ""} data-state={item.local ?? item.localFailure ?? (item.stalled ? "stalled" : (item.status ?? ""))}>
   <div class="frame">
     {#if ready && item.thumb.kind === "ready"}
-      <button class="open" type="button" onclick={onOpen} aria-label={en["album.photo.a11y"](index + 1, count)}>
+      <button class="open" type="button" onclick={onOpen} aria-label={t["album.photo.a11y"](index + 1, count)}>
         <canvas bind:this={canvas} aria-hidden="true"></canvas>
       </button>
     {:else if ready && item.thumb.kind === "loading"}
-      <div class="loading" role="img" aria-label={en["grid.cell.loading.a11y"](index + 1, count)}></div>
+      <div class="loading" role="img" aria-label={t["grid.cell.loading.a11y"](index + 1, count)}></div>
     {:else if ready && item.thumb.kind === "failed"}
-      <button class="state failed" type="button" onclick={onRetryThumb}>{en["grid.cell.failed"]}</button>
+      <button class="state failed" type="button" onclick={onRetryThumb}>{t["grid.cell.failed"]}</button>
     {:else if ready}
-      <div class="state" role="img" aria-label={en["grid.cell.unavailable"]}><span aria-hidden="true">{en["grid.cell.unavailable"]}</span></div>
+      <div class="state" role="img" aria-label={t["grid.cell.unavailable"]}><span aria-hidden="true">{t["grid.cell.unavailable"]}</span></div>
     {:else if failureText !== null}
       <div class="state failed" role="alert">
         {#if item.name !== null}<span class="name">{item.name}</span>{/if}
@@ -115,23 +118,23 @@
         <span>{localText}</span>
       </div>
     {:else if item.status === "failed"}
-      <div class="state failed" role="alert"><span>{item.resendable ? en["upload.failed"] : en["upload.failed.gone"]}</span></div>
+      <div class="state failed" role="alert"><span>{item.resendable ? t["upload.failed"] : t["upload.failed.gone"]}</span></div>
     {:else if stalledText !== null}
       <div class="state failed" role="alert"><span>{stalledText}</span></div>
     {:else}
-      <div class="state busy" role="status"><span>{item.status === "processing" ? en["media.processing"] : en["media.pending"]}</span></div>
+      <div class="state busy" role="status"><span>{item.status === "processing" ? t["media.processing"] : t["media.pending"]}</span></div>
     {/if}
   </div>
 
   <div class="actions">
     {#if item.localFailure !== null}
-      <button class="btn ghost small" type="button" onclick={onDismiss}>{en["upload.dismiss"]}</button>
+      <button class="btn ghost small" type="button" onclick={onDismiss}>{t["upload.dismiss"]}</button>
     {:else}
       {#if item.resendable && item.local === null}
-        <button class="btn small" type="button" onclick={onResend}>{en["upload.resend"]}</button>
+        <button class="btn small" type="button" onclick={onResend}>{t["upload.resend"]}</button>
       {/if}
       {#if removable}
-        <button class="btn ghost small" type="button" onclick={onRemove}>{en["media.remove"]}</button>
+        <button class="btn ghost small" type="button" onclick={onRemove}>{t["media.remove"]}</button>
       {/if}
     {/if}
   </div>

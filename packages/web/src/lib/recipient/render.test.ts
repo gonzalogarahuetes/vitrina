@@ -369,11 +369,11 @@ describe("canvas only, in the source", () => {
   it("the zoom and pan buttons stay beside the gestures (brief §11: not everyone can pinch)", () => {
     const viewer = readFileSync(join(SRC, "lib/recipient/ui/Viewer.svelte"), "utf8");
     for (const slot of ["viewer.zoom-in", "viewer.zoom-out", "viewer.fit"]) {
-      expect(viewer, slot).toMatch(new RegExp(`<button[^>]*onclick[^>]*>[\\s\\S]{0,600}?en\\["${slot}"\\]`));
+      expect(viewer, slot).toMatch(new RegExp(`<button[^>]*onclick[^>]*>[\\s\\S]{0,600}?t\\["${slot}"\\]`));
     }
     // The pan arrows: one table, every direction labelled from the copy, rendered as buttons on the photo.
     for (const dir of ["up", "down", "left", "right"]) {
-      expect(viewer, dir).toMatch(new RegExp(`\\{ dir: "${dir}", label: en\\["viewer\\.pan-${dir}"\\]`));
+      expect(viewer, dir).toMatch(new RegExp(`\\{ dir: "${dir}", label: t\\["viewer\\.pan-${dir}"\\]`));
     }
     expect(viewer).toMatch(/\{#each ARROWS as a[^}]*\}[\s\S]{0,200}<button class="arrow \{a\.dir\}"[^>]*aria-label=\{a\.label\}[^>]*onclick=/);
     // An unavailable control is aria-disabled: a disabled button drops keyboard focus the moment it reaches its limit.
@@ -393,7 +393,7 @@ describe("canvas only, in the source", () => {
   it("puts no watermark text in markup: it reaches the screen only through drawWatermark", () => {
     for (const f of app.filter((f) => f.endsWith(".svelte"))) {
       expect(readFileSync(f, "utf8"), f).not.toMatch(/\bwatermark\b[^=]*\}\s*</);
-      expect(readFileSync(f, "utf8"), f).not.toMatch(/\ben\.watermark|en\["watermark"\]/);
+      expect(readFileSync(f, "utf8"), f).not.toMatch(/\b(en|es|t|copy\(\))\.watermark\b|\["watermark"\]|\bwatermarkLine\(/);
     }
   });
 });
