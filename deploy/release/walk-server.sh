@@ -91,7 +91,10 @@ close)
 	else pass "the API's log does not hold the bearer token"; fi
 
 	# 3. The account and what it stored.
-	deleted=$(sudo -u postgres psql -d vitrina -qtA -v e="$email" -c "DELETE FROM owners WHERE email = :'e' RETURNING id" | grep -c . || true)
+	# Through stdin, not -c: psql interpolates :'e' only in what it reads, never in
+	# a -c command (measured on the first verify, where -c sent the colon as SQL).
+	deleted=$(printf "DELETE FROM owners WHERE email = :'e' RETURNING id;\n" |
+		sudo -u postgres psql -d vitrina -qtA -v ON_ERROR_STOP=1 -v e="$email" | grep -c . || true)
 	if [[ "$deleted" -eq 1 ]]; then pass "the walk's account deleted (its albums and media cascade)"
 	else bad "deleted $deleted accounts for $email, expected 1"; fi
 	endpoint=$(env_get "$API_ENV" S3_ENDPOINT) region=$(env_get "$API_ENV" AWS_DEFAULT_REGION)
