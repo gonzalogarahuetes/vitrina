@@ -1,0 +1,41 @@
+# /etc/systemd/system/vitrina-backup.service — installed by backup-setup.sh.
+#
+# One encrypted database backup (deploy/backup/backup.sh, shipped with each
+# release under ops/). Its own user and its own environment file: it can read
+# the database and write the backup bucket, and it can read neither api.env
+# nor the server secret — the guard in backup.sh refuses to run if it could.
+
+[Unit]
+Description=Vitrina encrypted database backup
+After=postgresql.service network-online.target
+Wants=network-online.target
+ConditionPathExists=/opt/vitrina/api/current/ops/backup.sh
+ConditionPathExists=/etc/vitrina/backup.env
+
+[Service]
+Type=oneshot
+User=vitrina-backup
+Group=vitrina-backup
+EnvironmentFile=/etc/vitrina/backup.env
+ExecStart=/opt/vitrina/api/current/ops/backup.sh
+
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+UMask=0077

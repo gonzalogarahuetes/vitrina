@@ -64,9 +64,15 @@ grep -q "connect-src $API_ORIGIN" packages/web/build/index.html || fail "the bui
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 # COPYFILE_DISABLE: no macOS ._ files or extended attributes in the archives.
+# The nightly backup ships with the release, under packages/server/ops/, so its
+# @aws-sdk/client-s3 resolves to the server's own, lockfile-installed copy.
+mkdir -p "$work/stage/packages/server/ops"
+cp deploy/backup/backup.sh deploy/backup/s3.mjs deploy/backup/prune.mjs deploy/backup/name.mjs \
+	"$work/stage/packages/server/ops/"
 COPYFILE_DISABLE=1 tar -czf "$work/api.tgz" --exclude='*.tsbuildinfo' \
 	package.json pnpm-lock.yaml pnpm-workspace.yaml packages/*/package.json \
-	packages/server/dist packages/server/migrations packages/server/scripts packages/shared/dist
+	packages/server/dist packages/server/migrations packages/server/scripts packages/shared/dist \
+	-C "$work/stage" packages/server/ops
 COPYFILE_DISABLE=1 tar -czf "$work/app.tgz" -C packages/web/build .
 api_sha=$(shasum -a 256 "$work/api.tgz" | cut -d' ' -f1)
 app_sha=$(shasum -a 256 "$work/app.tgz" | cut -d' ' -f1)

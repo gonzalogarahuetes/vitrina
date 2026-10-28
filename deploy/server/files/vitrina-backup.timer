@@ -1,0 +1,14 @@
+# /etc/systemd/system/vitrina-backup.timer — installed by backup-setup.sh.
+# Nightly at 03:15 UTC, before unattended-upgrades' 04:00 reboot window.
+# Persistent: a night missed while the server was off runs at the next boot.
+
+[Unit]
+Description=Nightly Vitrina database backup
+
+[Timer]
+OnCalendar=*-*-* 03:15:00 UTC
+RandomizedDelaySec=10min
+Persistent=true
+
+[Install]
+WantedBy=timers.target
