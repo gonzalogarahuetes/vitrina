@@ -2,7 +2,11 @@
 
 API_ENV=/etc/vitrina/api.env
 SIGNUP_ENV=/etc/vitrina/signup.env
-CLIENT_ORIGIN_PROD=https://app.lirioapp.eu
+# The two hostnames this server answers for, written once by provision.sh.
+SITE_ENV=/etc/vitrina/site.env
+HOSTNAME_RE='^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$'
+site_app_host() { sed -n 's/^APP_HOST=//p' "$SITE_ENV" 2>/dev/null; }
+site_api_host() { sed -n 's/^API_HOST=//p' "$SITE_ENV" 2>/dev/null; }
 # Peer authentication over PostgreSQL's socket: no password exists to leak.
 # Parsed identically by node-postgres (host, user, database) and by psql.
 DATABASE_URL_PROD='postgresql:///vitrina?host=/var/run/postgresql&user=vitrina'

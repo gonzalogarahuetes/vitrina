@@ -6,7 +6,8 @@
 #   deploy/release/deploy.sh <ip> <admin-user>
 #
 # Builds: the envelope WASM (the web bundle inlines it), the server, and the
-# web app with VITE_API_ORIGIN=https://api.lirioapp.eu. Ships the server as
+# web app with VITE_API_ORIGIN=https://$VITRINA_API_HOST (default
+# api.lirioapp.eu; the recovery rehearsal sets another). Ships the server as
 # compiled JavaScript plus every workspace manifest and the lockfile; the
 # server installs its production dependencies from that lockfile itself
 # (--frozen-lockfile --prod), never node_modules copied from macOS.
@@ -20,7 +21,11 @@ ADMIN_USER=${2:?usage: deploy.sh <ip> <admin-user>}
 KEY=${SSH_KEY:-$HOME/.ssh/vitrina_hetzner}
 here=$(cd "$(dirname "$0")" && pwd)
 repo=$(cd "$here/../.." && pwd)
-API_ORIGIN=https://api.lirioapp.eu
+# The API's hostname, from site.mjs: one rule for the Mac-side scripts.
+api_host=$(node --input-type=module -e '
+	const { pathToFileURL } = await import("node:url");
+	console.log((await import(pathToFileURL(process.argv[1]))).API_HOST)' "$here/site.mjs") || exit 2
+API_ORIGIN=https://$api_host
 SSH_OPTS=(-i "$KEY" -o IdentitiesOnly=yes -o ConnectTimeout=10)
 
 fail() { echo "deploy: $*" >&2; exit 1; }

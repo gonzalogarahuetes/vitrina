@@ -10,6 +10,12 @@
 #   scp -r deploy/server <name>@<ip>:vitrina-server
 #   ssh -t <name>@<ip> sudo bash vitrina-server/provision.sh <name>
 #
+# Hostnames: production (app.lirioapp.eu, api.lirioapp.eu) unless the first
+# run says otherwise — the recovery rehearsal passes temporary ones:
+#   provision.sh <name> --app-host <app-host> --api-host <api-host>
+# They are recorded in /etc/vitrina/site.env, and a server never changes them:
+# a later run with different names is refused.
+#
 # -t matters: the first run asks for the admin user's sudo password.
 # Keep the first root session open until `deploy/server/check.sh` passes from
 # a second terminal — sshd is reloaded under it, and an open session survives.
@@ -22,7 +28,18 @@ export DEBIAN_FRONTEND=noninteractive
 
 here=$(cd "$(dirname "$0")" && pwd)
 files="$here/files"
+# shellcheck source=lib.sh
+. "$here/lib.sh"
 ADMIN_USER=${1:-}
+shift || true
+want_app="" want_api=""
+while [[ $# -gt 0 ]]; do
+	case "$1" in
+	--app-host) want_app=${2:?--app-host needs a name}; shift 2 ;;
+	--api-host) want_api=${2:?--api-host needs a name}; shift 2 ;;
+	*) echo "provision: unknown option $1" >&2; exit 1 ;;
+	esac
+done
 cd / # psql as postgres warns from a home it cannot read
 NODE_VERSION=v22.23.4
 PG_MAJOR=15 # docker-compose.yml's postgres:15
@@ -45,6 +62,25 @@ put() { # <src> <dest> <mode>
 [[ "${ADMIN_USER:-}" =~ ^[a-z][a-z0-9-]{1,30}$ ]] || fail "usage: provision.sh <admin-user> (lowercase letters, digits, -)"
 [[ "$ADMIN_USER" != root && "$ADMIN_USER" != vitrina ]] || fail "ADMIN_USER must not be root or the service user"
 [[ -f "$here/node.sha256" ]] || fail "deploy/server/node.sha256 is missing — run deploy/server/pin-node.sh on the Mac first"
+
+# --- which names this server answers for ---------------------------------------
+install -d -m 700 -o root -g root /etc/vitrina
+if [[ -f "$SITE_ENV" ]]; then
+	APP_HOST=$(site_app_host) API_HOST=$(site_api_host)
+	[[ -z "$want_app$want_api" || ("$want_app" == "$APP_HOST" && "$want_api" == "$API_HOST") ]] ||
+		fail "this server answers for $APP_HOST and $API_HOST; refusing to change its names"
+else
+	if [[ -n "$want_app" || -n "$want_api" ]]; then
+		[[ -n "$want_app" && -n "$want_api" ]] || fail "give both --app-host and --api-host, or neither"
+	fi
+	APP_HOST=${want_app:-app.lirioapp.eu} API_HOST=${want_api:-api.lirioapp.eu}
+	[[ "$APP_HOST" =~ $HOSTNAME_RE && "$API_HOST" =~ $HOSTNAME_RE && "$APP_HOST" != "$API_HOST" ]] ||
+		fail "not two distinct hostnames: $APP_HOST $API_HOST"
+	printf '# Written once by provision.sh: the names this server answers for.\nAPP_HOST=%s\nAPI_HOST=%s\n' \
+		"$APP_HOST" "$API_HOST" >"$SITE_ENV"
+	chmod 644 "$SITE_ENV"
+fi
+echo "this server answers for $APP_HOST and $API_HOST"
 
 case "$(uname -m)" in
 x86_64) NODE_ARCH=x64 ;;
@@ -213,10 +249,13 @@ if [[ ! -f /etc/apt/sources.list.d/caddy-stable.list ]]; then
 	apt-get update -q
 fi
 apt-get install -yq caddy
-caddy validate --adapter caddyfile --config "$files/Caddyfile" >/dev/null
-if put "$files/Caddyfile" /etc/caddy/Caddyfile 644; then
+caddyfile=$(mktemp)
+sed -e "s/__APP_HOST__/$APP_HOST/" -e "s/__API_HOST__/$API_HOST/" "$files/Caddyfile" >"$caddyfile"
+caddy validate --adapter caddyfile --config "$caddyfile" >/dev/null
+if put "$caddyfile" /etc/caddy/Caddyfile 644; then
 	systemctl reload caddy || systemctl restart caddy
 fi
+rm -f "$caddyfile"
 systemctl enable --now caddy >/dev/null
 
 step "done — now, from the Mac, in a second terminal: deploy/server/check.sh <ip> $ADMIN_USER"

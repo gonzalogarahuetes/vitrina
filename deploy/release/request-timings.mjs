@@ -15,6 +15,7 @@
  */
 
 import { createInterface } from "node:readline";
+import { API_HOST } from "./site.mjs";
 
 const rows = [];
 for await (const line of createInterface({ input: process.stdin })) {
@@ -25,7 +26,7 @@ for await (const line of createInterface({ input: process.stdin })) {
     continue; // the sudo prompt, and anything else that is not a log line
   }
   const r = j.request;
-  if (!r || r.host !== "api.lirioapp.eu" || !/\/v1\/(media|albums\/[^/]+\/media)/.test(r.uri)) continue;
+  if (!r || r.host !== API_HOST || !/\/v1\/(media|albums\/[^/]+\/media)/.test(r.uri)) continue;
   rows.push({
     at: new Date(j.ts * 1000).toISOString().slice(11, 19),
     method: r.method,

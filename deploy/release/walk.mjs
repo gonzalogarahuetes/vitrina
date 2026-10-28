@@ -14,7 +14,9 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import { writeFileSync } from "node:fs";
 
-const API = "https://api.lirioapp.eu/v1";
+import { API as API_ORIGIN } from "./site.mjs";
+
+const API = `${API_ORIGIN}/v1`;
 const [email, marker, stateFile] = process.argv.slice(2);
 if (!email || !marker || !stateFile) {
   console.error("usage: walk.mjs <email> <user-agent-marker> <state-file>");

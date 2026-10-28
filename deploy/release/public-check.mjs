@@ -4,12 +4,12 @@
  * anything is missing or extra.
  *
  *   node deploy/release/public-check.mjs
+ *
+ * Hostnames from site.mjs: production unless VITRINA_APP_HOST/VITRINA_API_HOST say otherwise.
  */
 
 import { request as httpRequest } from "node:http";
-
-const APP = "https://app.lirioapp.eu";
-const API = "https://api.lirioapp.eu";
+import { APP, API, APP_HOST, API_HOST } from "./site.mjs";
 const HSTS = "max-age=31536000";
 let fails = 0;
 const pass = (m) => console.log(`PASS ${m}`);
@@ -38,7 +38,7 @@ const plain = (url) =>
   expect(res.status >= 400, "HEAD /health is refused (monitors must use GET)", res.status);
 }
 {
-  const res = await plain(`http://api.lirioapp.eu/health`);
+  const res = await plain(`http://${API_HOST}/health`);
   expect([301, 308].includes(res.status) && res.location?.startsWith("https://"), "plain HTTP on the API redirects to HTTPS", `${res.status} ${res.location}`);
 }
 {
@@ -77,7 +77,8 @@ const html = await root.text();
 expect(root.status === 200 && /text\/html/.test(root.headers.get("content-type") ?? ""), "GET / serves the HTML shell", root.status);
 headersOf(root, "/");
 const meta = /<meta http-equiv="content-security-policy" content="([^"]*)"/i.exec(html)?.[1] ?? "";
-expect(/connect-src https:\/\/api\.lirioapp\.eu(;|$)/.test(meta), "the shell's CSP connects to the API and nothing else", meta.match(/connect-src[^;]*/)?.[0]);
+const connect = meta.match(/connect-src([^;]*)/)?.[1].trim();
+expect(connect === API, `the shell's CSP connects to ${API} and nothing else`, connect);
 expect(!html.includes("localhost"), "the shell mentions no localhost");
 
 for (const path of ["/v/", "/some/deep/path"]) {
@@ -96,7 +97,7 @@ if (asset) {
 } else bad("no /_app/immutable/ asset referenced by the shell");
 
 {
-  const res = await plain(`http://app.lirioapp.eu/`);
+  const res = await plain(`http://${APP_HOST}/`);
   expect([301, 308].includes(res.status) && res.location?.startsWith("https://"), "plain HTTP on the app redirects to HTTPS", `${res.status} ${res.location}`);
 }
 

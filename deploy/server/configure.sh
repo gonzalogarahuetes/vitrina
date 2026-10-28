@@ -44,6 +44,11 @@ done
 [[ -d /etc/vitrina ]] || fail "/etc/vitrina is missing — run provision.sh first"
 [[ "$(stat -c '%U %a' /etc/vitrina)" == "root 700" ]] || fail "/etc/vitrina must be root-only (700)"
 
+# The app's hostname, as provision.sh recorded it: production, or a rehearsal's.
+app_host=$(site_app_host)
+[[ "$app_host" =~ $HOSTNAME_RE ]] || fail "no APP_HOST in $SITE_ENV — run provision.sh first"
+say "this server answers for https://$app_host"
+
 configured=false
 [[ -f "$API_ENV" ]] && configured=true
 
@@ -141,7 +146,7 @@ write_env() { # <dest> then lines on stdin
 write_env "$API_ENV" <<-EOF
 	# Written by deploy/server/configure.sh. No HOST or PORT here: the unit sets
 	# them in ExecStart, where nothing in this file can override them.
-	CLIENT_ORIGIN=$CLIENT_ORIGIN_PROD
+	CLIENT_ORIGIN=https://$app_host
 	DATABASE_URL=$DATABASE_URL_PROD
 	VITRINA_SERVER_SECRET=$secret
 	S3_ENDPOINT=$endpoint

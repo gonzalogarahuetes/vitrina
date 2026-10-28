@@ -27,7 +27,9 @@ want=$(printf '%s\n' $API_KEYS | LC_ALL=C sort | tr '\n' ' ')
 if [[ "$keys" == "$want" ]]; then pass "api.env holds exactly the API's variables, each once (no HOST, no PORT)"
 else bad "api.env keys: $keys— expected: $want"; fi
 
-check "CLIENT_ORIGIN is $CLIENT_ORIGIN_PROD" test "$(env_get "$API_ENV" CLIENT_ORIGIN)" = "$CLIENT_ORIGIN_PROD"
+app_host=$(site_app_host)
+check "site.env names this server's hosts" test -n "$app_host" -a -n "$(site_api_host)"
+check "CLIENT_ORIGIN is https://$app_host, this server's app" test "$(env_get "$API_ENV" CLIENT_ORIGIN)" = "https://$app_host"
 check "DATABASE_URL is the peer-authenticated socket" test "$(env_get "$API_ENV" DATABASE_URL)" = "$DATABASE_URL_PROD"
 secret=$(env_get "$API_ENV" VITRINA_SERVER_SECRET)
 if secret_ok "$secret"; then pass "VITRINA_SERVER_SECRET is base64url of at least 32 bytes"

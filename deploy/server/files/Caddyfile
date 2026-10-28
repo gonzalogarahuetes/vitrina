@@ -1,4 +1,6 @@
-# /etc/caddy/Caddyfile — installed by provision.sh.
+# /etc/caddy/Caddyfile — rendered by provision.sh from this template:
+# __APP_HOST__ and __API_HOST__ become /etc/vitrina/site.env's names
+# (production, or the recovery rehearsal's temporary ones).
 #
 # Two sites, one server. Certificates come from Let's Encrypt on first
 # request, once DNS for both names points here.
@@ -24,7 +26,7 @@
 	}
 }
 
-app.lirioapp.eu {
+__APP_HOST__ {
 	import access_log
 	root * /opt/vitrina/app/current
 
@@ -48,7 +50,7 @@ app.lirioapp.eu {
 	encode zstd gzip
 }
 
-api.lirioapp.eu {
+__API_HOST__ {
 	import access_log
 	header {
 		Strict-Transport-Security "max-age=31536000"
