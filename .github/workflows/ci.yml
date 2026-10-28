@@ -158,6 +158,11 @@ jobs:
       - name: pnpm build
         run: pnpm build
 
+      # deploy/'s refusals, retention and --hide-missing's decision, hermetic:
+      # no bucket, no database, no Docker. Every case refuses before one.
+      - name: pnpm test:deploy
+        run: pnpm test:deploy
+
       # The built app, for the `browser` job: it tests these bytes, never a
       # rebuild. The WASM is inlined, so the job needs no Rust toolchain.
       - name: Upload the web build
