@@ -1,0 +1,64 @@
+# /etc/caddy/Caddyfile — installed by provision.sh.
+#
+# Two sites, one server. Certificates come from Let's Encrypt on first
+# request, once DNS for both names points here.
+
+{
+	# HTTP/1.1 and HTTP/2 only: no HTTP/3, so no UDP 443 to open (the firewall
+	# allows 22, 80 and 443/tcp and nothing else).
+	servers {
+		protocols h1 h2
+	}
+}
+
+# Access log for both sites, to journald via Caddy's stderr. Authorization and
+# Cookie are deleted from every line — not redacted, deleted — so a bearer
+# token is never written; phase 5 proves it on a real signed-in request.
+(access_log) {
+	log {
+		output stderr
+		format filter {
+			request>headers>Authorization delete
+			request>headers>Cookie delete
+		}
+	}
+}
+
+app.lirioapp.eu {
+	import access_log
+	root * /opt/vitrina/app/current
+
+	# The headers a <meta> tag cannot carry — packages/web/vite.config.ts's list.
+	# A second CSP alongside the meta one: policies intersect, so this adds
+	# frame-ancestors and loosens nothing.
+	header {
+		Content-Security-Policy "frame-ancestors 'none'"
+		Referrer-Policy "no-referrer"
+		X-Content-Type-Options "nosniff"
+		# HSTS on both sites: one year, this host only, no preload — a browser that
+		# has been here once refuses plain HTTP for a year, and nothing is
+		# submitted to the browsers' built-in list, so it stays reversible.
+		Strict-Transport-Security "max-age=31536000"
+		-Server
+	}
+
+	# Every path that is not a file gets the one HTML shell, /v/ included.
+	try_files {path} /index.html
+	file_server
+	encode zstd gzip
+}
+
+api.lirioapp.eu {
+	import access_log
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		-Server
+	}
+
+	# No `encode`, deliberately: ciphertext does not compress, and compressing
+	# a ranged response breaks Range and Content-Length (api-sketch §11.2).
+	reverse_proxy 127.0.0.1:3000 {
+		# No trusted_proxies: Caddy replaces any X-Forwarded-For a client sends
+		# with the address it saw, which the API trusts from loopback only.
+	}
+}
