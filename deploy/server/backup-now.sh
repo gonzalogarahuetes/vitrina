@@ -42,6 +42,8 @@ check "backup.sh refuses an environment holding the server secret (by violation)
 		DATABASE_URL=x AGE_RECIPIENT=x MEDIA_BUCKET=a BACKUP_BUCKET=b BACKUP_S3_ENDPOINT=x BACKUP_S3_REGION=x \
 		BACKUP_AWS_ACCESS_KEY_ID=x BACKUP_AWS_SECRET_ACCESS_KEY=x RETENTION_DAYS=30 '$OPS/backup.sh' 2>&1)
 	[[ \$? -ne 0 && \"\$out\" == *'must not hold it'* ]]"
+if [[ -n "$(env_get "$BACKUP_ENV" BACKUP_HEARTBEAT_URL)" ]]; then pass "a heartbeat URL is configured"
+else bad "no BACKUP_HEARTBEAT_URL: a failing nightly backup would go unnoticed"; fi
 check "the timer is enabled and scheduled" bash -c "systemctl is-enabled vitrina-backup.timer && systemctl list-timers vitrina-backup.timer --no-legend | grep -q vitrina-backup"
 
 # --- one backup, as the timer runs it --------------------------------------------
@@ -50,6 +52,9 @@ if systemctl start vitrina-backup.service; then pass "a backup ran as vitrina-ba
 else bad "vitrina-backup.service failed — journalctl -u vitrina-backup"; fi
 result=$(journalctl -u vitrina-backup --since "@$started" -o cat --no-pager | grep '^backup ok' | tail -1)
 echo "RESULT $result"
+if journalctl -u vitrina-backup --since "@$started" -o cat --no-pager | grep -q '^heartbeat pinged'; then
+	pass "the heartbeat was pinged after the backup — check it turned green in Better Stack"
+else bad "no heartbeat ping after this backup (journalctl -u vitrina-backup)"; fi
 
 # The live row counts, straight after: restore-test.sh compares the restore to these.
 echo "COUNTS $(sudo -u postgres psql -d vitrina -qtAc "

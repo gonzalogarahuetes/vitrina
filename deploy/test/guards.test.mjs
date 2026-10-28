@@ -44,6 +44,7 @@ for (const [name, env, pattern] of [
   ["no retention", { RETENTION_DAYS: "" }, /missing RETENTION_DAYS/],
   ["a retention of zero", { RETENTION_DAYS: "0" }, /positive integer/],
   ["a prefix without its slash (it would match pg-other/ too)", { BACKUP_PREFIX: "pg" }, /invalid BACKUP_PREFIX/],
+  ["a heartbeat URL over plain http (it is a credential)", { BACKUP_HEARTBEAT_URL: "http://example.com/x" }, /must be https/],
 ]) {
   test(`backup.sh refuses ${name}`, () => {
     const r = backup({ ...VALID, ...env });

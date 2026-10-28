@@ -20,6 +20,8 @@
 #   KEEP_MIN           newest N kept whatever their age (default 7)
 #   PG_DUMP            default `pg_dump`; the rehearsal uses the container's
 #   BACKUP_PREFIX      default `pg/`; retention never touches a key outside it
+#   BACKUP_HEARTBEAT_URL  optional, https: pinged after a complete run (backup and
+#                      retention), so the monitor alerts when a night's ping is missing
 #
 # To see what retention would delete, deleting nothing (same environment):
 #   node deploy/backup/s3.mjs prune "$BACKUP_PREFIX" "$RETENTION_DAYS" "$KEEP_MIN" --dry-run
@@ -48,6 +50,8 @@ done
 [[ "$RETENTION_DAYS" =~ ^[1-9][0-9]*$ ]] || fail "RETENTION_DAYS must be a positive integer"
 KEEP_MIN=${KEEP_MIN:-7}
 [[ "$KEEP_MIN" =~ ^[1-9][0-9]*$ ]] || fail "KEEP_MIN must be a positive integer"
+[[ -z "${BACKUP_HEARTBEAT_URL:-}" || "$BACKUP_HEARTBEAT_URL" == https://?* ]] ||
+	fail "BACKUP_HEARTBEAT_URL must be https"
 BACKUP_PREFIX=${BACKUP_PREFIX:-pg/}
 # The name carries the backup's age for retention (prune.mjs); it also
 # validates the prefix, before anything is dumped.
@@ -72,3 +76,16 @@ t2=$(now_ms)
 node "$here/s3.mjs" prune "$BACKUP_PREFIX" "$RETENTION_DAYS" "$KEEP_MIN"
 
 echo "backup ok key=$key bytes=$bytes dump+encrypt_ms=$((t1 - t0)) upload_ms=$((t2 - t1))"
+
+# Only a complete run reaches this line, so a failure anywhere above is a
+# missing ping, and the monitor's alert. The URL is a credential (anyone with it
+# can report a backup that never happened): it reaches curl through a file
+# descriptor, never its arguments, and is never printed. A failed ping does not
+# fail the backup — the backup is done — but it is said, for the journal.
+if [[ -n "${BACKUP_HEARTBEAT_URL:-}" ]]; then
+	if curl -fsS -o /dev/null --max-time 10 --retry 3 -K <(printf 'url = "%s"\n' "$BACKUP_HEARTBEAT_URL"); then
+		echo "heartbeat pinged"
+	else
+		echo "WARNING heartbeat ping failed — the monitor will report this night as missed" >&2
+	fi
+fi

@@ -86,6 +86,15 @@ keep=$(ask "KEEP_MIN — newest backups kept whatever their age" "$(env_get "$BA
 keep=${keep:-7}
 [[ "$keep" =~ ^[1-9][0-9]*$ ]] || fail "KEEP_MIN must be a positive integer"
 
+echo "== the heartbeat (phase 7)"
+current_hb=$(env_get "$BACKUP_ENV" BACKUP_HEARTBEAT_URL)
+read -r -s -p "  BACKUP_HEARTBEAT_URL, the monitor's ping URL${current_hb:+ [Enter keeps the current one]}: " v
+echo
+heartbeat=${v:-$current_hb}
+unset v current_hb
+[[ -z "$heartbeat" || "$heartbeat" == https://?* ]] || fail "the heartbeat URL must be https"
+[[ -n "$heartbeat" ]] || say "NOTE no heartbeat: nothing will tell you if a nightly backup stops"
+
 tmp=$(mktemp /etc/vitrina/.tmp.XXXXXX)
 cat >"$tmp" <<-EOF
 	# Written by deploy/server/backup-setup.sh. Read by systemd for
@@ -101,8 +110,9 @@ cat >"$tmp" <<-EOF
 	BACKUP_PREFIX=pg/
 	RETENTION_DAYS=$retention
 	KEEP_MIN=$keep
+	BACKUP_HEARTBEAT_URL=$heartbeat
 EOF
-unset key_secret
+unset key_secret heartbeat
 chown root:root "$tmp" && chmod 600 "$tmp" && mv -f "$tmp" "$BACKUP_ENV"
 say "wrote $BACKUP_ENV"
 
