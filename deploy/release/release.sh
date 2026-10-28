@@ -75,7 +75,12 @@ tar -xzf "$here/api.tgz" -C "$api_dir" --no-same-owner --warning=no-unknown-keyw
 native=$(find "$api_dir" -name '*.node' -o -name binding.gyp | head -5)
 [[ -z "$native" ]] || fail "native code among the dependencies: $native"
 [[ -f "$api_dir/packages/server/dist/index.js" ]] || fail "no dist/index.js in the release"
-chmod -R go-w "$api_dir"
+# tar keeps each file's mode from the Mac, where some repository files are 600
+# (measured on the first deploy: the migrations were unreadable to the service
+# user). Normalised here, whatever the archive says: readable by all, written by root.
+chmod -R u=rwX,go=rX "$api_dir"
+sudo -u vitrina test -r "$api_dir/packages/server/migrations/001_initial_schema.sql" ||
+	fail "the service user cannot read the release"
 
 # --- the app ---------------------------------------------------------------------------------
 
@@ -84,7 +89,8 @@ step "app $release"
 install -d -m 755 "$app_dir"
 tar -xzf "$here/app.tgz" -C "$app_dir" --no-same-owner --warning=no-unknown-keyword
 [[ -f "$app_dir/index.html" ]] || fail "no index.html in the app bundle"
-chmod -R go-w "$app_dir"
+chmod -R u=rwX,go=rX "$app_dir" # as above: Caddy serves these as its own user
+sudo -u caddy test -r "$app_dir/index.html" || fail "Caddy cannot read the app"
 
 # --- migrations -------------------------------------------------------------------------------
 
