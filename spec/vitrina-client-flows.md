@@ -90,11 +90,12 @@
 - **The password policy is enforced here and nowhere else** (brief §12, "Owner password policy").
 - **The consequence of forgetting the password is shown before submission**, not discovered later (brief §11).
 
-**Failing:** `409 CONFLICT` means the address is already registered, so offer sign-in instead · `400` means a client build error (api-sketch §7.5), shown as a generic failure · **the response is lost after sending**, so the account may exist: offer sign-in with the same password, which succeeds if it was created. A blind retry would answer `409`.
+**Failing:** `403 SIGNUP_NOT_ALLOWED` means signup is by invitation only and this address isn't invited (`signup.not-allowed`) · `409 CONFLICT` means the address is already registered, so offer sign-in instead · `400` means a client build error (api-sketch §7.5), shown as a generic failure · **the response is lost after sending**, so the account may exist: offer sign-in with the same password, which succeeds if it was created. A blind retry would answer `409`.
 
 ⟦copy: signup.policy — brief §12's policy: a length floor and a blocklist, with no composition rules⟧
 ⟦copy: signup.loss — forgetting the password loses every album, and no reset recovers them (brief §11, "Accepted cost")⟧
 ⟦copy: signup.taken — must not claim that account existence is private (brief §11, "Account existence is discoverable through signup")⟧
+⟦copy: signup.not-allowed — signup is by invitation; ask the person who invited you. Says nothing about whether an account exists⟧
 ⟦copy: signup.uncertain — the account may have been created. Sign in to find out⟧
 
 ### 3.3 Sign-in on a new device

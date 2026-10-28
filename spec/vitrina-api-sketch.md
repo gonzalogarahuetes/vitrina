@@ -192,6 +192,7 @@ implementation, and its HTTP status comes from one table:
 | `VALIDATION_FAILED`      | 400    | PR 1          | PR 1 — any schema failure, and framework 400s (§1.2)                                                                                                                                                             |
 | `UNAUTHENTICATED`        | 401    | PR 1          | PR 2 — missing, unknown, expired or revoked **owner** token (§7.3)                                                                                                                                               |
 | `INVALID_CREDENTIALS`    | 401    | PR 2          | PR 2 — `POST /login` only (§7.5)                                                                                                                                                                                 |
+| `SIGNUP_NOT_ALLOWED`     | 403    | Deployment    | `POST /signup` with an address not on the server's signup allowlist (§7.5). Added 28 October 2026 |
 | `ACCESS_REVOKED`         | 403    | PR 2          | PR 3 — a revoked **recipient** on their own album (§7.3; §9.4, §9.5)                                                                                                                                             |
 | `NOT_FOUND`              | 404    | PR 1          | PR 1 — unknown route; PR 2 adds out-of-scope album and recipient                                                                                                                                                 |
 | `CONFLICT`               | 409    | PR 2          | PR 2 — duplicate `id` or `token_hash` on recipient create (§7.7); also a duplicate address on `POST /signup` (§7.5); PR 3 adds duplicate `albums.id` and `media.id`, and upload after `ready` (§9.2, §9.6, §9.7) |
@@ -1507,6 +1508,8 @@ alone, which is a smaller argument and no longer waiting on anything.
 
 **`POST /v1/signup`** — no authentication. `201` on success.
 
+**Signup is closed except to an allowlist** (28 October 2026). The server reads `SIGNUP_ALLOWLIST`, a list of addresses, at boot; each entry is normalised as §8.2 normalises a posted address, and a malformed entry stops the boot. **A missing or empty list refuses everyone** (brief §6 #17). An address not on the list gets `403 SIGNUP_NOT_ALLOWED`, **checked before the duplicate-address check**, so a refused address learns nothing about which accounts exist. What it does learn is whether it is on the list — rate-limited, and the same class of disclosure as `409` (brief §11). The list gates creating an account only: an owner removed from it can still sign in.
+
 **The highest-consequence body in the system**, and the reason it is stated
 before `/login` rather than after. It accepts the wrapping that every album key
 in the account hangs off (encryption spec §6.6.2):
@@ -1578,7 +1581,8 @@ their absence is the whole design — non-negotiable #16.
   returns the first's salt.
   - `201`: `{ "id": "<uuid>", "created_at": "<RFC 3339 UTC>", "token": "<43 chars, base64url>", "expires_at": "<RFC 3339 UTC>" }`. **The token is minted here**, by the same code path as `/login`'s (§7.4) — a client that has just derived a proof should not have to hold it across a round trip to trade it for a session. The wrapping does not come back: the client that posted it holds `K_master` in memory already, and the route that returns it is §8.3, after login, on any device.
   - **`no-store` applies with more force now**, since the response carries a credential rather than only identifiers — §7.5's blanket credential-route rule already covered it.
-- **Errors:** `400 VALIDATION_FAILED` · `409 CONFLICT` (address already
+- **Errors:** `400 VALIDATION_FAILED` · `403 SIGNUP_NOT_ALLOWED` (the address
+  is not on the signup allowlist) · `409 CONFLICT` (address already
   registered) · `413 PAYLOAD_TOO_LARGE` · `415 UNSUPPORTED_MEDIA_TYPE` ·
   `429 RATE_LIMITED`. **`400` covers a parameter below §8.1's floors**, with no
   `details` — §7.3's rule holds on this route too. A sub-floor parameter is not
@@ -2135,7 +2139,7 @@ and `404`. A malformed `recipient_id` is also `400`, from the path schema.
 
 | Route                                       | Scheme | Body                                                                                                                           | Success                                                                   | Errors                                            |
 | ------------------------------------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------- | ------------------------------------------------- |
-| `POST /v1/signup`                           | none   | address as typed · proof · `kdf_salt` + params · `wrapped_master` · `wrap_nonce` (§7.5) — never the password, never `K_master` | `201` `{id, created_at, token, expires_at}`, `no-store`                   | 400 · 409 `CONFLICT` · 413 · 415 · 429            |
+| `POST /v1/signup`                           | none   | address as typed · proof · `kdf_salt` + params · `wrapped_master` · `wrap_nonce` (§7.5) — never the password, never `K_master` | `201` `{id, created_at, token, expires_at}`, `no-store`                   | 400 · 403 `SIGNUP_NOT_ALLOWED` · 409 `CONFLICT` · 413 · 415 · 429 |
 | `POST /v1/login/params`                     | none   | address as typed (§7.5)                                                                                                        | `200` — `{kdf_salt, params}` only, **always**, decoys on miss, `no-store` | 400 · 413 · 415 · 429                             |
 | `POST /v1/login`                            | none   | address as typed · proof (§7.5)                                                                                                | `200` `{token, expires_at}`, `no-store`                                   | 400 · 401 `INVALID_CREDENTIALS` · 413 · 415 · 429 |
 | `POST /v1/logout`                           | owner  | none                                                                                                                           | `204`                                                                     | 400 · 401                                         |
@@ -2914,7 +2918,10 @@ upload holds resources. The handler aborts a body that has not completed within
 a bounded time, marks the row `failed`, and answers nothing — the client is
 gone. **Provisional: 120 seconds**, which is generous for 16 MiB on the
 connection brief §10.1 targets and short enough that a hung upload is not a
-leak. Aborting mid-`PutObject` may leave a partial object in the store; that is
+leak. **Since 28 October 2026 the deadline also aborts the store's `PutObject`**, so a
+store that accepts the whole body and then never answers cannot hold the request
+either: a client still connected then gets `200` with the row `failed`.
+Aborting mid-`PutObject` may leave a partial object in the store; that is
 safe by construction — the row is `failed`, no route serves a non-`ready` row
 (§11.2), and a re-upload replaces the object.
 
