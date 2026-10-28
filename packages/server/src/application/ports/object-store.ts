@@ -41,7 +41,10 @@ export class StorageError extends Error {
     code: StorageErrorCode,
     options?: { cause?: unknown; objectSize?: number },
   ) {
-    super(code, options?.cause === undefined ? undefined : { cause: options.cause });
+    super(
+      code,
+      options?.cause === undefined ? undefined : { cause: options.cause },
+    );
     this.name = "StorageError";
     this.code = code;
     if (options?.objectSize !== undefined) this.objectSize = options.objectSize;
@@ -84,8 +87,21 @@ export interface ObjectStore {
    *
    * `PUT` replaces, because §9.7 permits re-upload in `pending`, `processing`
    * and `failed` — the second attempt is the client's latest, not a conflict.
+   *
+   * `signal` is §9.7's deadline, and the SECOND platform type in this port —
+   * the decision the note above asks for, made 28 October 2026: the route owns
+   * the one deadline, and this is how it reaches a store that took the whole
+   * body and never answered, which destroying the body cannot. Required, not
+   * optional: an optional signal is a caller that forgets it and an upload that
+   * is silently unbounded again (brief §6 #17). An abort rejects like any other
+   * failure, so it means the object did not land.
    */
-  put(key: ObjectKey, body: Readable, length: number): Promise<void>;
+  put(
+    key: ObjectKey,
+    body: Readable,
+    length: number,
+    signal: AbortSignal,
+  ): Promise<void>;
 
   /**
    * The confirming `HEAD` — §9.7. `null` for absent, THROWS for unreachable:

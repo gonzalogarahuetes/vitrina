@@ -73,7 +73,20 @@
         />
         {#if phase === "taken"}
           <Alert text={t["signup.taken"]} />
-          <button class="btn ghost" type="button" onclick={() => onSignin(email)}>{t["signup.taken.signin"]}</button>
+          <button
+            class="btn ghost"
+            type="button"
+            onclick={() => onSignin(email)}>{t["signup.taken.signin"]}</button
+          >
+        {/if}
+        {#if phase === "not-allowed"}
+          <Alert text={t["signup.not-allowed"]} />
+          <button
+            class="btn ghost"
+            type="button"
+            onclick={() => onSignin(email)}
+            >{t["signup.not-allowed.signin"]}</button
+          >
         {/if}
       </div>
       <div class="group">
@@ -93,8 +106,19 @@
     </fieldset>
 
     <div class="loss">
-      <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"
-        ><circle cx="8" cy="15" r="4"></circle><path d="M11 12l9-9"></path><path d="M17 6l3 3"></path></svg
+      <svg
+        width="30"
+        height="30"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+        aria-hidden="true"
+        ><circle cx="8" cy="15" r="4"></circle><path d="M11 12l9-9"></path><path
+          d="M17 6l3 3"
+        ></path></svg
       >
       <strong>{t["signup.loss"]}</strong>
     </div>
@@ -110,13 +134,17 @@
     {:else if phase === "busy"}
       <p class="note" role="status">{t["signup.busy"]}</p>
     {:else}
-      <button class="btn" type="submit" disabled={!ready || phase === "paused"}>{t["signup.submit"]}</button>
+      <button class="btn" type="submit" disabled={!ready || phase === "paused"}
+        >{t["signup.submit"]}</button
+      >
     {/if}
   </form>
 
   {#if !busy}
     <div class="bottom">
-      <button class="btn ghost" type="button" onclick={() => onSignin("")}>{t["signup.to-signin"]}</button>
+      <button class="btn ghost" type="button" onclick={() => onSignin("")}
+        >{t["signup.to-signin"]}</button
+      >
     </div>
   {/if}
 </main>

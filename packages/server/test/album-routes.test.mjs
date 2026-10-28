@@ -14,6 +14,7 @@ import { OWNER_KDF_V1 } from "@vitrina/shared";
 
 import { buildServer } from "../dist/adapters/driving/http/server.js";
 import { buildUseCases } from "../dist/composition-root.js";
+import { EVERYONE_INVITED } from "./support/allowlist.mjs";
 import { createCredentialHasher } from "../dist/adapters/driven/hashing/credential-hasher.js";
 import { createTokenHasher } from "../dist/adapters/driven/hashing/token-hasher.js";
 import { ApplicationError } from "../dist/application/errors.js";
@@ -199,7 +200,7 @@ async function buildTestServer() {
       tokenHasher: createTokenHasher(),
       clock: { now: () => new Date("2026-09-21T09:00:00.000Z") },
     },
-    { kdfV1: OWNER_KDF_V1, dummyAuthHash: Buffer.alloc(32, 0x7f) },
+    { kdfV1: OWNER_KDF_V1, dummyAuthHash: Buffer.alloc(32, 0x7f), allowList: EVERYONE_INVITED },
   );
 
   const app = await buildServer({

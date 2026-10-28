@@ -16,6 +16,8 @@ export type UploadMediaObjectInput = {
   readonly variant: MediaVariant;
   readonly body: Readable;
   readonly length: number;
+  /** §9.7's deadline, from the route, carried to the store untouched. */
+  readonly signal: AbortSignal;
 };
 
 export type UploadOutcome = {
@@ -54,6 +56,7 @@ export function uploadMediaObject(deps: UploadMediaObjectDeps) {
           objectKey(media.id, input.variant),
           Readable.from(counting(input.body), { objectMode: false }),
           input.length,
+          input.signal,
         );
       } catch (error) {
         await deps.media.markFailed(media.id);

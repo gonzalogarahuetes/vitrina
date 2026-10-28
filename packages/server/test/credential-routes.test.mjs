@@ -81,9 +81,19 @@ function inMemoryOwners() {
   };
 }
 
+/**
+ * Every address this file signs up, normalised, as config.ts would hold them.
+ * The allowlist's own cases pass their own list; everything else here is about
+ * other rules, so its addresses are invited.
+ */
+const INVITED = new Set([
+  ...["ana", "a.na", "bad", "cache", "cache2", "canon", "dates", "expired", "high", "in", "key", "known"],
+  ...["logged", "one", "real", "revoked", "same", "twice", "two", "window"],
+  ...["low-memory", "low-iterations", "low-parallelism"],
+].map((local) => `${local}@x.es`));
+
 /** A server over the real graph. `logLines` collects pino output when asked. */
-async function buildTestServer({ captureLogs = false } = {}) {
-  const owners = inMemoryOwners();
+async function buildTestServer({ captureLogs = false, allowList = INVITED, owners = inMemoryOwners() } = {}) {
   const logLines = [];
 
   const useCases = buildUseCases(
@@ -93,7 +103,7 @@ async function buildTestServer({ captureLogs = false } = {}) {
       tokenHasher: createTokenHasher(),
       clock: { now: () => new Date("2026-09-21T09:00:00.000Z") },
     },
-    { kdfV1: OWNER_KDF_V1, dummyAuthHash: Buffer.alloc(32, 0x7f) },
+    { kdfV1: OWNER_KDF_V1, dummyAuthHash: Buffer.alloc(32, 0x7f), allowList },
   );
 
   const app = await buildServer({
@@ -479,6 +489,47 @@ describe("the credential routes", () => {
       const response = await app.inject({ method: "GET", url: "/health" });
 
       assert.equal(response.headers["cache-control"], undefined);
+    });
+  });
+
+  describe("POST /v1/signup — the allowlist", () => {
+    it("an unlisted address is 403 SIGNUP_NOT_ALLOWED, with the constant message and no details", async () => {
+      const { app, owners } = await buildTestServer();
+      const response = await signUp(app, "eve@x.es");
+
+      assert.equal(response.statusCode, 403);
+      const body = response.json();
+      assert.equal(body.code, "SIGNUP_NOT_ALLOWED");
+      assert.equal(body.details, undefined);
+      assert.doesNotMatch(response.body, /eve/, "the response echoes the address (#15)");
+      assert.equal(owners.owners.size, 0);
+    });
+
+    it("an empty list refuses an address that is otherwise fine", async () => {
+      const { app } = await buildTestServer({ allowList: new Set() });
+      assert.equal((await signUp(app, "ana@x.es")).statusCode, 403);
+    });
+
+    it("the refusal is no-store, like every credential response", async () => {
+      const { app } = await buildTestServer({ allowList: new Set() });
+      const response = await signUp(app, "ana@x.es");
+      assert.equal(response.statusCode, 403);
+      assert.equal(response.headers["cache-control"], "no-store");
+    });
+
+    it("an owner removed from the list keeps the account and still signs in", async () => {
+      // The list gates creating an account, nothing else: login never sees it.
+      const owners = inMemoryOwners();
+      const before = await buildTestServer({ owners, allowList: new Set(["ana@x.es"]) });
+      assert.equal((await signUp(before.app, "ana@x.es")).statusCode, 201);
+
+      const after = await buildTestServer({ owners, allowList: new Set() });
+      const login = await after.app.inject({
+        method: "POST",
+        url: "/v1/login",
+        payload: { email: "ana@x.es", proof: b64(0x21, 32) },
+      });
+      assert.equal(login.statusCode, 200, login.body);
     });
   });
 

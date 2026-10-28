@@ -15,6 +15,7 @@ import { OWNER_KDF_V1 } from "@vitrina/shared";
 
 import { buildServer } from "../dist/adapters/driving/http/server.js";
 import { buildUseCases } from "../dist/composition-root.js";
+import { EVERYONE_INVITED } from "./support/allowlist.mjs";
 import { createCredentialHasher } from "../dist/adapters/driven/hashing/credential-hasher.js";
 import { createTokenHasher } from "../dist/adapters/driven/hashing/token-hasher.js";
 import { ApplicationError } from "../dist/application/errors.js";
@@ -171,9 +172,25 @@ function fakeStore({ headThrows = false } = {}) {
   return {
     objects,
     headThrows,
-    async put(key, body) {
+    /**
+     * When set, put takes the whole body and then does not answer until its
+     * signal aborts — a hung store. If nothing aborts it within a second it
+     * "answers" after all, so a missing abort fails the assertion instead of
+     * hanging the run.
+     */
+    hangAfterBody: false,
+    async put(key, body, length, signal) {
       let written = 0;
       for await (const chunk of body) written += chunk.length;
+      if (this.hangAfterBody) {
+        await new Promise((resolve, reject) => {
+          const late = setTimeout(resolve, 1_000);
+          signal?.addEventListener("abort", () => {
+            clearTimeout(late);
+            reject(new StorageError("UNAVAILABLE", { cause: signal.reason }));
+          });
+        });
+      }
       objects.set(key, written);
     },
     async head(key) {
@@ -202,7 +219,7 @@ async function buildTestServer({ uploadDeadlineMs, logger = false } = {}) {
       tokenHasher: createTokenHasher(),
       clock: { now: () => new Date("2026-09-24T09:00:00.000Z") },
     },
-    { kdfV1: OWNER_KDF_V1, dummyAuthHash: Buffer.alloc(32, 0x7f) },
+    { kdfV1: OWNER_KDF_V1, dummyAuthHash: Buffer.alloc(32, 0x7f), allowList: EVERYONE_INVITED },
   );
 
   const app = await buildServer({
@@ -900,6 +917,25 @@ describe("§9.7's deadline", () => {
     await done;
     await new Promise((resolve) => setTimeout(resolve, 100));
 
+    assert.equal(media.rows.get(mediaId).status, "failed");
+  });
+});
+
+describe("§9.7's deadline, when the store hangs after the whole body", () => {
+  it("aborts the put: the row is failed, and the client — still connected — gets 200 with it", async (t) => {
+    /*
+     * The case the abort signal exists for. Destroying the body cannot help:
+     * it has already ended. Without the abort the request waits on the store
+     * for ever (here, until the fake gives up after a second and the row stays
+     * processing).
+     */
+    const { put, mediaId, media, objectStore } = await withMedia(t, { uploadDeadlineMs: 150 });
+    objectStore.hangAfterBody = true;
+
+    const response = await put("asset", { body: envelope(200) });
+
+    assert.equal(response.statusCode, 200, response.body);
+    assert.equal(response.json().status, "failed");
     assert.equal(media.rows.get(mediaId).status, "failed");
   });
 });

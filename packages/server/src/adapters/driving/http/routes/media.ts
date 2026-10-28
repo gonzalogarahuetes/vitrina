@@ -111,14 +111,20 @@ export function mediaRoutes(deps: MediaRoutesDeps) {
         /*
          * The deadline is a timer here, not `requestTimeout` — measured, that
          * one answers `408` itself, and §9.7 needs the handler to mark the row
-         * and answer nothing. Destroying the body propagates through the
-         * counting generator, so `put` rejects and the use case's own catch
-         * marks `failed`: no extra branch in the ladder.
+         * and answer nothing. It acts on both ends of the upload:
+         *   - destroying the body covers a client that stalls mid-body: the
+         *     error propagates through the counting generator;
+         *   - aborting the signal covers a store that took the whole body and
+         *     never answered, where the body has already ended.
+         * Either way `put` rejects and the use case's own catch marks `failed`:
+         * no extra branch in the ladder. Which answer follows is `raw.complete`'s.
          */
+        const controller = new AbortController();
         let timedOut = false;
         const deadline = setTimeout(() => {
           timedOut = true;
           request.body.destroy(new Error("upload deadline"));
+          controller.abort(new Error("upload deadline"));
         }, deps.uploadDeadlineMs);
 
         let outcome: UploadOutcome;
@@ -129,6 +135,7 @@ export function mediaRoutes(deps: MediaRoutesDeps) {
             variant,
             body: request.body,
             length: contentLength,
+            signal: controller.signal,
           });
         } catch (error) {
           if (

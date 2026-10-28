@@ -15,7 +15,8 @@
     "infra:wait": "./scripts/wait-for-oneshot.sh createbucket && ./scripts/wait-for-oneshot.sh migrate",
     "db:migrate": "pnpm --filter @vitrina/server db:migrate",
     "test:infra": "pnpm --filter @vitrina/server build && node --test infra/*.test.mjs",
-    "test:wasm": "pnpm --filter @vitrina/envelope test:wasm"
+    "test:wasm": "pnpm --filter @vitrina/envelope test:wasm",
+    "test:deploy": "node --test deploy/test/*.test.mjs"
   },
   "keywords": [],
   "author": "",

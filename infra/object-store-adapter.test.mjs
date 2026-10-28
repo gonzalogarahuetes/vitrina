@@ -90,7 +90,7 @@ const key = () => `media/${randomUUID()}/asset`
 const written = []
 const put = async (bytes, k = key()) => {
 	written.push(k)
-	await store.put(k, Readable.from([bytes]), bytes.length)
+	await store.put(k, Readable.from([bytes]), bytes.length, new AbortController().signal)
 	return k
 }
 

@@ -63,6 +63,8 @@ const STATUS = {
   RANGE_NOT_SATISFIABLE: 416,
   RATE_LIMITED: 429,
   INTERNAL: 500,
+  // 403 as ACCESS_REVOKED is: a client tells the two apart by code, not status.
+  SIGNUP_NOT_ALLOWED: 403,
 } as const satisfies Record<ErrorCode, number>;
 
 /*
@@ -85,6 +87,7 @@ const MESSAGES = {
   RANGE_NOT_SATISFIABLE: "Range not satisfiable.",
   RATE_LIMITED: "Rate limited.",
   INTERNAL: "An unexpected error occurred.",
+  SIGNUP_NOT_ALLOWED: "Candidate email is not on the allowlist",
 } as const satisfies Record<ErrorCode, string>;
 
 /*
@@ -354,6 +357,7 @@ const APPLICATION_ERRORS = {
   ALBUM_ACCESS_REVOKED: "ACCESS_REVOKED",
   DUPLICATE_RECIPIENT: "CONFLICT",
   RECIPIENT_NOT_FOUND: "NOT_FOUND",
+  SIGNUP_NOT_ALLOWED: "SIGNUP_NOT_ALLOWED",
 } as const satisfies Record<ApplicationErrorCode, ThrowableCode>;
 
 export function errorEnvelope(

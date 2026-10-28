@@ -83,9 +83,11 @@ function fakeStore({ onPut, heads = {} } = {}) {
   return {
     objects,
     calls,
-    async put(key, body, length) {
+    signals: [],
+    async put(key, body, length, signal) {
       calls.push(`put:${key}:${length}`);
-      if (onPut) return onPut(key, body, length);
+      this.signals.push(signal);
+      if (onPut) return onPut(key, body, length, signal);
       let written = 0;
       for await (const chunk of body) written += chunk.length;
       objects.set(key, written);
@@ -116,6 +118,7 @@ const run = (media, objectStore, overrides = {}) =>
     variant: "asset",
     body: bodyOf(overrides.bytes ?? 1024),
     length: overrides.length ?? 1024,
+    signal: new AbortController().signal,
     ...overrides.input,
   });
 
@@ -317,3 +320,38 @@ describe("uploadMediaObject — failures", () => {
     assert.ok(store.calls.includes(`head:${assetKey}`), "the other object is read too");
   });
 });
+
+describe("uploadMediaObject — the deadline's signal (§9.7)", () => {
+  it("hands the request's signal to the store, unchanged", async () => {
+    // The route owns the deadline; the use case only carries it to the store.
+    const store = fakeStore();
+    const { signal } = new AbortController();
+
+    await run(inMemoryMedia(), store, { input: { signal } });
+
+    assert.equal(store.signals.length, 1);
+    assert.equal(store.signals[0], signal, "a different signal, or none, reached put");
+  });
+
+  it("an aborted put marks the row failed, like any rejected put", async () => {
+    // The store took the whole body and never answered; the deadline aborts.
+    const controller = new AbortController();
+    const store = fakeStore({
+      onPut: async (key, body, length, signal) => {
+        for await (const chunk of body) void chunk;
+        await new Promise((_, reject) =>
+          signal.addEventListener("abort", () => reject(new StorageError("UNAVAILABLE", { cause: signal.reason }))),
+        );
+      },
+    });
+    const media = inMemoryMedia();
+    setTimeout(() => controller.abort(new Error("upload deadline")), 20);
+
+    const outcome = await run(media, store, { input: { signal: controller.signal } });
+
+    assert.equal(outcome.row.status, "failed");
+    assert.equal(outcome.failure?.kind, "upload");
+    assert.ok(media.calls.includes("markFailed"));
+  });
+});
+

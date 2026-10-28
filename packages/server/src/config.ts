@@ -14,6 +14,8 @@
  * adapters/, because it belongs to none of them — it is bootstrap.
  */
 
+import { normaliseAddress } from "./domain/owner/normalise-address.js";
+
 export type Config = {
   /** The single allowlisted browser origin for CORS. One per environment. */
   readonly clientOrigin: string;
@@ -28,6 +30,14 @@ export type Config = {
   readonly databaseUrl: string;
   /** Where ciphertext lives — brief §10.1, api-sketch §9.7. */
   readonly storage: StorageConfig;
+  /**
+   * Who may create an account: SIGNUP_ALLOWLIST, comma-separated, normalised
+   * as every credential route normalises (api-sketch §8.2). Absent or empty
+   * means nobody — closed, never open (brief §6 #17) — and is not a boot
+   * failure, so login and delivery never depend on it. Read once at boot:
+   * edit /etc/vitrina/signup.env and restart the service to change it.
+   */
+  readonly signupAllowlist: ReadonlySet<string>;
 };
 
 /**
@@ -80,6 +90,30 @@ function parseServerSecret(raw: string): Uint8Array {
 }
 
 /**
+ * A malformed entry stops the boot rather than being skipped: a typo dropped
+ * silently is a family member who cannot sign up and an operator who is told
+ * nothing. The message names the variable, never the entry — it is a
+ * person's address, and boot errors reach the journal.
+ */
+function parseAllowList(raw: string): ReadonlySet<string> {
+  const allowListSet = new Set<string>();
+  if (raw.trim() === "") return allowListSet;
+  const emailList = raw.split(",");
+  emailList.forEach((email, index) => {
+    const normalised = normaliseAddress(email);
+    if (!normalised || !normalised.includes("@")) {
+      throw new Error(
+        `SIGNUP_ALLOWLIST includes an unusable email on position ${index + 1}`,
+      );
+    }
+    if (!allowListSet.has(normalised)) {
+      allowListSet.add(normalised);
+    }
+  });
+  return allowListSet;
+}
+
+/**
  * Parse and normalise a browser origin.
  *
  * `Access-Control-Allow-Origin` must be a bare origin with no trailing slash.
@@ -129,6 +163,7 @@ export function loadConfig(env: Env = process.env): Config {
     clientOrigin: parseOrigin(requireEnv(env, "CLIENT_ORIGIN")),
     serverSecret: parseServerSecret(requireEnv(env, "VITRINA_SERVER_SECRET")),
     databaseUrl: requireEnv(env, "DATABASE_URL"),
+    signupAllowlist: parseAllowList(env["SIGNUP_ALLOWLIST"] ?? ""),
     storage: {
       endpoint: parseEndpoint(requireEnv(env, "S3_ENDPOINT")),
       region: requireEnv(env, "AWS_DEFAULT_REGION"),

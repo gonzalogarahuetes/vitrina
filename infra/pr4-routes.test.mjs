@@ -94,6 +94,8 @@ before(async () => {
 	// Storage config is required by the composition root and never used here.
 	const { useCases } = buildComposition({
 		serverSecret: randomBytes(32),
+		// The one address this journey signs up; the list itself is tested hermetically.
+		signupAllowlist: new Set([OWNER_EMAIL]),
 		databaseUrl: DATABASE_URL,
 		storage: {
 			endpoint: 'http://127.0.0.1:1',

@@ -148,6 +148,9 @@ export const es: Copy = {
   "signup.busy": "Creando tu cuenta…",
   "signup.taken":
     "Ya hay una cuenta con este correo electrónico. Si es tuya, inicia sesión.",
+  "signup.not-allowed":
+    "Registro solo mediante invitación. Pregunta a quien te invitó para más detalles.",
+  "signup.not-allowed.signin": "Iniciar sesión",
   "signup.taken.signin": "Iniciar sesión",
   "signup.uncertain":
     "No hemos podido saber si se ha creado tu cuenta. Inicia sesión con el mismo correo electrónico y la misma contraseña para comprobarlo.",

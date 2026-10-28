@@ -113,6 +113,8 @@ before(async () => {
 	 */
 	const { useCases } = buildComposition({
 		serverSecret: randomBytes(32),
+		// The one address this journey signs up; the list itself is tested hermetically.
+		signupAllowlist: new Set([OWNER_EMAIL]),
 		databaseUrl: DATABASE_URL,
 		storage,
 	})

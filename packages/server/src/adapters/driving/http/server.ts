@@ -103,6 +103,16 @@ export async function buildServer(
     // §9.7's uploads enforce their own: measured, `bodyLimit` reaches only the
     // parsers that accumulate a body, and theirs hands the stream through.
     exposeHeadRoutes: false,
+    /*
+     * §7.6's IP limiter keys on `request.ip`. Behind Caddy every socket is
+     * loopback, so without this the whole world shares one budget and one
+     * person's typos lock everyone out. Trusting `X-Forwarded-For` from ANY
+     * peer instead lets a client choose its own key. Loopback only: a
+     * non-loopback peer's header is ignored whatever the API binds to, and
+     * Caddy (no `trusted_proxies`) replaces a client-sent header with the
+     * address it saw. Consequence: client addresses reach the request log.
+     */
+    trustProxy: "loopback",
   });
 
   if (deps.routeObserver) {
