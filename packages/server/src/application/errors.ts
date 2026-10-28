@@ -56,7 +56,15 @@ export type ApplicationErrorCode =
    * practice since `006`, when qr rows gained a wrapping and stopped
    * answering here.
    */
-  | "RECIPIENT_NOT_FOUND";
+  | "RECIPIENT_NOT_FOUND"
+  /**
+   * `/signup` for an address not on SIGNUP_ALLOWLIST — or for anyone, when the
+   * list is empty or absent (brief §6 #17: closed, never open). Decided before
+   * the `UNIQUE` is reached, so it says nothing about which accounts exist;
+   * what it does reveal is whether an address is invited, rate-limited like
+   * the `409` (§7.6). Gates creating an account only: login never sees the list.
+   */
+  | "SIGNUP_NOT_ALLOWED";
 
 /**
  * `message` is the code itself: a constant, never interpolated with request

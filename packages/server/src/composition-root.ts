@@ -106,6 +106,8 @@ export type UseCaseOptions = {
    * flags: nothing is silently absent, because every value works.
    */
   readonly dummyAuthHash: Uint8Array;
+  /** config.ts's signupAllowlist, for signup alone — login takes no list. */
+  readonly allowList: ReadonlySet<string>;
 };
 
 /**
@@ -131,7 +133,12 @@ export function buildUseCases(
   const mintSession = makeMintSession(owners, tokenHasher, clock);
 
   return {
-    signup: signup({ owners, hasher: credentialHasher, mintSession }),
+    signup: signup({
+      owners,
+      hasher: credentialHasher,
+      mintSession,
+      allowList: options.allowList,
+    }),
     loginParams: loginParams({
       owners,
       hasher: credentialHasher,
@@ -216,6 +223,7 @@ export type CompositionConfig = {
   readonly serverSecret: Uint8Array;
   readonly databaseUrl: string;
   readonly storage: StorageConfig;
+  readonly signupAllowlist: ReadonlySet<string>;
 };
 
 /**
@@ -245,6 +253,7 @@ export function buildComposition(config: CompositionConfig): {
     useCases: buildUseCases(adapters, {
       kdfV1,
       dummyAuthHash: randomBytes(32),
+      allowList: config.signupAllowlist,
     }),
   };
 }

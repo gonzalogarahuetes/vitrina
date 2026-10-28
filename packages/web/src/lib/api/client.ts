@@ -30,6 +30,7 @@ const ERROR_CODES = {
   RANGE_NOT_SATISFIABLE: true,
   RATE_LIMITED: true,
   INTERNAL: true,
+  SIGNUP_NOT_ALLOWED: true,
 } as const satisfies Record<ErrorCode, true>;
 
 function isErrorCode(value: unknown): value is ErrorCode {
@@ -86,17 +87,25 @@ export type ApiRequest = {
   readonly range?: string;
 };
 
-export function buildUrl(origin: string, path: string, query: Readonly<Record<string, string>> = {}): URL {
+export function buildUrl(
+  origin: string,
+  path: string,
+  query: Readonly<Record<string, string>> = {},
+): URL {
   if (!path.startsWith("/") || path.startsWith("//")) {
     throw new RefusedRequest("path must be absolute on the API origin");
   }
   if (path.includes("#") || path.includes("?")) {
-    throw new RefusedRequest("path must not carry a fragment or a query; pass `query`");
+    throw new RefusedRequest(
+      "path must not carry a fragment or a query; pass `query`",
+    );
   }
   const url = new URL(path, origin);
   for (const [name, value] of Object.entries(query)) {
     if (CREDENTIAL_PARAMS.has(name.toLowerCase())) {
-      throw new RefusedRequest(`query parameter "${name}" is credential-shaped`);
+      throw new RefusedRequest(
+        `query parameter "${name}" is credential-shaped`,
+      );
     }
     url.searchParams.append(name, value);
   }
@@ -121,12 +130,16 @@ export type ApiClient = {
   json<T>(req: ApiRequest, accept: (body: unknown) => body is T): Promise<T>;
 };
 
-export function createApiClient(origin: string, fetchImpl: typeof fetch = globalThis.fetch.bind(globalThis)): ApiClient {
+export function createApiClient(
+  origin: string,
+  fetchImpl: typeof fetch = globalThis.fetch.bind(globalThis),
+): ApiClient {
   async function request(req: ApiRequest): Promise<Response> {
     const url = buildUrl(origin, req.path, req.query);
 
     const headers = new Headers();
-    if (req.token !== undefined) headers.set("Authorization", `Bearer ${req.token}`);
+    if (req.token !== undefined)
+      headers.set("Authorization", `Bearer ${req.token}`);
     if (req.range !== undefined) headers.set("Range", req.range);
     let body: BodyInit | undefined;
     if (req.json !== undefined) {
@@ -157,7 +170,10 @@ export function createApiClient(origin: string, fetchImpl: typeof fetch = global
     return res;
   }
 
-  async function json<T>(req: ApiRequest, accept: (body: unknown) => body is T): Promise<T> {
+  async function json<T>(
+    req: ApiRequest,
+    accept: (body: unknown) => body is T,
+  ): Promise<T> {
     const res = await request(req);
     let body: unknown;
     try {
@@ -179,10 +195,14 @@ async function toFailure(res: Response): Promise<Error> {
   } catch {
     return new UnexpectedResponse(res.status);
   }
-  const code = typeof body === "object" && body !== null ? (body as { code?: unknown }).code : undefined;
+  const code =
+    typeof body === "object" && body !== null
+      ? (body as { code?: unknown }).code
+      : undefined;
   if (!isErrorCode(code)) return new UnexpectedResponse(res.status);
   const retry = res.headers.get("Retry-After");
-  const seconds = retry !== null && /^\d+$/.test(retry) ? Number(retry) : undefined;
+  const seconds =
+    retry !== null && /^\d+$/.test(retry) ? Number(retry) : undefined;
   return new ApiFailure(code, res.status, seconds);
 }
 
@@ -190,6 +210,9 @@ async function toFailure(res: Response): Promise<Error> {
 export function health(client: ApiClient): Promise<{ status: "ok" }> {
   return client.json(
     { method: "GET", path: "/health" },
-    (b): b is { status: "ok" } => typeof b === "object" && b !== null && (b as { status?: unknown }).status === "ok",
+    (b): b is { status: "ok" } =>
+      typeof b === "object" &&
+      b !== null &&
+      (b as { status?: unknown }).status === "ok",
   );
 }

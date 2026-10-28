@@ -7,7 +7,9 @@
 #   age-keygen -o ~/vitrina-rehearsal.agekey          # stands in for the offline key
 #   pnpm infra:up && pnpm infra:wait
 #
-#   deploy/backup/rehearse.sh source     API on :3000 over a fresh database and a fresh secret
+#   OWNER_EMAIL=<you> deploy/backup/rehearse.sh source
+#                                        API on :3000 over a fresh database and a fresh secret,
+#                                        with signup open to you and the scripted canary only
 #       … then, in the app (pnpm --filter @vitrina/web dev): sign up, create an
 #       album, upload photos, make a QR invite, open it in a second browser.
 #   AGE_RECIPIENT=$(age-keygen -y ~/vitrina-rehearsal.agekey) deploy/backup/rehearse.sh backup
@@ -71,6 +73,8 @@ start_api() { # <db> <secret, or "" for none> <log name>
 	! api_running || fail "something already answers on $API — stop your dev API first"
 	(
 		export CLIENT_ORIGIN=$APP PORT=3000 DATABASE_URL
+		# Closed unless the step sets it, as production is (config.ts).
+		[[ -z "${SIGNUP_ALLOWLIST:-}" ]] || export SIGNUP_ALLOWLIST
 		DATABASE_URL=$(dburl "$1")
 		if [[ -n "$2" ]]; then export VITRINA_SERVER_SECRET="$2"; else unset VITRINA_SERVER_SECRET; fi
 		exec node "$REPO/packages/server/dist/index.js"
@@ -98,6 +102,7 @@ new_secret() { node -e 'process.stdout.write(require("node:crypto").randomBytes(
 
 step_source() {
 	preflight
+	[[ "${OWNER_EMAIL:-}" == *@* ]] || fail "set OWNER_EMAIL to the address you will sign up with"
 	[[ ! -e "$RD" ]] || fail "$RD exists — run \`$0 clean\` first"
 	mkdir -p "$RD" && chmod 700 "$RD"
 	: >"$RD/report.txt"
@@ -109,14 +114,18 @@ step_source() {
 
 	# Not the public value in .env.example: production's secret is generated, so this one is.
 	new_secret >"$RD/secret"
-	start_api "$SRC_DB" "$(cat "$RD/secret")" source || fail "API did not start — $RD/source.log"
-	node "$HERE/canary.mjs" signup "$API" "$RD/canary.json"
+	# The canary's address is fixed before the API starts, so the allowlist can hold it.
+	local canary_email
+	canary_email="canary-$(node -e 'console.log(require("node:crypto").randomUUID())')@rehearsal.invalid"
+	SIGNUP_ALLOWLIST="$OWNER_EMAIL,$canary_email" \
+		start_api "$SRC_DB" "$(cat "$RD/secret")" source || fail "API did not start — $RD/source.log"
+	node "$HERE/canary.mjs" signup "$API" "$RD/canary.json" "$canary_email"
 
 	cat <<-EOF
 
 		API up on $API over $SRC_DB, with a fresh server secret.
 		Now, with \`pnpm --filter @vitrina/web dev\` at $APP:
-		  1. sign up as yourself; create an album; upload a few photos
+		  1. sign up as $OWNER_EMAIL (the only address invited); create an album; upload a few photos
 		  2. make a QR invite; open it in a second browser (or a private window)
 		Then: AGE_RECIPIENT=\$(age-keygen -y ~/vitrina-rehearsal.agekey) $0 backup
 	EOF

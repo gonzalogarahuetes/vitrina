@@ -570,6 +570,32 @@ describe("signup (flows §3.2)", () => {
     expect(h.storage.writes).toEqual([]);
   });
 
+  it("403 SIGNUP_NOT_ALLOWED: signup.not-allowed, the new K_master freed, the proof zeroed, nothing stored", async () => {
+    const h = harness();
+    h.override("POST /v1/signup", h.err(403, "SIGNUP_NOT_ALLOWED"));
+    h.session.start();
+    h.session.enterSignup();
+    h.session.submitSignup(EMAIL, PASSWORD);
+    await settle();
+    expect(h.screen()).toEqual({ kind: "signup", phase: "not-allowed", pausedUntil: null });
+    expect(routes(h.sent), "one request, no retry").toEqual(["POST /v1/signup"]);
+    expect(live(h.handles)).toEqual([]);
+    expect(zeroed(h.proofs[0] as Uint8Array)).toBe(true);
+    expect(h.storage.writes).toEqual([]);
+  });
+
+  it("a 403 with any other code is not read as an invitation refusal", async () => {
+    // 403 already means ACCESS_REVOKED elsewhere in the API; the code, not
+    // the status, is what says "not invited".
+    const h = harness();
+    h.override("POST /v1/signup", h.err(403, "ACCESS_REVOKED"));
+    h.session.start();
+    h.session.enterSignup();
+    h.session.submitSignup(EMAIL, PASSWORD);
+    await settle();
+    expect(h.screen()).not.toEqual({ kind: "signup", phase: "not-allowed", pausedUntil: null });
+  });
+
   it("a lost response is signup.uncertain: one request, never a blind retry, and sign-in keeps the address", async () => {
     for (const reply of ["network", { status: 502, json: { code: "INTERNAL", message: "x" } }] as const) {
       const h = harness();

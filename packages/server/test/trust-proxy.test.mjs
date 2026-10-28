@@ -32,7 +32,7 @@ async function buildTestServer() {
       tokenHasher: createTokenHasher(),
       clock: { now: () => new Date("2026-10-27T09:00:00.000Z") },
     },
-    { kdfV1: OWNER_KDF_V1, dummyAuthHash: Buffer.alloc(32, 0x7f) },
+    { kdfV1: OWNER_KDF_V1, dummyAuthHash: Buffer.alloc(32, 0x7f), allowList: new Set() /* only /login/params here: closed */ },
   );
   const app = await buildServer({ config: { clientOrigin: "http://localhost:5173" }, useCases, logger: false });
   await app.ready();

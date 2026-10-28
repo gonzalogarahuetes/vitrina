@@ -18,6 +18,7 @@ import { OWNER_KDF_V1 } from "@vitrina/shared";
 
 import { buildServer } from "../../dist/adapters/driving/http/server.js";
 import { buildUseCases } from "../../dist/composition-root.js";
+import { EVERYONE_INVITED } from "./allowlist.mjs";
 import { createCredentialHasher } from "../../dist/adapters/driven/hashing/credential-hasher.js";
 import { createTokenHasher } from "../../dist/adapters/driven/hashing/token-hasher.js";
 import { ApplicationError } from "../../dist/application/errors.js";
@@ -222,7 +223,7 @@ export async function buildPr2Server({ media = emptyMedia, objectStore, accessLo
       // §11.6's writes; a test that never logs leaves it absent.
       ...(accessLogs === undefined ? {} : { accessLogs }),
     },
-    { kdfV1: OWNER_KDF_V1, dummyAuthHash: Buffer.alloc(32, 0x7f) },
+    { kdfV1: OWNER_KDF_V1, dummyAuthHash: Buffer.alloc(32, 0x7f), allowList: EVERYONE_INVITED },
   );
 
   const app = await buildServer({

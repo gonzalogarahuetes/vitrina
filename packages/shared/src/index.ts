@@ -12,7 +12,9 @@ export type ErrorCode =
   /** api-sketch §11.9 — the asset route's range starts past the object (§11.2). */
   | "RANGE_NOT_SATISFIABLE"
   | "RATE_LIMITED"
-  | "INTERNAL";
+  | "INTERNAL"
+  /** `/signup` only: the address is not on the server's allowlist. Not "account exists". */
+  | "SIGNUP_NOT_ALLOWED";
 
 /**
  * Optional machine-readable context — api-sketch §1.1, decided 21 August 2026.

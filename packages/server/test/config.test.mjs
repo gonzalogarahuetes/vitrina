@@ -162,4 +162,43 @@ describe("loadConfig", () => {
       );
     });
   });
+
+  describe("the signup allowlist — SIGNUP_ALLOWLIST, brief §6 #17", () => {
+    it("absent means closed: an empty list, and the API still starts", () => {
+      // Not a boot failure: signup.env is optional in the unit, and login,
+      // albums and delivery must not depend on whether anyone may sign up.
+      const config = loadConfig(env());
+      assert.equal(config.signupAllowlist.size, 0);
+    });
+
+    it("empty or blank means closed", () => {
+      for (const value of ["", "   "]) {
+        assert.equal(loadConfig(env({ SIGNUP_ALLOWLIST: value })).signupAllowlist.size, 0, JSON.stringify(value));
+      }
+    });
+
+    it("holds normalised entries, so two spellings of one address are one entry", () => {
+      const list = loadConfig(env({ SIGNUP_ALLOWLIST: "Maria@X.es, maria@x.es ,\tANA@x.es" })).signupAllowlist;
+      assert.deepEqual([...list].sort(), ["ana@x.es", "maria@x.es"]);
+    });
+
+    it("an entry empty after normalisation stops the boot — a stray comma included", () => {
+      for (const value of ["a@x.es,,b@x.es", "a@x.es,", " , "]) {
+        assert.throws(() => loadConfig(env({ SIGNUP_ALLOWLIST: value })), /SIGNUP_ALLOWLIST/, JSON.stringify(value));
+      }
+    });
+
+    it("an entry that is not an address stops the boot, and the message names the variable, not the entry", () => {
+      // The entry is a person's address, and this message reaches the journal.
+      assert.throws(
+        () => loadConfig(env({ SIGNUP_ALLOWLIST: "a@x.es,maria-at-x.es" })),
+        (error) => {
+          assert.match(error.message, /SIGNUP_ALLOWLIST/);
+          assert.doesNotMatch(error.message, /maria/);
+          return true;
+        },
+      );
+    });
+  });
 });
+

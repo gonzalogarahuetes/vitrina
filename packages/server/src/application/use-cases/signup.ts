@@ -11,6 +11,8 @@ export type SignupDeps = {
   readonly owners: OwnerRepository;
   readonly hasher: CredentialHasher;
   readonly mintSession: MintSession;
+  /** Normalised addresses that may create an account. Empty means nobody. */
+  readonly allowList: ReadonlySet<string>;
 };
 
 export type SignupInput = {
@@ -34,6 +36,14 @@ export function signup(deps: SignupDeps) {
     const normalised = normaliseAddress(input.email);
     if (normalised === "") {
       throw new ApplicationError("EMPTY_ADDRESS");
+    }
+
+    // The allowlist, after the input check and before any work: no hash, no
+    // write, and no `UNIQUE` to reveal an existing account to someone not
+    // invited. The list holds normalised entries (config.ts), so the
+    // comparison must use the normalised form.
+    if (!deps.allowList.has(normalised)) {
+      throw new ApplicationError("SIGNUP_NOT_ALLOWED");
     }
 
     const authHash = deps.hasher.authHash(input.proof);

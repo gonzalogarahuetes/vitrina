@@ -2,7 +2,7 @@
  * A scripted owner for the rehearsal's verify-by-violation step, so the
  * secret's effect on sign-in is shown by a machine as well as by the owner.
  *
- *   node canary.mjs signup <api-origin> <state-file>   create it, keep its proof
+ *   node canary.mjs signup <api-origin> <state-file> <email>   create it, keep its proof
  *   node canary.mjs login  <api-origin> <state-file>   prints the HTTP status and code
  *
  * Its proof is 32 random bytes derived from no password, and its wrapping is
@@ -13,7 +13,7 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
 
-const [cmd, origin, stateFile] = process.argv.slice(2);
+const [cmd, origin, stateFile, email] = process.argv.slice(2);
 const b64 = (n) => randomBytes(n).toString("base64url");
 
 async function post(path, body) {
@@ -27,7 +27,8 @@ async function post(path, body) {
 }
 
 if (cmd === "signup") {
-  const state = { email: `canary-${randomUUID()}@rehearsal.invalid`, proof: b64(32) };
+  // The address is given, so the caller can put it on SIGNUP_ALLOWLIST first.
+  const state = { email: email ?? `canary-${randomUUID()}@rehearsal.invalid`, proof: b64(32) };
   const r = await post("/signup", {
     email: state.email,
     proof: state.proof,

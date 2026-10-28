@@ -113,7 +113,7 @@ export async function buildLimiterServer({ limits, routeObserver } = {}) {
       tokenHasher: createTokenHasher(),
       clock: { now: () => NOW },
     },
-    { kdfV1: OWNER_KDF_V1, dummyAuthHash: Buffer.alloc(32, 0x7f) },
+    { kdfV1: OWNER_KDF_V1, dummyAuthHash: Buffer.alloc(32, 0x7f), allowList: new Set() /* no signups here: closed */ },
   );
 
   const app = await buildServer({

@@ -21,17 +21,39 @@
  * A network failure is an offline state that changes no key state (flows §0).
  * 429 waits for Retry-After.
  */
-import { ApiFailure, NetworkFailure, UnexpectedResponse, type ApiClient } from "$lib/api/client";
+import {
+  ApiFailure,
+  NetworkFailure,
+  UnexpectedResponse,
+  type ApiClient,
+} from "$lib/api/client";
 import { EnvelopeUnavailable, type Envelope, type Poison } from "$lib/envelope";
 import { uuidToBytes } from "$lib/ids";
-import type { AlbumKey, MasterKey, OwnerKeyFunctions, OwnerKek, OwnerKeyMaterial, Wordlist } from "$lib/keys/owner-types";
+import type {
+  AlbumKey,
+  MasterKey,
+  OwnerKeyFunctions,
+  OwnerKek,
+  OwnerKeyMaterial,
+  Wordlist,
+} from "$lib/keys/owner-types";
 import type { SessionStore } from "$lib/session/owner-session";
 import { decodeBase64urlRange } from "@vitrina/shared";
 import type { Picture } from "$lib/recipient/render";
 import { AlbumLeft, OwnerAlbum, type AlbumScreen } from "./album";
 import { ownerApi, type AlbumRow, type OwnerApi } from "./api";
-import { InviteFlow, InviteLeft, type InviteMode, type InviteScreen } from "./invite";
-import { AlbumPeople, PeopleLeft, type LogScreen, type PeopleScreen } from "./people";
+import {
+  InviteFlow,
+  InviteLeft,
+  type InviteMode,
+  type InviteScreen,
+} from "./invite";
+import {
+  AlbumPeople,
+  PeopleLeft,
+  type LogScreen,
+  type PeopleScreen,
+} from "./people";
 import type { Imaging } from "./prepare";
 import { checkPassword, codePoints } from "./policy";
 
@@ -66,9 +88,16 @@ export type SignupPhase =
   /** 400, 413 or 415: a client build error (api-sketch §7.5). */
   | "failed"
   /** A 429: no account was created, and nothing is held. Never signup-uncertain (flows §0). */
-  | "paused";
+  | "paused"
+  /** 403 SIGNUP_NOT_ALLOWED: not invited. No account was created, and nothing is held. */
+  | "not-allowed";
 
-export type UnlockPhase = "ready" | "empty" | "deriving" | "wrong" | "unavailable";
+export type UnlockPhase =
+  | "ready"
+  | "empty"
+  | "deriving"
+  | "wrong"
+  | "unavailable";
 
 export type AlbumView = {
   readonly id: string;
@@ -78,7 +107,13 @@ export type AlbumView = {
   readonly failed: null | "key" | "title";
 };
 
-export type CreatePhase = "closed" | "open" | "empty" | "too-long" | "creating" | "failed";
+export type CreatePhase =
+  | "closed"
+  | "open"
+  | "empty"
+  | "too-long"
+  | "creating"
+  | "failed";
 
 export type LogoutScope = "device" | "everywhere";
 
@@ -94,9 +129,17 @@ export type Screen =
       /** While `paused`: when submitting may resume, in ms on the device's clock. Null otherwise. */
       readonly pausedUntil: number | null;
     }
-  | { readonly kind: "signup"; readonly phase: SignupPhase; readonly pausedUntil: number | null }
+  | {
+      readonly kind: "signup";
+      readonly phase: SignupPhase;
+      readonly pausedUntil: number | null;
+    }
   | { readonly kind: "signup-uncertain"; readonly email: string }
-  | { readonly kind: "unlock"; readonly phase: UnlockPhase; readonly signingOut: boolean }
+  | {
+      readonly kind: "unlock";
+      readonly phase: UnlockPhase;
+      readonly signingOut: boolean;
+    }
   | { readonly kind: "cannot-unlock" }
   | { readonly kind: "device-failed" }
   | {
@@ -110,7 +153,11 @@ export type Screen =
   | InviteScreen
   | PeopleScreen
   | LogScreen
-  | { readonly kind: "signed-out-partial"; readonly scope: LogoutScope; readonly retrying: boolean };
+  | {
+      readonly kind: "signed-out-partial";
+      readonly scope: LogoutScope;
+      readonly retrying: boolean;
+    };
 
 export type Expiry = { readonly endsAt: Date; readonly ending: boolean };
 
@@ -169,9 +216,12 @@ class Stale extends Error {
 }
 
 /** Not the API's answer, or a 5xx: the service, not the user and not the key. */
-const serverFault = (e: unknown): boolean => (e instanceof ApiFailure && e.status >= 500) || e instanceof UnexpectedResponse;
+const serverFault = (e: unknown): boolean =>
+  (e instanceof ApiFailure && e.status >= 500) ||
+  e instanceof UnexpectedResponse;
 
-const failedWith = (e: unknown, status: number): boolean => e instanceof ApiFailure && e.status === status;
+const failedWith = (e: unknown, status: number): boolean =>
+  e instanceof ApiFailure && e.status === status;
 
 type CallOptions = {
   /** NetworkFailure: wait for the offline retry (default), or throw to the caller. */
@@ -185,10 +235,19 @@ type CallOptions = {
 };
 
 /** The credential routes: no silent retry of anything, and a 429 comes back to the caller (flows §0). */
-const CREDENTIAL: CallOptions = { server: "throw", unauthorized: "throw", rateLimit: "throw" };
+const CREDENTIAL: CallOptions = {
+  server: "throw",
+  unauthorized: "throw",
+  rateLimit: "throw",
+};
 
 export class OwnerSession {
-  private state: State = { screen: { kind: "checking" }, offline: false, rateLimited: false, expiry: null };
+  private state: State = {
+    screen: { kind: "checking" },
+    offline: false,
+    rateLimited: false,
+    expiry: null,
+  };
   private readonly listeners = new Set<(s: State) => void>();
   private readonly api: OwnerApi;
 
@@ -302,12 +361,23 @@ export class OwnerSession {
     this.token = null;
     this.expiresAt = null;
     this.material = null;
-    this.state = { screen: this.state.screen, offline: false, rateLimited: false, expiry: null };
+    this.state = {
+      screen: this.state.screen,
+      offline: false,
+      rateLimited: false,
+      expiry: null,
+    };
   }
 
   private toSignin(notice: SigninNotice, email = ""): void {
     this.reset();
-    this.set({ kind: "signin", phase: "ready", notice, email, pausedUntil: null });
+    this.set({
+      kind: "signin",
+      phase: "ready",
+      notice,
+      email,
+      pausedUntil: null,
+    });
   }
 
   /** An owner 401 anywhere. */
@@ -322,7 +392,12 @@ export class OwnerSession {
     this.bumpEpoch();
     this.freeHandles();
     this.material = null;
-    this.state = { screen: { kind: "device-failed" }, offline: false, rateLimited: false, expiry: null };
+    this.state = {
+      screen: { kind: "device-failed" },
+      offline: false,
+      rateLimited: false,
+      expiry: null,
+    };
     for (const l of this.listeners) l(this.state);
   }
 
@@ -342,7 +417,11 @@ export class OwnerSession {
 
   // ── Every request goes through here ────────────────────────────────────
 
-  private async call<T>(epoch: number, op: () => Promise<T>, opts: CallOptions = {}): Promise<T> {
+  private async call<T>(
+    epoch: number,
+    op: () => Promise<T>,
+    opts: CallOptions = {},
+  ): Promise<T> {
     for (;;) {
       this.live(epoch);
       try {
@@ -360,7 +439,11 @@ export class OwnerSession {
           await this.waitOnline();
           continue;
         }
-        if (e instanceof ApiFailure && e.status === 429 && opts.rateLimit !== "throw") {
+        if (
+          e instanceof ApiFailure &&
+          e.status === 429 &&
+          opts.rateLimit !== "throw"
+        ) {
           // The request was refused before it was handled, so resending it is safe.
           this.emit({ rateLimited: true });
           await this.deps.sleep((e.retryAfter ?? DEFAULT_RETRY_AFTER_S) * 1000);
@@ -397,7 +480,8 @@ export class OwnerSession {
   private guarded(epoch: number, task: () => Promise<void>): void {
     task().catch((e: unknown) => {
       if (e instanceof Stale || epoch !== this.epoch) return;
-      if (e instanceof EnvelopeUnavailable || this.deps.poison.poisoned) return this.deviceFailed();
+      if (e instanceof EnvelopeUnavailable || this.deps.poison.poisoned)
+        return this.deviceFailed();
       // Unanticipated, and not evidence that a key is lost: show the retryable
       // state and run the same step again on retry, changing no key state.
       void this.waitOnline().then(() => {
@@ -410,7 +494,14 @@ export class OwnerSession {
 
   start(): void {
     const stored = this.deps.store.read();
-    if (stored === null) return this.set({ kind: "signin", phase: "ready", notice: null, email: "", pausedUntil: null });
+    if (stored === null)
+      return this.set({
+        kind: "signin",
+        phase: "ready",
+        notice: null,
+        email: "",
+        pausedUntil: null,
+      });
     this.token = stored.token;
     this.expiresAt = stored.expiresAt;
     this.set({ kind: "checking" });
@@ -442,7 +533,11 @@ export class OwnerSession {
     this.guarded(epoch, async () => {
       await this.deps.nextFrames();
       this.live(epoch);
-      const r = await this.deps.keys.unlockMasterKey(this.deps.envelope, password, material);
+      const r = await this.deps.keys.unlockMasterKey(
+        this.deps.envelope,
+        password,
+        material,
+      );
       if (this.dead || epoch !== this.epoch) {
         if (r.ok) this.freeQuietly(r.master);
         return;
@@ -450,11 +545,23 @@ export class OwnerSession {
       if (!r.ok) {
         switch (r.error) {
           case "empty":
-            return this.set({ kind: "unlock", phase: "empty", signingOut: false });
+            return this.set({
+              kind: "unlock",
+              phase: "empty",
+              signingOut: false,
+            });
           case "wrong-password":
-            return this.set({ kind: "unlock", phase: "wrong", signingOut: false });
+            return this.set({
+              kind: "unlock",
+              phase: "wrong",
+              signingOut: false,
+            });
           case "unusable-material":
-            return this.set({ kind: "unlock", phase: "unavailable", signingOut: false });
+            return this.set({
+              kind: "unlock",
+              phase: "unavailable",
+              signingOut: false,
+            });
           case "could-not-derive":
             return this.deviceFailed();
         }
@@ -479,7 +586,13 @@ export class OwnerSession {
   /** The address is sent exactly as typed. No password policy here (brief §12). */
   submitSignin(email: string, password: string): void {
     const s = this.state.screen;
-    if (s.kind !== "signin" || s.phase === "busy" || s.phase === "deriving" || s.phase === "paused") return;
+    if (
+      s.kind !== "signin" ||
+      s.phase === "busy" ||
+      s.phase === "deriving" ||
+      s.phase === "paused"
+    )
+      return;
     if (email.trim() === "" || password === "") return;
     const epoch = this.epoch;
     // `email` on the screen is the address the form is CREATED with, and
@@ -488,7 +601,10 @@ export class OwnerSession {
     // form on the first submit and emptied the password field before anything
     // had happened. The form keeps what was typed itself.
     const formEmail = s.email;
-    const screen = (phase: SigninPhase, pausedUntil: number | null = null): Screen => ({
+    const screen = (
+      phase: SigninPhase,
+      pausedUntil: number | null = null,
+    ): Screen => ({
       kind: "signin",
       phase,
       notice: null,
@@ -501,11 +617,22 @@ export class OwnerSession {
       // Step 1.
       let params;
       try {
-        params = await this.call(epoch, () => this.api.loginParams(email), CREDENTIAL);
+        params = await this.call(
+          epoch,
+          () => this.api.loginParams(email),
+          CREDENTIAL,
+        );
       } catch (e) {
         if (e instanceof Stale) throw e;
-        if (failedWith(e, 429)) return this.pause(epoch, e as ApiFailure, (until) => screen("paused", until), () => screen("ready"));
-        if (e instanceof ApiFailure || e instanceof UnexpectedResponse) return this.set(screen("unavailable"));
+        if (failedWith(e, 429))
+          return this.pause(
+            epoch,
+            e as ApiFailure,
+            (until) => screen("paused", until),
+            () => screen("ready"),
+          );
+        if (e instanceof ApiFailure || e instanceof UnexpectedResponse)
+          return this.set(screen("unavailable"));
         throw e;
       }
 
@@ -513,7 +640,11 @@ export class OwnerSession {
       this.set(screen("deriving"));
       await this.deps.nextFrames();
       this.live(epoch);
-      const d = await this.deps.keys.deriveLoginCredential(this.deps.envelope, password, params);
+      const d = await this.deps.keys.deriveLoginCredential(
+        this.deps.envelope,
+        password,
+        params,
+      );
       if (this.dead || epoch !== this.epoch) {
         if (d.ok) {
           d.proof.fill(0);
@@ -542,15 +673,26 @@ export class OwnerSession {
       // cannot be wiped (api-sketch §8.4).
       let session;
       try {
-        session = await this.call(epoch, () => this.api.login(email, proof), CREDENTIAL);
+        session = await this.call(
+          epoch,
+          () => this.api.login(email, proof),
+          CREDENTIAL,
+        );
       } catch (e) {
         if (e instanceof Stale) throw e;
         this.freeKek();
         // flows §0: no key material is held through the wait. The proof is zeroed below.
-        if (failedWith(e, 429)) return this.pause(epoch, e as ApiFailure, (until) => screen("paused", until), () => screen("ready"));
+        if (failedWith(e, 429))
+          return this.pause(
+            epoch,
+            e as ApiFailure,
+            (until) => screen("paused", until),
+            () => screen("ready"),
+          );
         // Identical for a wrong password and an unknown address (api-sketch §4.3).
         if (failedWith(e, 401)) return this.set(screen("failed"));
-        if (e instanceof ApiFailure || e instanceof UnexpectedResponse) return this.set(screen("unavailable"));
+        if (e instanceof ApiFailure || e instanceof UnexpectedResponse)
+          return this.set(screen("unavailable"));
         throw e;
       } finally {
         proof.fill(0);
@@ -609,7 +751,12 @@ export class OwnerSession {
    * key handle and the proof is zeroed. At `until` the form becomes
    * submittable again, and a resubmit derives afresh.
    */
-  private pause(epoch: number, e: ApiFailure, paused: (until: number) => Screen, resume: () => Screen): void {
+  private pause(
+    epoch: number,
+    e: ApiFailure,
+    paused: (until: number) => Screen,
+    resume: () => Screen,
+  ): void {
     const now = this.deps.now().getTime();
     const until = now + (e.retryAfter ?? DEFAULT_RETRY_AFTER_S) * 1000;
     this.set(paused(until));
@@ -617,12 +764,21 @@ export class OwnerSession {
     const step = (): void => {
       const left = until - this.deps.now().getTime();
       if (left > 0) {
-        this.cancelPause = this.deps.setTimer(Math.min(left, MAX_TIMER_MS), step);
+        this.cancelPause = this.deps.setTimer(
+          Math.min(left, MAX_TIMER_MS),
+          step,
+        );
         return;
       }
       this.cancelPause = null;
       const s = this.state.screen;
-      if (epoch === this.epoch && !this.dead && (s.kind === "signin" || s.kind === "signup") && s.phase === "paused") this.set(resume());
+      if (
+        epoch === this.epoch &&
+        !this.dead &&
+        (s.kind === "signin" || s.kind === "signup") &&
+        s.phase === "paused"
+      )
+        this.set(resume());
     };
     this.cancelPause = this.deps.setTimer(until - now, step);
   }
@@ -636,7 +792,8 @@ export class OwnerSession {
 
   enterSignup(): void {
     const s = this.state.screen;
-    if (s.kind !== "signin" || s.phase === "busy" || s.phase === "deriving") return;
+    if (s.kind !== "signin" || s.phase === "busy" || s.phase === "deriving")
+      return;
     this.set({ kind: "signup", phase: "ready", pausedUntil: null });
     // Start loading the blocklist now, so it is usually ready by submit.
     this.loadBlocklist().catch(() => undefined);
@@ -652,10 +809,19 @@ export class OwnerSession {
 
   submitSignup(email: string, password: string): void {
     const s = this.state.screen;
-    if (s.kind !== "signup" || s.phase === "busy" || s.phase === "deriving" || s.phase === "paused") return;
+    if (
+      s.kind !== "signup" ||
+      s.phase === "busy" ||
+      s.phase === "deriving" ||
+      s.phase === "paused"
+    )
+      return;
     if (email.trim() === "" || password === "") return;
     const epoch = this.epoch;
-    const screen = (phase: SignupPhase, pausedUntil: number | null = null): Screen => ({ kind: "signup", phase, pausedUntil });
+    const screen = (
+      phase: SignupPhase,
+      pausedUntil: number | null = null,
+    ): Screen => ({ kind: "signup", phase, pausedUntil });
     this.set(screen("busy"));
 
     this.guarded(epoch, async () => {
@@ -679,7 +845,10 @@ export class OwnerSession {
       this.set(screen("deriving"));
       await this.deps.nextFrames();
       this.live(epoch);
-      const c = await this.deps.keys.createAccountKeys(this.deps.envelope, password);
+      const c = await this.deps.keys.createAccountKeys(
+        this.deps.envelope,
+        password,
+      );
       if (this.dead || epoch !== this.epoch) {
         if (c.ok) {
           c.keys.proof.fill(0);
@@ -718,9 +887,19 @@ export class OwnerSession {
         this.freeHandles();
         // A 429 is refused before anything is created: its own path, never
         // signup.uncertain (flows §0). A resubmit draws a fresh K_master and salt.
-        if (failedWith(e, 429)) return this.pause(epoch, e as ApiFailure, (until) => screen("paused", until), () => screen("ready"));
+        if (failedWith(e, 429))
+          return this.pause(
+            epoch,
+            e as ApiFailure,
+            (until) => screen("paused", until),
+            () => screen("ready"),
+          );
         if (failedWith(e, 409)) return this.set(screen("taken"));
-        if (e instanceof NetworkFailure || serverFault(e)) return this.set({ kind: "signup-uncertain", email });
+        if (e instanceof ApiFailure && e.code === "SIGNUP_NOT_ALLOWED") {
+          return this.set(screen("not-allowed"));
+        }
+        if (e instanceof NetworkFailure || serverFault(e))
+          return this.set({ kind: "signup-uncertain", email });
         if (e instanceof ApiFailure) return this.set(screen("failed"));
         throw e;
       } finally {
@@ -729,7 +908,13 @@ export class OwnerSession {
       this.saveSession(session.token, session.expires_at);
 
       // Step 4: O-open with an empty list. No GET /v1/owner/key: this device holds K_master.
-      this.set({ kind: "albums", phase: "ready", albums: [], create: "closed", signingOut: null });
+      this.set({
+        kind: "albums",
+        phase: "ready",
+        albums: [],
+        create: "closed",
+        signingOut: null,
+      });
     });
   }
 
@@ -744,13 +929,25 @@ export class OwnerSession {
 
   private async enterAlbums(epoch: number): Promise<void> {
     this.live(epoch);
-    this.set({ kind: "albums", phase: "loading", albums: [], create: "closed", signingOut: null });
+    this.set({
+      kind: "albums",
+      phase: "loading",
+      albums: [],
+      create: "closed",
+      signingOut: null,
+    });
     this.scheduleExpiry();
     const token = this.token;
     if (token === null) throw new Stale();
     const list = await this.call(epoch, () => this.api.albums(token));
     const albums = list.albums.map((row) => this.openRow(row));
-    this.set({ kind: "albums", phase: "ready", albums, create: "closed", signingOut: null });
+    this.set({
+      kind: "albums",
+      phase: "ready",
+      albums,
+      create: "closed",
+      signingOut: null,
+    });
   }
 
   /** A wrapping or title that will not open is shown as failed on its album, never dropped. */
@@ -768,7 +965,11 @@ export class OwnerSession {
     this.albumKeys.set(row.id, r.albumKey);
     try {
       const blob = decodeBase64urlRange(row.title, 41, 64 * 1024);
-      const title = this.deps.envelope.decryptAlbumTitle(r.albumKey, uuidToBytes(row.id), blob);
+      const title = this.deps.envelope.decryptAlbumTitle(
+        r.albumKey,
+        uuidToBytes(row.id),
+        blob,
+      );
       return { ...base, title, failed: null };
     } catch (e) {
       if (e instanceof EnvelopeUnavailable) throw e;
@@ -780,7 +981,8 @@ export class OwnerSession {
 
   openCreate(): void {
     const s = this.state.screen;
-    if (s.kind !== "albums" || s.phase !== "ready" || s.create === "creating") return;
+    if (s.kind !== "albums" || s.phase !== "ready" || s.create === "creating")
+      return;
     this.set({ ...s, create: "open" });
   }
 
@@ -792,10 +994,18 @@ export class OwnerSession {
 
   createAlbum(rawTitle: string): void {
     const s = this.state.screen;
-    if (s.kind !== "albums" || s.phase !== "ready" || s.create === "closed" || s.create === "creating" || s.signingOut !== null) return;
+    if (
+      s.kind !== "albums" ||
+      s.phase !== "ready" ||
+      s.create === "closed" ||
+      s.create === "creating" ||
+      s.signingOut !== null
+    )
+      return;
     const title = rawTitle.trim();
     if (title === "") return this.set({ ...s, create: "empty" });
-    if (codePoints(title) > TITLE_MAX_CODE_POINTS) return this.set({ ...s, create: "too-long" });
+    if (codePoints(title) > TITLE_MAX_CODE_POINTS)
+      return this.set({ ...s, create: "too-long" });
     const master = this.master;
     const token = this.token;
     if (master === null || token === null) return;
@@ -815,7 +1025,11 @@ export class OwnerSession {
       }
       let blob: Uint8Array;
       try {
-        blob = this.deps.envelope.encryptAlbumTitle(k.albumKey, uuidToBytes(id), title);
+        blob = this.deps.envelope.encryptAlbumTitle(
+          k.albumKey,
+          uuidToBytes(id),
+          title,
+        );
       } catch (e) {
         this.freeQuietly(k.albumKey);
         if (e instanceof EnvelopeUnavailable) throw e;
@@ -823,7 +1037,14 @@ export class OwnerSession {
       }
       try {
         // Network loss and 5xx are retried inside call(), with the same id and body.
-        await this.call(epoch, () => this.api.createAlbum(token, { id, title: blob, wrappedKey: k.wrappedKey, wrapNonce: k.wrapNonce }));
+        await this.call(epoch, () =>
+          this.api.createAlbum(token, {
+            id,
+            title: blob,
+            wrappedKey: k.wrappedKey,
+            wrapNonce: k.wrapNonce,
+          }),
+        );
       } catch (e) {
         // 409 is a lost response to our own create: treat it as created (api-sketch §9.2).
         if (!failedWith(e, 409)) {
@@ -841,7 +1062,11 @@ export class OwnerSession {
       const now = this.state.screen;
       if (now.kind !== "albums") return;
       // Newest first, as GET /v1/albums orders them.
-      this.set({ ...now, albums: [{ id, mediaCount: 0, title, failed: null }, ...now.albums], create: "closed" });
+      this.set({
+        ...now,
+        albums: [{ id, mediaCount: 0, title, failed: null }, ...now.albums],
+        create: "closed",
+      });
     });
   }
 
@@ -850,7 +1075,13 @@ export class OwnerSession {
   /** From the list. An album whose key would not open cannot be opened; one whose title would not still can. */
   openAlbum(id: string): void {
     const s = this.state.screen;
-    if (s.kind !== "albums" || s.phase !== "ready" || s.signingOut !== null || s.create === "creating") return;
+    if (
+      s.kind !== "albums" ||
+      s.phase !== "ready" ||
+      s.signingOut !== null ||
+      s.create === "creating"
+    )
+      return;
     this.enterAlbum(id);
   }
 
@@ -859,7 +1090,13 @@ export class OwnerSession {
     const view = this.albumList.find((a) => a.id === id);
     const albumKey = this.albumKeys.get(id);
     const token = this.token;
-    if (view === undefined || view.failed === "key" || albumKey === undefined || token === null) return;
+    if (
+      view === undefined ||
+      view.failed === "key" ||
+      albumKey === undefined ||
+      token === null
+    )
+      return;
     const epoch = this.epoch;
     const d = this.deps;
     this.closeAlbum();
@@ -878,17 +1115,35 @@ export class OwnerSession {
         nextFrames: d.nextFrames,
         setTimer: d.setTimer,
         // Each attempt checks the album is still open, so a request waiting out offline or a 429 is not resent after leaving.
-        call: <T>(op: () => Promise<T>): Promise<T> => this.call(epoch, (): Promise<T> => (this.album === album ? op() : Promise.reject(new Stale()))),
+        call: <T>(op: () => Promise<T>): Promise<T> =>
+          this.call(
+            epoch,
+            (): Promise<T> =>
+              this.album === album ? op() : Promise.reject(new Stale()),
+          ),
         isStale: (e) => e instanceof Stale,
         guarded: (task) => this.guarded(epoch, task),
-        screen: () => (this.state.screen.kind === "album" ? this.state.screen : null),
+        screen: () =>
+          this.state.screen.kind === "album" ? this.state.screen : null,
         show: (screen) => this.set(screen),
         gone: () => this.leaveAlbum(true),
       },
       id,
     );
     this.album = album;
-    this.set({ kind: "album", id, title: view.title, phase: "loading", items: [], viewer: null, confirm: null, review: null, chooseRefused: false, erasurePending: 0, leaving: false });
+    this.set({
+      kind: "album",
+      id,
+      title: view.title,
+      phase: "loading",
+      items: [],
+      viewer: null,
+      confirm: null,
+      review: null,
+      chooseRefused: false,
+      erasurePending: 0,
+      leaving: false,
+    });
     album.start();
   }
 
@@ -899,19 +1154,28 @@ export class OwnerSession {
   leaveAlbum(force = false): void {
     const s = this.state.screen;
     const a = this.album;
-    if (s.kind !== "album" || a === null || s.confirm?.removing === true) return;
+    if (s.kind !== "album" || a === null || s.confirm?.removing === true)
+      return;
     if (a.busy && !force) {
       this.afterLeave = null;
       return a.askLeave(true);
     }
     const count = s.items.filter((i) => i.status !== null).length;
-    this.albumList = this.albumList.map((v) => (v.id === s.id ? { ...v, mediaCount: count } : v));
+    this.albumList = this.albumList.map((v) =>
+      v.id === s.id ? { ...v, mediaCount: count } : v,
+    );
     const next = this.afterLeave;
     this.afterLeave = null;
     if (next === "invite") return this.enterInvite(s.id, s.title);
     if (next === "people") return this.enterPeople(s.id, s.title);
     this.closeAlbum();
-    this.set({ kind: "albums", phase: "ready", albums: this.albumList, create: "closed", signingOut: null });
+    this.set({
+      kind: "albums",
+      phase: "ready",
+      albums: this.albumList,
+      create: "closed",
+      signingOut: null,
+    });
   }
 
   /** Every album action goes to the open album, and only while its screen is showing. */
@@ -921,7 +1185,8 @@ export class OwnerSession {
     try {
       f(a);
     } catch (e) {
-      if (e instanceof EnvelopeUnavailable || this.deps.poison.poisoned) return this.deviceFailed();
+      if (e instanceof EnvelopeUnavailable || this.deps.poison.poisoned)
+        return this.deviceFailed();
       // The album was left underneath the call: nothing to do. Anything else is a bug, and surfaces.
       if (!(e instanceof AlbumLeft || e instanceof Stale)) throw e;
     }
@@ -987,7 +1252,15 @@ export class OwnerSession {
   private leaveAlbumFor(next: "invite" | "people"): void {
     const s = this.state.screen;
     const a = this.album;
-    if (s.kind !== "album" || a === null || s.phase !== "ready" || s.confirm !== null || s.viewer !== null || s.review !== null) return;
+    if (
+      s.kind !== "album" ||
+      a === null ||
+      s.phase !== "ready" ||
+      s.confirm !== null ||
+      s.viewer !== null ||
+      s.review !== null
+    )
+      return;
     if (a.busy) {
       this.afterLeave = next;
       return a.askLeave(true);
@@ -1000,7 +1273,12 @@ export class OwnerSession {
   private subGuarded(epoch: number, task: () => Promise<void>): void {
     this.guarded(epoch, () =>
       task().catch((e: unknown) => {
-        if (e instanceof InviteLeft || e instanceof PeopleLeft || e instanceof AlbumLeft) return;
+        if (
+          e instanceof InviteLeft ||
+          e instanceof PeopleLeft ||
+          e instanceof AlbumLeft
+        )
+          return;
         throw e;
       }),
     );
@@ -1020,16 +1298,27 @@ export class OwnerSession {
       albumKey,
       albumId,
       albumTitle,
-      keys: { createQrInvite: d.keys.createQrInvite, createPassphraseInvite: d.keys.createPassphraseInvite },
+      keys: {
+        createQrInvite: d.keys.createQrInvite,
+        createPassphraseInvite: d.keys.createPassphraseInvite,
+      },
       loadWordlists: d.loadWordlists,
       displayLanguage: d.displayLanguage,
       origin: d.origin,
       nextFrames: d.nextFrames,
-      call: <T>(op: () => Promise<T>): Promise<T> => this.call(epoch, (): Promise<T> => (this.invite === flow ? op() : Promise.reject(new Stale()))),
+      call: <T>(op: () => Promise<T>): Promise<T> =>
+        this.call(
+          epoch,
+          (): Promise<T> =>
+            this.invite === flow ? op() : Promise.reject(new Stale()),
+        ),
       isStale: (e) => e instanceof Stale,
       guarded: (task) => this.subGuarded(epoch, task),
       poisoned: () => d.poison.poisoned,
-      screen: () => (this.invite === flow && this.state.screen.kind === "invite" ? this.state.screen : null),
+      screen: () =>
+        this.invite === flow && this.state.screen.kind === "invite"
+          ? this.state.screen
+          : null,
       show: (screen) => {
         if (this.invite === flow) this.set(screen);
       },
@@ -1098,12 +1387,20 @@ export class OwnerSession {
       albumId,
       albumTitle,
       decodeImage: d.decodeImage,
-      call: <T>(op: () => Promise<T>): Promise<T> => this.call(epoch, (): Promise<T> => (this.people === people ? op() : Promise.reject(new Stale()))),
+      call: <T>(op: () => Promise<T>): Promise<T> =>
+        this.call(
+          epoch,
+          (): Promise<T> =>
+            this.people === people ? op() : Promise.reject(new Stale()),
+        ),
       isStale: (e) => e instanceof Stale,
       guarded: (task) => this.subGuarded(epoch, task),
       screen: () => {
         const sc = this.state.screen;
-        return this.people === people && (sc.kind === "people" || sc.kind === "log") ? sc : null;
+        return this.people === people &&
+          (sc.kind === "people" || sc.kind === "log")
+          ? sc
+          : null;
       },
       show: (screen) => {
         if (this.people === people) this.set(screen);
@@ -1121,7 +1418,8 @@ export class OwnerSession {
     try {
       f(p);
     } catch (e) {
-      if (e instanceof EnvelopeUnavailable || this.deps.poison.poisoned) return this.deviceFailed();
+      if (e instanceof EnvelopeUnavailable || this.deps.poison.poisoned)
+        return this.deviceFailed();
       if (!(e instanceof PeopleLeft)) throw e;
     }
   }
@@ -1156,7 +1454,13 @@ export class OwnerSession {
   /** The album answered 404 from a sub-screen: it is gone, so back to the list. */
   private backToList(): void {
     this.closeAlbum();
-    this.set({ kind: "albums", phase: "ready", albums: this.albumList, create: "closed", signingOut: null });
+    this.set({
+      kind: "albums",
+      phase: "ready",
+      albums: this.albumList,
+      create: "closed",
+      signingOut: null,
+    });
   }
 
   // ── §3.11 Logout ───────────────────────────────────────────────────────
@@ -1176,9 +1480,11 @@ export class OwnerSession {
   logout(scope: LogoutScope): void {
     const s = this.state.screen;
     const fromUnlock = s.kind === "unlock" && s.signingOut;
-    const fromAlbums = s.kind === "albums" && s.signingOut === null && s.create !== "creating";
+    const fromAlbums =
+      s.kind === "albums" && s.signingOut === null && s.create !== "creating";
     const fromPartial = s.kind === "signed-out-partial" && !s.retrying;
-    if ((!fromUnlock && !fromAlbums && !fromPartial) || this.logoutInFlight) return;
+    if ((!fromUnlock && !fromAlbums && !fromPartial) || this.logoutInFlight)
+      return;
     const token = this.token;
     if (token === null) return this.toSignin("signed-out");
 
@@ -1187,11 +1493,15 @@ export class OwnerSession {
     this.material = null;
     this.emit({ offline: false, rateLimited: false, expiry: null });
     if (s.kind === "albums") this.set({ ...s, signingOut: scope });
-    else if (s.kind === "signed-out-partial") this.set({ ...s, retrying: true });
+    else if (s.kind === "signed-out-partial")
+      this.set({ ...s, retrying: true });
     else this.set({ kind: "unlock", phase: "ready", signingOut: true });
 
     const epoch = this.epoch;
-    const route = scope === "device" ? () => this.api.logout(token) : () => this.api.logoutAll(token);
+    const route =
+      scope === "device"
+        ? () => this.api.logout(token)
+        : () => this.api.logoutAll(token);
     this.logoutInFlight = true;
     void route().then(
       () => {
@@ -1232,7 +1542,10 @@ export class OwnerSession {
         return;
       }
       this.emit({ expiry: { endsAt, ending: false } });
-      this.cancelExpiry = this.deps.setTimer(Math.min(until, MAX_TIMER_MS), check);
+      this.cancelExpiry = this.deps.setTimer(
+        Math.min(until, MAX_TIMER_MS),
+        check,
+      );
     };
     check();
   }

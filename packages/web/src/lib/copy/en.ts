@@ -180,6 +180,10 @@ export const en = {
   /** Flows §3.2: must not claim that account existence is private (brief §11). */
   "signup.taken":
     "There's already an account with this email address. If it's yours, sign in.",
+  /** A 403 SIGNUP_NOT_ALLOWED: the server's allowlist does not hold this address. */
+  "signup.not-allowed":
+    "Sign-up is by invitation only. Ask the person who invited you to the app for more details.",
+  "signup.not-allowed.signin": "Sign in",
   "signup.taken.signin": "Sign in",
   /** Flows §3.2: the account may have been created. Sign in to find out. */
   "signup.uncertain":
