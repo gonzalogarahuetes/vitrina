@@ -20,11 +20,12 @@ Type=simple
 User=vitrina
 Group=vitrina
 WorkingDirectory=/opt/vitrina/api/current
-ExecStart=/usr/local/bin/node /opt/vitrina/api/current/dist/index.js
-
-# Loopback only, in the unit rather than the env file, so no edit of that
-# file can expose the API past Caddy. config.ts defaults to 0.0.0.0.
-Environment=HOST=127.0.0.1 PORT=3000 NODE_ENV=production
+# Loopback only, set by `env` at the last step before node starts, so nothing
+# in an EnvironmentFile can override it — systemd lets EnvironmentFile= values
+# beat Environment= ones, which is why HOST is not an Environment= line.
+# config.ts defaults to 0.0.0.0; this must never reach that default.
+ExecStart=/usr/bin/env HOST=127.0.0.1 PORT=3000 /usr/local/bin/node /opt/vitrina/api/current/dist/index.js
+Environment=NODE_ENV=production
 # Read by systemd (root) and passed in; the service never reads the files.
 # The secret and the rest of the configuration (phase 4):
 EnvironmentFile=/etc/vitrina/api.env

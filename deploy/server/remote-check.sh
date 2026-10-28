@@ -87,7 +87,8 @@ check "vitrina has no login shell" test "$(getent passwd vitrina | cut -d: -f7)"
 check "vitrina is not in sudo" bash -c "! id -nG vitrina | grep -qw sudo"
 check "/etc/vitrina is root-only" test "$(stat -c '%U %a' /etc/vitrina)" = "root 700"
 check "unit runs as vitrina" test "$(systemctl show -p User --value vitrina-api)" = vitrina
-check "unit pins HOST=127.0.0.1" bash -c "systemctl show -p Environment --value vitrina-api | tr ' ' '\n' | grep -qx HOST=127.0.0.1"
+# In ExecStart, not Environment=: an EnvironmentFile value would override that.
+check "unit pins HOST=127.0.0.1 in ExecStart" bash -c "systemctl show -p ExecStart --value vitrina-api | grep -q 'HOST=127.0.0.1 PORT=3000 /usr/local/bin/node'"
 check "unit is enabled" systemctl is-enabled vitrina-api
 # systemd's own scale: SAFE or OK passes; MEDIUM and worse fail and say why.
 level=$(systemd-analyze security vitrina-api.service 2>/dev/null | grep -oE 'Overall exposure level for vitrina-api.service: [0-9.]+ [A-Z]+' | awk '{print $(NF-1), $NF}')
