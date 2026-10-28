@@ -93,6 +93,24 @@ describe("a store that accepts the connection and never answers", () => {
   });
 });
 
+describe("put is bounded by its signal — §9.7's deadline, owned by the route", () => {
+  it("rejects UNAVAILABLE once the signal aborts, against a store that took the body and never answers", CASE, async () => {
+    const store = createObjectStore(tracked(createS3Client(storage())), "b", PER_CALL_MS);
+    const controller = new AbortController();
+    const abortAt = 300;
+    setTimeout(() => controller.abort(new Error("upload deadline")), abortAt);
+
+    const started = Date.now();
+    await assert.rejects(
+      store.put("media/x/asset", Readable.from([Buffer.alloc(1024, 1)]), 1024, controller.signal),
+      (error) => error instanceof StorageError && error.code === "UNAVAILABLE",
+    );
+    const took = Date.now() - started;
+    assert.ok(took >= abortAt - 20, `rejected after ${took} ms, before the abort — something else bounded it`);
+    assert.ok(took < abortAt + 1_000, `rejected ${took} ms after start, long after the abort at ${abortAt}`);
+  });
+});
+
 describe("put is not bounded by the per-call timeout", () => {
   it("an upload that streams for longer than it still lands", CASE, async () => {
     // A PutObject's headers arrive after its body, so a per-call bound would
@@ -115,7 +133,7 @@ describe("put is not bounded by the per-call timeout", () => {
         })(),
       );
       const started = Date.now();
-      await store.put("media/x/asset", body, parts * 1024);
+      await store.put("media/x/asset", body, parts * 1024, new AbortController().signal);
       assert.ok(Date.now() - started > 3 * PER_CALL_MS, "the body did not outlast the per-call timeout");
     } finally {
       store200.closeAllConnections();

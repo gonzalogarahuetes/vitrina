@@ -115,7 +115,7 @@ const drain = async (readable) => {
 };
 const putViaRelay = async (key, buf) => {
   written.add(key);
-  await store.put(key, streamOf(buf), buf.length);
+  await store.put(key, streamOf(buf), buf.length, AbortSignal.timeout(60_000));
 };
 
 after(async () => {
@@ -233,7 +233,7 @@ test("a write to a misspelled bucket fails, and creates nothing", async () => {
   let created = false;
   try {
     await assert.rejects(verifyBucket(s3, typo, storage.endpoint), "boot check passed on a bucket that should not exist");
-    await assert.rejects(typoStore.put(`${PREFIX}/typo`, streamOf(randomBytes(1024)), 1024), "a PUT to a misspelled bucket succeeded");
+    await assert.rejects(typoStore.put(`${PREFIX}/typo`, streamOf(randomBytes(1024)), 1024, AbortSignal.timeout(60_000)), "a PUT to a misspelled bucket succeeded");
     const status = await s3.send(new HeadBucketCommand({ Bucket: typo })).then(() => 200, (e) => e.$metadata?.httpStatusCode);
     created = status === 200;
     assert.equal(status, 404, `after the failed PUT, HEAD on the misspelled bucket answered ${status}`);

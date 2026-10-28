@@ -42,7 +42,12 @@ class S3ObjectStore implements ObjectStore {
     this.bounded = { requestTimeout: requestTimeoutMs };
   }
 
-  async put(key: ObjectKey, body: Readable, length: number): Promise<void> {
+  async put(
+    key: ObjectKey,
+    body: Readable,
+    length: number,
+    signal: AbortSignal,
+  ): Promise<void> {
     try {
       const command = new PutObjectCommand({
         Key: key,
@@ -51,7 +56,10 @@ class S3ObjectStore implements ObjectStore {
         ContentLength: length,
         ContentType: "application/octet-stream",
       });
-      await this.client.send(command);
+      // The per-call `requestTimeout` the other methods use would cut a slow
+      // upload: a PUT's headers arrive only after its body. The route's
+      // deadline, as a signal, bounds it instead; an abort lands in the catch.
+      await this.client.send(command, { abortSignal: signal });
     } catch (error) {
       if (error instanceof StorageError) throw error;
       throw new StorageError("UNAVAILABLE", {
