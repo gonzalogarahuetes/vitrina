@@ -49,8 +49,13 @@ const plain = (url) =>
     });
   const ours = await preflight(APP);
   expect(ours.headers.get("access-control-allow-origin") === APP, `CORS admits exactly ${APP}`, ours.headers.get("access-control-allow-origin"));
-  const theirs = await preflight("https://evil.example");
-  expect(!theirs.headers.get("access-control-allow-origin"), "CORS admits no other origin", theirs.headers.get("access-control-allow-origin"));
+  // @fastify/cors with a string origin sends that fixed value to everyone; it
+  // is the browser that refuses a page whose own origin is not the one named.
+  // So the property is: never the asking origin, never "*" (measured on the
+  // first deploy, where an "absent" expectation failed against a correct API).
+  const foreign = "https://evil.example";
+  const theirs = (await preflight(foreign)).headers.get("access-control-allow-origin");
+  expect(theirs !== foreign && theirs !== "*", "CORS admits no other origin (never reflects it, never *)", theirs);
 }
 
 // --- the app ----------------------------------------------------------------
