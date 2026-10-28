@@ -167,6 +167,51 @@ export function buildUseCases(
   };
 }
 
+/**
+ * Bound on opening a TCP connection to the store, per attempt. The SDK's
+ * default retry makes three attempts, so a store that never accepts costs a
+ * request about three times this.
+ */
+export const STORE_CONNECTION_TIMEOUT_MS = 5_000;
+
+/**
+ * The S3 client, configured once. Timeouts, measured against
+ * @smithy/node-http-handler 4.9.13 rather than read from its documentation:
+ *
+ * - `connectionTimeout` bounds the TCP connect. Set here, for every call.
+ * - `requestTimeout` is time to the response HEADERS, and without
+ *   `throwOnRequestTimeout` it only logs a warning: a hung store stays hung.
+ *   So the flag is set here and the number is per call (object-store.ts), not
+ *   client-wide — a `PutObject`'s headers arrive only after the whole upload
+ *   has streamed, so one client-wide number either kills real uploads or
+ *   bounds nothing else. `put`'s bound is its abort signal, tied to §9.7's
+ *   deadline.
+ * - `socketTimeout` is NOT set, deliberately. At 6000 ms or more its
+ *   registration is deferred three seconds and cancelled if headers arrive
+ *   first, so it does not cover a store that stalls mid-body; below that it
+ *   would fail any upload whose client pauses a few seconds, preempting §9.7.
+ *   A store that stalls mid-body after sending headers is therefore unbounded
+ *   here — recorded, not solved.
+ */
+export function createS3Client(
+  storage: StorageConfig,
+  connectionTimeoutMs = STORE_CONNECTION_TIMEOUT_MS,
+): S3Client {
+  return new S3Client({
+    endpoint: storage.endpoint,
+    region: storage.region,
+    credentials: {
+      accessKeyId: storage.accessKeyId,
+      secretAccessKey: storage.secretAccessKey,
+    },
+    forcePathStyle: true,
+    requestHandler: {
+      connectionTimeout: connectionTimeoutMs,
+      throwOnRequestTimeout: true,
+    },
+  });
+}
+
 export type CompositionConfig = {
   readonly serverSecret: Uint8Array;
   readonly databaseUrl: string;
@@ -181,15 +226,7 @@ export function buildComposition(config: CompositionConfig): {
   adapters: Adapters;
   useCases: UseCases;
 } {
-  const client = new S3Client({
-    endpoint: config.storage.endpoint,
-    region: config.storage.region,
-    credentials: {
-      accessKeyId: config.storage.accessKeyId,
-      secretAccessKey: config.storage.secretAccessKey,
-    },
-    forcePathStyle: true,
-  });
+  const client = createS3Client(config.storage);
   const pool = new Pool({ connectionString: config.databaseUrl });
   const adapters = {
     owners: createOwnerRepository(pool),

@@ -23,12 +23,23 @@ import { Readable } from "node:stream";
  * Named for the protocol, not the deployment: SeaweedFS in compose, Hetzner
  * in production (brief §12). The port's contract is documented there.
  */
+/**
+ * Time to the store's response headers on `head`, `get`, `remove` and the
+ * boot check, per attempt (three attempts by the SDK's default retry). It
+ * throws only because createS3Client sets `throwOnRequestTimeout`; without
+ * that the SDK logs a warning and waits forever. Not on `put`: its headers
+ * come after the upload body, so its bound is §9.7's deadline, not this.
+ */
+export const STORE_REQUEST_TIMEOUT_MS = 10_000;
+
 class S3ObjectStore implements ObjectStore {
   private readonly client: S3Client;
   private readonly bucket: string;
-  constructor(client: S3Client, bucket: string) {
+  private readonly bounded: { requestTimeout: number };
+  constructor(client: S3Client, bucket: string, requestTimeoutMs: number) {
     this.client = client;
     this.bucket = bucket;
+    this.bounded = { requestTimeout: requestTimeoutMs };
   }
 
   async put(key: ObjectKey, body: Readable, length: number): Promise<void> {
@@ -55,6 +66,7 @@ class S3ObjectStore implements ObjectStore {
     try {
       const response = await this.client.send(
         new HeadObjectCommand({ Key: key, Bucket: this.bucket }),
+        this.bounded,
       );
       // A 200 without one is a store that cannot answer the question §9.7
       // asks, which is not the same as the object being absent.
@@ -92,7 +104,12 @@ class S3ObjectStore implements ObjectStore {
       input.Range = `bytes=${range.start}-${range.end ?? ""}`;
     }
     try {
-      const response = await this.client.send(new GetObjectCommand(input));
+      // Bounds the wait for headers only; the body that follows is not
+      // (composition-root.ts, createS3Client, says why).
+      const response = await this.client.send(
+        new GetObjectCommand(input),
+        this.bounded,
+      );
 
       const body = response.Body;
       if (!(body instanceof Readable)) {
@@ -145,6 +162,7 @@ class S3ObjectStore implements ObjectStore {
     try {
       await this.client.send(
         new DeleteObjectCommand({ Key: key, Bucket: this.bucket }),
+        this.bounded,
       );
     } catch (error) {
       if (statusOf(error) === 404) return;
@@ -160,8 +178,9 @@ class S3ObjectStore implements ObjectStore {
 export function createObjectStore(
   client: S3Client,
   bucket: string,
+  requestTimeoutMs = STORE_REQUEST_TIMEOUT_MS,
 ): ObjectStore {
-  return new S3ObjectStore(client, bucket);
+  return new S3ObjectStore(client, bucket, requestTimeoutMs);
 }
 
 /**
@@ -182,9 +201,12 @@ export async function verifyBucket(
   client: S3Client,
   bucket: string,
   endpoint: string,
+  requestTimeoutMs = STORE_REQUEST_TIMEOUT_MS,
 ): Promise<void> {
   try {
-    await client.send(new HeadBucketCommand({ Bucket: bucket }));
+    await client.send(new HeadBucketCommand({ Bucket: bucket }), {
+      requestTimeout: requestTimeoutMs,
+    });
   } catch (error) {
     // The SDK's own message names neither, because a HEAD has no body to read
     // a code from — and those are the two things an operator needs here. Both
