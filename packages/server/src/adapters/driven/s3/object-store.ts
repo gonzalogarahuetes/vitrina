@@ -198,8 +198,9 @@ export function createObjectStore(
  * `head` answers absent forever, which §9.7 renders as an upload stuck at
  * `processing`. This is the only thing that makes that noisy — and only until
  * something writes to the wrong name: SeaweedFS creates a bucket on its first
- * `PutObject` (measured), after which this check passes. AWS does not;
- * Hetzner is unverified.
+ * `PutObject` (measured), after which this check passes. AWS does not, and
+ * neither does Hetzner Object Storage: a write to a misspelled bucket fails and
+ * creates nothing (deploy/storage/acceptance.mjs, 27 October 2026).
  *
  * It also lets `head`'s 404 mean one thing afterwards. A `HEAD` carries no
  * response body, so a missing bucket and a missing object are the same status
