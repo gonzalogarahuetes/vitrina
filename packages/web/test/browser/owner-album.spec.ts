@@ -345,7 +345,7 @@ test("a batch never looks frozen: the summary counts the server's ready, the wor
   await page.emulateMedia({ reducedMotion: "no-preference" });
 
   // Navigating away mid-batch: the browser asks first. Staying keeps everything.
-  const asked = page.waitForEvent("dialog");
+  const asked = page.waitForEvent("dialog", { timeout: 15_000 });
   const away = page.goto("about:blank", { timeout: 15_000 }).catch(() => null);
   const dialog = await asked;
   expect(dialog.type()).toBe("beforeunload");
