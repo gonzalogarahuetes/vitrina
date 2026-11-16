@@ -62,8 +62,12 @@ backups. Nothing else is needed.
    ```
    AGE_IDENTITY=~/vitrina-backup.agekey deploy/backup/recover.sh $IP $ADMIN
    ```
-6. **Release.** Its migrations must report `0 applied`.
+6. **Release**: the tag that was live — the newest one deployed (the server
+   that recorded it is gone). Its migrations must report `0 applied`; a tag
+   that adds migrations is refused (no backups here yet), an older one fails
+   (`recorded but missing from disk`).
    ```
+   git checkout vX.Y.Z
    deploy/release/deploy.sh $IP $ADMIN
    deploy/release/verify.sh $IP $ADMIN
    ```
@@ -157,8 +161,8 @@ From nothing, with no backup to restore.
    ssh -t -i $KEY $ADMIN@$IP sudo bash vitrina-server/configure.sh --allow <addresses>
    deploy/server/check-config.sh $IP $ADMIN
    ```
-6. **Release:** `deploy/release/deploy.sh $IP $ADMIN`, then
-   `deploy/release/verify.sh $IP $ADMIN`.
+6. **Release:** tag main `v0.1.0` (§3, deploy a release, step 1), then
+   `deploy/release/deploy.sh $IP $ADMIN` and `deploy/release/verify.sh $IP $ADMIN`.
 7. **Backups:** a new age key (`age-keygen -o ~/vitrina-backup.agekey`, the whole
    file to the password manager; `age-keygen -y` gives the public key), a backup
    bucket in a separate project and location, then 1a step 7.
@@ -170,11 +174,65 @@ From nothing, with no backup to restore.
 
 ## 3. Day-to-day
 
-**Deploy a release** — from a clean, committed tree:
+**Deploy a release.** Only tags on `main` are deployable.
+
+1. **Tag** main and push the tag. Tags never move: a fix is a new tag.
+   ```
+   git checkout main && git pull
+   git tag -a vX.Y.Z -m vX.Y.Z && git push origin vX.Y.Z
+   git checkout vX.Y.Z
+   ```
+2. **Staging** (§5) first if the release adds a migration, or touches
+   accounts, keys or deletion.
+3. **Backup**, if it adds a migration, within the hour before step 4 — the
+   age key from the password manager first, deleted after:
+   ```
+   pnpm infra:up && pnpm infra:wait && pnpm --filter @vitrina/server build
+   AGE_IDENTITY=~/vitrina-backup.agekey deploy/backup/restore-test.sh $IP $ADMIN
+   ```
+   It runs `backup-now.sh` and proves the backup restores. Without a backup
+   under an hour old in the bucket, `deploy.sh` refuses before the server
+   changes.
+4. **Deploy** — `deploy.sh` refuses unless the checkout is a `vX.Y.Z` tag on
+   `origin/main`, also on origin, with a clean tree:
+   ```
+   deploy/release/deploy.sh $IP $ADMIN
+   deploy/release/verify.sh $IP $ADMIN        # optional; restarts the API four times
+   ```
+5. **Tell the testers**: two lines about anything they will see — new,
+   changed or gone. Nothing visible, nothing sent.
+
+**What's live** — prints the tag:
 ```
-deploy/release/deploy.sh $IP $ADMIN
-deploy/release/verify.sh $IP $ADMIN        # optional; restarts the API four times
+deploy/release/live.sh $IP $ADMIN
 ```
+
+**Roll back** — to the release live before this one:
+```
+deploy/release/rollback.sh $IP $ADMIN
+```
+Both `current` links, the API restarted, `/health` awaited, the tag now live
+printed. Refuses when no previous release is recorded, and a second time in a
+row: the rule below covers the previous release, not the one before it. It
+never touches the database: what the newer release migrated stays migrated,
+which is safe only under the migration rule. The older tag then cannot be
+deployed again (`migrate.mjs`: recorded but missing from disk) — fix forward,
+with a new tag.
+
+**The migration rule** — every migration works with the previous release's
+code: add first, use later, remove last. The previous release runs on the new
+schema twice: while `deploy.sh` migrates, before the switch; and after any
+rollback. So a new column is nullable or has a default, and nothing the
+previous release writes violates a new constraint; a column or table goes only
+in a release after the one that stopped reading and writing it; a rename is an
+add, a copy, and two releases later a remove. Enforced where it can be: the
+backup in step 3, and staging's rollback (§5 step 9). The rest is review.
+
+**Once, by violation** — the guards that need a server:
+- rollback with nothing before: §5 step 8, on staging;
+- an app built for another host: §5 step 8, on staging;
+- the backup rule: the first release with a migration, step 4 before step 3 —
+  `deploy.sh` must refuse, and the server is unchanged (`live.sh`).
 
 **Add an address to the allowlist** — the list is rewritten whole, so give every
 address, old and new:
@@ -221,6 +279,9 @@ Names only. Values live where each line says.
 - accounts: Hetzner, DNS provider, Better Stack
 
 **On the server, written by scripts, root-only**
+- `/opt/vitrina/history` — the last two releases that went live, the live one
+  last (release.sh, rollback-server.sh; readable by all). What's live is the
+  `current` links: `live.sh`
 - `/etc/vitrina/site.env` — the two hostnames (provision.sh)
 - `/etc/vitrina/api.env` — origin, database URL, server secret, media bucket (configure.sh)
 - `/etc/vitrina/signup.env` — the allowlist (configure.sh)
@@ -232,8 +293,94 @@ Names only. Values live where each line says.
 - during a recovery only: `~/.vitrina/backup-bucket.env`
   (names: `deploy/backup/backup-bucket.env.example`), `~/vitrina-backup.agekey`
 - during a rehearsal only: `~/.vitrina/rehearsal-storage.env`
+- during staging only: `~/.vitrina/staging-storage.env`, and the recovery files above
 
 **Schedule**
 - nightly backup: 03:15 UTC (+ up to 10 min); retention and minimum kept: in `backup.env`
 - automatic security updates daily; reboots when needed at 04:00 UTC
 - journald keeps 14 days
+
+---
+
+## 5. Staging, on demand
+
+A throwaway copy of production for one release: built, used, deleted the same
+day. **When:** the release adds a migration, or touches accounts, keys or
+deletion. Not otherwise.
+
+It is §1b's rehearsal with the candidate deployed on it:
+
+- **its own** Hetzner project, server, bucket and bucket credentials, and two
+  temporary hostnames. Production's media and backup credentials stay on the
+  Mac (`copy-media.mjs` and `recover.sh` read with them); the staging server
+  never holds them;
+- production's database (the newest backup) and a copy of its photos —
+  ciphertext;
+- **production's server secret, the one exception.** The restored owners'
+  password hashes are peppered with it: without it nobody signs in. It arrives
+  only through `configure.sh --restore-secret`, pasted from the password
+  manager, and exists only in staging's `/etc/vitrina/api.env`. Beside the
+  database copy it makes staging as sensitive as production. **The owner
+  deletes it**, by deleting the server in step 10, the same day;
+- no backups and no monitoring. The backup rule does not apply here: its API
+  host is not production's, and `release.sh` says so.
+
+Use a **new terminal window** for all of it, with `IP` set to the staging
+server's; close it at the end. A deploy built in the wrong window is refused
+before anything changes (`release.sh`: the app was built for another host).
+
+1. **Names:** `export VITRINA_APP_HOST=stg-app.<domain> VITRINA_API_HOST=stg-api.<domain>`
+2. **Hetzner:** a new project, e.g. `staging-vX.Y.Z`: a server as in 1a step 1,
+   an empty private bucket and S3 credentials for it, in
+   `~/.vitrina/staging-storage.env` (names: `deploy/storage/storage.env.example`,
+   `chmod 600`). Set `IP`.
+3. **DNS:** A and AAAA records for the two temporary names only (1b step 3).
+4. **Provision:** 1b step 4.
+5. **Photos:**
+   ```
+   node deploy/backup/copy-media.mjs ~/.vitrina/storage.env ~/.vitrina/staging-storage.env
+   ```
+6. **Configure:** with the staging bucket's values, production's secret, the owners' addresses:
+   ```
+   deploy/server/push.sh $IP $ADMIN
+   ssh -t -i $KEY $ADMIN@$IP sudo bash vitrina-server/configure.sh --restore-secret --allow <addresses>
+   deploy/server/check-config.sh $IP $ADMIN
+   ```
+7. **Database:** production's newest backup. For a migration release, take §3's
+   step 3 against production first: that backup is the one restored here, and
+   it opens the hour for production's deploy (past the hour, take it again).
+   ```
+   AGE_IDENTITY=~/vitrina-backup.agekey deploy/backup/recover.sh $IP $ADMIN
+   ```
+8. **Releases:** production's live tag first (`live.sh <production IP> $ADMIN`),
+   then the candidate. While production is `untagged`, tag the commit its
+   release name ends with, if it is on main; otherwise deploy the candidate
+   alone, and step 9 has nothing to roll back to.
+   ```
+   git checkout <live tag> && deploy/release/deploy.sh $IP $ADMIN   # 0 applied
+   git checkout vX.Y.Z
+   deploy/release/rollback.sh $IP $ADMIN                             # must refuse: nothing before
+   (unset VITRINA_API_HOST VITRINA_APP_HOST; deploy/release/deploy.sh $IP $ADMIN)  # must refuse: built for production
+   deploy/release/deploy.sh $IP $ADMIN                               # applies the new migrations
+   deploy/release/verify.sh $IP $ADMIN
+   ```
+   A checkout's deploy scripts are its own: the live tag deploys with the
+   scripts it was tagged with. The two refusals are once only (§3, once by
+   violation), from the candidate's checkout. Then, on a phone at
+   `https://$VITRINA_APP_HOST`: sign in as an owner, and walk what the release
+   touches — the account, key or deletion flow.
+9. **The migration rule** (migration releases): the previous release on the new schema.
+   ```
+   deploy/release/rollback.sh $IP $ADMIN     # back to the live tag; the migrations stay
+   deploy/release/verify.sh $IP $ADMIN
+   ```
+   A failure here is the migration breaking the rule: fix it before production.
+10. **Teardown**, the same day:
+    - Hetzner: delete the staging server — production's server secret and
+      database copy go with it — its bucket and credentials, and the project;
+    - DNS: delete the two temporary records;
+    - Mac: delete `~/.vitrina/staging-storage.env`, `~/.vitrina/backup-bucket.env`
+      and `~/vitrina-backup.agekey`; `ssh-keygen -R $IP`; close the window;
+    - password manager: delete the staging sudo password.
+
+Then §3, deploy a release, step 4, in production's window.
