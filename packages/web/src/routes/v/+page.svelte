@@ -6,6 +6,7 @@
    */
   import { onMount } from "svelte";
   import { api } from "$lib/api";
+  import { followHistory } from "$lib/history";
   import { copy, language, watermarkLine } from "$lib/copy/language.svelte";
   import { parseInvite } from "$lib/invite/parse";
   import { openInviteKey, openPassphraseKey } from "$lib/keys/open";
@@ -53,11 +54,14 @@
     });
     session = s;
     const unsubscribe = s.subscribe((next) => (ui = next));
+    // Browser Back follows the screens. Before start: a reload on the viewer goes back to the grid's entry first.
+    const unfollow = followHistory(s, window.history, window);
     const online = (): void => s.retryOffline();
     window.addEventListener("online", online);
     s.start(fragment);
     return () => {
       window.removeEventListener("online", online);
+      unfollow();
       unsubscribe();
       s.dispose();
     };

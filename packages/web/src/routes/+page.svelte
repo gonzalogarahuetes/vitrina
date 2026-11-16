@@ -6,6 +6,7 @@
    */
   import { onMount } from "svelte";
   import { api } from "$lib/api";
+  import { followHistory } from "$lib/history";
   import { copy, language } from "$lib/copy/language.svelte";
   import * as ownerKeys from "$lib/keys/owner-open";
   import { OwnerSession, type State } from "$lib/owner/session";
@@ -75,11 +76,14 @@
     });
     session = s;
     const unsubscribe = s.subscribe((next) => (ui = next));
+    // Browser Back follows the screens. Before start: a reload deeper down goes back to the top first.
+    const unfollow = followHistory(s, window.history, window);
     const online = (): void => s.retryOffline();
     window.addEventListener("online", online);
     s.start();
     return () => {
       window.removeEventListener("online", online);
+      unfollow();
       unsubscribe();
       s.dispose();
     };

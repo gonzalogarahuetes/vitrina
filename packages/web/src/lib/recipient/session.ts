@@ -630,4 +630,16 @@ export class RecipientSession {
     a.viewer.picture?.close();
     this.set({ ...a, viewer: null });
   }
+
+  // ── The browser's Back (lib/history.ts) ────────────────────────────────────
+
+  /** The grid is the top; the viewer is one below it. Every other screen adds nothing. */
+  get depth(): number {
+    return this.album()?.viewer != null ? 1 : 0;
+  }
+
+  /** Back: the viewer's own close. Anywhere else there is nothing to go back to inside the app. */
+  back(): void {
+    if (this.album()?.viewer != null) this.closeViewer();
+  }
 }

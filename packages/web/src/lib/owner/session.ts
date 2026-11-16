@@ -1524,6 +1524,67 @@ export class OwnerSession {
     this.toSignin("signed-out");
   }
 
+  // ── The browser's Back (lib/history.ts) ────────────────────────────────
+
+  /**
+   * How deep this screen sits in history. The album list is the top; an
+   * album is one below it; its viewer, review step, remove confirmation and
+   * leave confirmation one below that, as are its invite and people screens;
+   * the access log, and the invite's and people's sheets, one below those. An
+   * open sheet on the list or on unlock is one level. Sign-in, signup, unlock
+   * and the message screens add nothing.
+   */
+  get depth(): number {
+    const s = this.state.screen;
+    switch (s.kind) {
+      case "unlock":
+        return s.signingOut ? 1 : 0;
+      case "albums":
+        return s.create === "closed" ? 0 : 1;
+      case "album":
+        return s.viewer !== null || s.review !== null || s.confirm !== null || s.leaving ? 2 : 1;
+      case "invite":
+        return s.leaving ? 3 : 2;
+      case "people":
+        return s.revoke !== null ? 3 : 2;
+      case "log":
+        return 3;
+      default:
+        return 0;
+    }
+  }
+
+  /**
+   * Back: what the screen's own back or cancel control does, through the
+   * same method and its guards. A sheet closes first; then the screen leaves,
+   * unless it asks first or refuses.
+   */
+  back(): void {
+    const s = this.state.screen;
+    switch (s.kind) {
+      case "unlock":
+        if (s.signingOut) this.askUnlockSignOut(false);
+        return;
+      case "albums":
+        if (s.create !== "closed") this.closeCreate();
+        return;
+      case "album":
+        if (s.confirm !== null) return this.cancelRemove();
+        if (s.leaving) return this.stayInAlbum();
+        if (s.review !== null) return this.cancelReview();
+        if (s.viewer !== null) return this.closeViewer();
+        return this.leaveAlbum();
+      case "invite":
+        return s.leaving ? this.askLeaveInvite(false) : this.leaveInvite();
+      case "people":
+        return s.revoke !== null ? this.cancelRevoke() : this.leavePeople();
+      case "log":
+        return this.closeLog();
+      default:
+        return;
+    }
+  }
+
   // ── §3.12 Session expiry ───────────────────────────────────────────────
 
   private scheduleExpiry(): void {
