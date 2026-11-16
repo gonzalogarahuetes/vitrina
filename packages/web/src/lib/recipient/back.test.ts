@@ -4,6 +4,7 @@
  * history followed into a fake session history.
  */
 import { describe, expect, it } from "vitest";
+import { DEPTH_KEY, captureStartDepth } from "$lib/history";
 import { FakeHistory, follow } from "$lib/history.test-support";
 import { PASS_FRAGMENT, PASSPHRASE_WORDS, QR_FRAGMENT, harness, settle } from "./harness.test-support";
 
@@ -94,6 +95,25 @@ describe("Back on the recipient path", () => {
     history.back();
     await settle();
     expect(history.left).toBe(true);
+  });
+
+  it("a reload whose entry SvelteKit rewrote without the marker: the depth read before the router started still takes it back", async () => {
+    const before = await onGrid();
+    await act(before, () => before.h.session.openViewer(0));
+    const history = new FakeHistory(before.history.entries, before.history.index);
+    // hooks.client.ts's init, then SvelteKit's first navigation: its own keys only.
+    captureStartDepth(history);
+    const { [DEPTH_KEY]: _dropped, ...sveltekit } = history.state as Record<string, unknown>;
+    history.replaceState(sveltekit, "");
+    const o = await onGrid(history);
+    expect(history.index).toBe(0);
+    history.forward();
+    await settle();
+    expect(at(o), "Forward reopens nothing").toBe("grid");
+    expect(history.index).toBe(0);
+    history.back();
+    await settle();
+    expect(history.left, "one Back from the grid leaves").toBe(true);
   });
 
   it("revoked from the viewer: the revoked screen at the top; Forward and Back reopen nothing", async () => {

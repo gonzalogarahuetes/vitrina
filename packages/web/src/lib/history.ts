@@ -25,6 +25,11 @@
  * DEPTH_KEY, holding 1, 2 or 3, and nothing else. No URL is ever passed, so
  * the address never changes. (`vite dev` logs SvelteKit's one-time warning
  * about the native calls; that warning is expected.)
+ *
+ * A reload keeps the entry it was on, marker included, but SvelteKit's first
+ * navigation then rewrites that entry's state with its own keys only. So the
+ * depth is read in hooks.client.ts's `init`, before the router starts
+ * (captureStartDepth), and written back onto the entry when following begins.
  */
 
 export const DEPTH_KEY = "vitrina:depth";
@@ -34,6 +39,7 @@ export const MAX_DEPTH = 3;
 export type HistoryLike = {
   readonly state: unknown;
   pushState(data: unknown, unused: string): void;
+  replaceState(data: unknown, unused: string): void;
   go(delta: number): void;
 };
 
@@ -65,10 +71,24 @@ function marked(state: unknown, depth: number): Record<string, unknown> {
   return { ...rest, [DEPTH_KEY]: depth };
 }
 
+let startDepth: number | null = null;
+
+/** From hooks.client.ts's `init`: the depth of the entry this document loaded on, before SvelteKit rewrites its state. */
+export function captureStartDepth(history: { readonly state: unknown }): void {
+  startDepth = depthOf(history.state);
+}
+
 /** Keeps `history` at `session`'s depth until the returned function is called. */
 export function followHistory(session: Backable, history: HistoryLike, target: PopstateTarget): () => void {
   /** The depth of the entry history is on, or will be on once a pending go() lands. */
   let at = depthOf(history.state);
+  // The first page mounted in this document: the depth it loaded at, if SvelteKit has since dropped the marker.
+  const loadedAt = startDepth;
+  startDepth = null;
+  if (loadedAt !== null && loadedAt > at) {
+    history.replaceState(marked(history.state, loadedAt), "");
+    at = loadedAt;
+  }
   /** A go() of ours has not landed yet: its popstate is ours, not the person's. */
   let traversing = false;
   /** Asking the session to go back: hold reconciling until it has answered. */

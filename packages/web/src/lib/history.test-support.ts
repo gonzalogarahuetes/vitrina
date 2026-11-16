@@ -35,6 +35,11 @@ export class FakeHistory {
     this.index++;
   }
 
+  replaceState(data: unknown, unused: string, url?: string): void {
+    if (unused !== "" || url !== undefined) throw new Error("the URL must never change");
+    this.entries[this.index] = structuredClone(data);
+  }
+
   go(delta: number): void {
     this.gos.push(delta);
     this.traverse(delta);
