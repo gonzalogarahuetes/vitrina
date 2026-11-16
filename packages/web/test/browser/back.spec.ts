@@ -68,7 +68,7 @@ async function settled(page: Page, c: Check, depth: number, what: string): Promi
   expect(where.search, `${what}: no query`).toBe("");
   expect(where.path, `${what}: the path never changes`).toBe(c.path);
   expect(historyStateFindings(where.state), `${what}: history.state`).toEqual([]);
-  expect(storageViolations(await dumpStorage(page), c.secrets(), { owner: c.owner, recipientInvite: c.recipientInvite }), `${what}: storage`).toEqual([]);
+  expect(storageViolations(await dumpStorage(page), c.secrets(), { owner: c.owner === true, recipientInvite: c.recipientInvite }), `${what}: storage`).toEqual([]);
 }
 
 /** Back, as the browser's button. Same-document entries fire popstate and nothing loads. */
