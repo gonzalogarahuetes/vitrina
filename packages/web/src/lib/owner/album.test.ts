@@ -422,13 +422,13 @@ describe("upload (flows §3.6)", () => {
 
 // ── §3.6 The batch summary ───────────────────────────────────────────────
 
-/** Every batch summary the screen showed, in order, with repeats collapsed: `finished/total` and `!failed`, or null. */
+/** Every batch summary the screen showed, in order, with repeats collapsed: `finished/total` and `!failed`, `end !n` for a closing line, or null. */
 function batches(h: ReturnType<typeof harness>): (string | null)[] {
   const out: (string | null)[] = [];
   for (const st of h.states) {
     if (st.screen.kind !== "album") continue;
     const b = st.screen.batch;
-    const v = b === null ? null : `${b.finished}/${b.total}${b.failed > 0 ? ` !${b.failed}` : ""}`;
+    const v = b === null ? null : !b.running ? `end !${b.failed}` : `${b.finished}/${b.total}${b.failed > 0 ? ` !${b.failed}` : ""}`;
     if (out.length === 0 || out[out.length - 1] !== v) out.push(v);
   }
   return out;
@@ -463,7 +463,7 @@ describe("the batch summary (flows §3.6)", () => {
     for (const [, b] of afterPuts) expect(b.finished).toBe(0);
     // Polling gave up with the row still processing: the batch is over, and it was never counted.
     expect(album(h).items.at(-1)).toMatchObject({ status: "processing", local: null });
-    expect(batches(h)).toEqual([null, "0/1", null]);
+    expect(batches(h)).toEqual([null, "0/1", "end !1"]);
   });
 
   it("photos sent while a batch runs join it: one batch, ending when they are done too", async () => {
@@ -474,10 +474,10 @@ describe("the batch summary (flows §3.6)", () => {
     await send(h, [photo("one.jpg")]);
     await settle();
     expect(h.session.current.offline).toBe(true);
-    expect(album(h).batch).toEqual({ total: 1, finished: 0, failed: 0 });
+    expect(album(h).batch).toEqual({ running: true, total: 1, finished: 0, failed: 0 });
     await send(h, [photo("two.jpg"), photo("three.jpg")]);
     await settle();
-    expect(album(h).batch).toEqual({ total: 3, finished: 0, failed: 0 });
+    expect(album(h).batch).toEqual({ running: true, total: 3, finished: 0, failed: 0 });
     h.session.retryOffline();
     await settle();
     expect(batches(h)).toEqual([null, "0/1", "0/3", "1/3", "2/3", "3/3", null]);
@@ -492,9 +492,9 @@ describe("the batch summary (flows §3.6)", () => {
     await settle();
     // The first failed on the server's word; the second is held mid-flight.
     expect(album(h).items.at(-2)).toMatchObject({ status: "failed", resendable: true });
-    expect(album(h).batch).toEqual({ total: 2, finished: 1, failed: 1 });
+    expect(album(h).batch).toEqual({ running: true, total: 2, finished: 1, failed: 1 });
     h.session.resendPhoto("local-1");
-    expect(album(h).batch, "the resend joins: same batch, no longer failed").toEqual({ total: 2, finished: 0, failed: 0 });
+    expect(album(h).batch, "the resend joins: same batch, no longer failed").toEqual({ running: true, total: 2, finished: 0, failed: 0 });
     h.session.retryOffline();
     await settle();
     expect(batches(h)).toEqual([null, "0/2", "1/2 !1", "0/2", "1/2", "2/2", null]);
@@ -504,7 +504,7 @@ describe("the batch summary (flows §3.6)", () => {
     h.override(`PUT /v1/media/${M3}/asset`, failedReport(M3));
     await send(h, [photo("three.jpg")]);
     await settle();
-    expect(batches(h)).toEqual([null, "0/1", "1/1 !1", null]);
+    expect(batches(h)).toEqual([null, "0/1", "1/1 !1", "end !1"]);
     h.states.length = 0;
     h.session.resendPhoto("local-3");
     await settle();
@@ -527,12 +527,62 @@ describe("the batch summary (flows §3.6)", () => {
     await send(h, [photo("one.jpg"), photo("two.jpg")]);
     await settle();
     expect(album(h).items.at(-2)?.localFailure).not.toBeNull();
-    expect(album(h).batch).toEqual({ total: 2, finished: 1, failed: 1 });
+    expect(album(h).batch).toEqual({ running: true, total: 2, finished: 1, failed: 1 });
     h.session.dismissPhoto("local-1");
-    expect(album(h).batch).toEqual({ total: 2, finished: 1, failed: 1 });
+    expect(album(h).batch).toEqual({ running: true, total: 2, finished: 1, failed: 1 });
     h.session.retryOffline();
     await settle();
-    expect(batches(h).slice(-2)).toEqual(["2/2 !1", null]);
+    expect(batches(h).slice(-2)).toEqual(["2/2 !1", "end !1"]);
+  });
+
+  it("a batch ending with one failure keeps one closing line with that count, and leaving does not ask", async () => {
+    const h = harness({ stored: STORED });
+    await inAlbum(h);
+    h.override(`PUT /v1/media/${M2}/asset`, failedReport(M2));
+    await send(h, [photo("one.jpg"), photo("two.jpg"), photo("three.jpg")]);
+    await settle();
+    expect(album(h).batch).toEqual({ running: false, total: 3, finished: 3, failed: 1 });
+    // Not busy: leaving does not ask.
+    h.session.leaveAlbum();
+    expect(h.screen().kind).toBe("albums");
+  });
+
+  it("a batch ending with an item still processing when polling stopped keeps the closing line too", async () => {
+    const h = harness({ stored: STORED });
+    await inAlbum(h);
+    h.delayReady.set(M1, 100);
+    await send(h, [photo("one.jpg"), photo("two.jpg")]);
+    await settle();
+    expect(album(h).items.at(-2)).toMatchObject({ status: "processing", local: null });
+    expect(album(h).batch).toEqual({ running: false, total: 2, finished: 1, failed: 1 });
+    // A new batch replaces it.
+    await send(h, [photo("three.jpg")]);
+    expect(album(h).batch).toMatchObject({ running: true, total: 1 });
+    await settle();
+    expect(album(h).batch).toBeNull();
+  });
+
+  it("a batch where everything reached ready leaves nothing behind", async () => {
+    const h = harness({ stored: STORED });
+    await inAlbum(h);
+    await send(h, [photo("one.jpg"), photo("two.jpg")]);
+    await settle();
+    expect(album(h).items.slice(-2).map((i) => i.status)).toEqual(["ready", "ready"]);
+    expect(album(h).batch).toBeNull();
+  });
+
+  it("the closing line goes when the album is left", async () => {
+    const h = harness({ stored: STORED });
+    await inAlbum(h);
+    h.override(`PUT /v1/media/${M1}/asset`, failedReport(M1));
+    await send(h, [photo()]);
+    await settle();
+    expect(album(h).batch).toMatchObject({ running: false, failed: 1 });
+    h.session.leaveAlbum();
+    expect(h.screen().kind).toBe("albums");
+    h.session.openAlbum(ALBUM_A);
+    await settle();
+    expect(album(h).batch).toBeNull();
   });
 
   it("the batch is there exactly while the album is busy: leaving asks while it shows", async () => {

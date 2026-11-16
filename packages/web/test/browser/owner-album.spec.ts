@@ -337,6 +337,8 @@ test("a batch never looks frozen: the summary counts the server's ready, the wor
   await expect(cells(page).nth(0).locator(".activity")).toBeVisible();
   await expect(cells(page).nth(1)).toHaveAttribute("data-state", "queued");
   await expect(cells(page).locator(".activity")).toHaveCount(1);
+  // The cells are not live regions: the summary alone announces progress.
+  await expect(cells(page).getByRole("status")).toHaveCount(0);
   // It moves, unless the person asked for less motion: then it is still.
   const animation = () => cells(page).nth(0).locator(".activity span").evaluate((e) => getComputedStyle(e).animationName);
   expect(await animation()).not.toBe("none");
@@ -364,9 +366,25 @@ test("a batch never looks frozen: the summary counts the server's ready, the wor
   await expect(summary).toHaveCount(0, { timeout: 30_000 });
   await expect(page.locator('li.cell[data-state="ready"]')).toHaveCount(3);
   await expect(cells(page).locator(".activity")).toHaveCount(0);
+
+  // A batch that ends with a photo refused: one closing line stays, with no bar and no "keep open".
+  await page.route(/\/v1\/media\/[0-9a-f-]{36}\/asset$/, (route) =>
+    route.request().method() === "PUT"
+      ? route.fulfill({
+          status: 400,
+          contentType: "application/json",
+          headers: { "access-control-allow-origin": new URL(page.url()).origin },
+          body: JSON.stringify({ code: "VALIDATION_FAILED", message: "x" }),
+        })
+      : route.fallback(),
+  );
+  await add(page, [{ name: "four.jpg", buffer: await phonePhoto(page, 1300, 900, 1) }]);
+  await expect(count).toHaveText(en["upload.batch.failed"](1), { timeout: 30_000 });
+  await expect(bar).toHaveCount(0);
+  await expect(summary.getByText(en["upload.batch.stay"])).toHaveCount(0);
   expect(await violations(), "CSP violations and page errors").toEqual([]);
 
-  // After the batch: leaving does not ask.
+  // After the batch, closing line and all: leaving does not ask.
   let askedAfter = false;
   page.on("dialog", (d) => {
     askedAfter = true;

@@ -288,11 +288,11 @@ export const en = {
   /** Changes only when the count does: it is the live region. */
   "upload.batch.progress": (done: number, total: number) =>
     `Sending photos: ${n_(done)} of ${n_(total)}`,
-  /** The cells say what to do about each one; no reason (api-sketch §9.8). */
+  /** During the batch, and alone as its closing line: failed, or never ready. The cells say what to do; no reason (api-sketch §9.8). */
   "upload.batch.failed": (n: number) =>
     plural(L, n, {
-      one: (k) => `${k} didn't finish.`,
-      other: (k) => `${k} didn't finish.`,
+      one: (k) => `${k} photo hasn't finished uploading.`,
+      other: (k) => `${k} photos haven't finished uploading.`,
     }),
   /** No technical reason, and no claim about security (brief §3). */
   "upload.batch.stay": "Keep this page open until it finishes.",

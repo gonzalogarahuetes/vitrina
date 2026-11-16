@@ -240,8 +240,8 @@ export const es: Copy = {
     `Enviando fotos: ${n_(done)} de ${n_(total)}`,
   "upload.batch.failed": (n: number) =>
     plural(L, n, {
-      one: (k) => `${k} no ha terminado de subirse.`,
-      other: (k) => `${k} no han terminado de subirse.`,
+      one: (k) => `${k} foto no ha terminado de subirse.`,
+      other: (k) => `${k} fotos no han terminado de subirse.`,
     }),
   "upload.batch.stay": "Deja esta página abierta hasta que termine.",
 

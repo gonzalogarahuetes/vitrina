@@ -85,7 +85,9 @@
   const batchText = $derived(
     album.batch === null
       ? ""
-      : album.batch.failed === 0
+      : !album.batch.running
+        ? t["upload.batch.failed"](album.batch.failed)
+        : album.batch.failed === 0
         ? t["upload.batch.progress"](album.batch.finished, album.batch.total)
         : `${t["upload.batch.progress"](album.batch.finished, album.batch.total)} ${t["upload.batch.failed"](album.batch.failed)}`,
   );
@@ -102,7 +104,7 @@
 
   /** Closing or reloading the tab abandons everything in flight (flows §3.6): the browser asks first. */
   function beforeUnload(e: BeforeUnloadEvent): void {
-    if (album.batch === null) return;
+    if (album.batch?.running !== true) return;
     e.preventDefault();
     e.returnValue = "";
   }
@@ -188,12 +190,14 @@
       <section class="batch" aria-label={t["upload.batch.label"]}>
         <!-- The live region holds only the count: it changes when the count does, not with every step of every photo. -->
         <p role="status">{batchText}</p>
-        <progress
-          max={b.total}
-          value={b.finished}
-          aria-label={t["upload.batch.label"]}
-        ></progress>
-        <p class="note">{t["upload.batch.stay"]}</p>
+        {#if b.running}
+          <progress
+            max={b.total}
+            value={b.finished}
+            aria-label={t["upload.batch.label"]}
+          ></progress>
+          <p class="note">{t["upload.batch.stay"]}</p>
+        {/if}
       </section>
     {/if}
 

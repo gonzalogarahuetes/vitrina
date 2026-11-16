@@ -135,7 +135,11 @@ export type AlbumScreen = {
   readonly erasurePending: number;
   /** Asked to leave while uploads are in flight: they stop if the owner goes. */
   readonly leaving: boolean;
-  /** The batch under way: non-null exactly while anything is queued or in flight (`busy`). */
+  /**
+   * The batch under way (`running`, exactly while `busy`), or the closing line of one that ended
+   * with any item not ready. Null otherwise. The closing line stays until the next batch starts or
+   * the album is left.
+   */
   readonly batch: BatchSummary | null;
 };
 
@@ -147,9 +151,12 @@ export type AlbumScreen = {
  * failed on this device: never on a PUT's return (#9, api-sketch §9.7).
  */
 export type BatchSummary = {
+  /** False once the batch has ended: then only `failed` is shown. */
+  readonly running: boolean;
   readonly total: number;
   /** Ready or failed. Failed ones are counted here too, and again in `failed`. */
   readonly finished: number;
+  /** While running: failed so far. Once ended: every item not ready, failed or never settled. */
   readonly failed: number;
 };
 
@@ -317,7 +324,7 @@ export class OwnerAlbum {
       if (now !== null) finished++;
       if (now === "failed") failed++;
     }
-    return { total: batch.size, finished, failed };
+    return { running: true, total: batch.size, finished, failed };
   }
 
   /** `wasBusy` is `busy` from before these were queued: if nothing was, they start a batch; otherwise they join it. */
@@ -717,10 +724,7 @@ export class OwnerAlbum {
       } finally {
         this.pumping = false;
         // Nothing queued or in flight: the batch is over. A stop with jobs left keeps it (busy is still true).
-        if (this.alive && this.queue.length === 0) {
-          this.batch = null;
-          this.show({ batch: null });
-        }
+        if (this.alive && this.queue.length === 0) this.endBatch();
       }
     });
   }
@@ -876,6 +880,17 @@ export class OwnerAlbum {
 
   private canResend(id: string, status: MediaStatus | null): boolean {
     return this.held.has(id) && status !== null && status !== "ready";
+  }
+
+  /** Everything in it reached `ready`: nothing is left to say. Otherwise one closing line counts what did not. */
+  private endBatch(): void {
+    const batch = this.batch;
+    if (batch === null) return;
+    // Brought up to date with the screen first, so each item's last word from the server counts.
+    const { total, finished } = this.tally(this.screen().items);
+    const notReady = [...batch.values()].filter((v) => v !== "ready").length;
+    this.batch = null;
+    this.show({ batch: notReady === 0 ? null : { running: false, total, finished, failed: notReady } });
   }
 
   // ── §3.4, §4.5 Viewer: the full asset, only when shown ─────────────────

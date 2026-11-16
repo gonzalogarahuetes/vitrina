@@ -115,7 +115,8 @@
         <span>{failureText}</span>
       </div>
     {:else if localText !== null}
-      <div class="state busy" role="status">
+      <!-- Not a live region: the batch summary announces progress, not every step of every photo. -->
+      <div class="state busy">
         {#if item.name !== null}<span class="name">{item.name}</span>{/if}
         <span>{localText}</span>
         <!-- Indeterminate: no percentage, because none is known. -->
