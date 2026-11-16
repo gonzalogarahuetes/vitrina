@@ -4,6 +4,7 @@
 # signed-in session needs. Run after deploy.sh; it changes the server for a
 # few minutes and puts everything back:
 #
+#   0. live.sh: the tag it is about to verify
 #   1. public-check.mjs (anonymous: headers, health, CORS, redirects)
 #   2. walk-server.sh open: the HOST violation; a throwaway address invited
 #   3. walk.mjs: that account uploads through Caddy (Content-Length kept,
@@ -31,6 +32,11 @@ marker="vitrina-verify/$id"
 state=$(mktemp)
 trap 'rm -f "$state"' EXIT
 
+echo "== 0. what's live"
+if live=$(bash "$here/live.sh" "$HOST" "$ADMIN_USER"); then echo "verifying $live"
+else echo "FAIL cannot tell what is live (above)"; fails=$((fails + 1)); fi
+
+echo
 echo "== 1. anonymous"
 node "$here/public-check.mjs" || fails=$((fails + 1))
 
@@ -56,4 +62,4 @@ scp -q "${SSH_OPTS[@]}" "$state" "$ADMIN_USER@$HOST:$remote/state.json" &&
 	fails=$((fails + 1))
 
 echo
-if [[ $fails -eq 0 ]]; then echo "All PASS."; else echo "$fails part(s) FAILED (above)"; exit 1; fi
+if [[ $fails -eq 0 ]]; then echo "All PASS, against ${live:-an unknown release}."; else echo "$fails part(s) FAILED (above), against ${live:-an unknown release}"; exit 1; fi

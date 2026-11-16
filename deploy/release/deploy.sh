@@ -1,9 +1,14 @@
 #!/usr/bin/env bash
 #
-# Phase 5: build a commit on the Mac, release it on the server, check it from
-# outside. Fails loudly at the first thing that is not as it should be.
+# Phase 5: build a tagged commit on the Mac, release it on the server, check it
+# from outside. Fails loudly at the first thing that is not as it should be.
 #
-#   deploy/release/deploy.sh <ip> <admin-user>
+#   git checkout vX.Y.Z && deploy/release/deploy.sh <ip> <admin-user>
+#
+# Refuses (tag-check.sh) unless the checkout is a vMAJOR.MINOR.PATCH tag on
+# origin/main with a clean tree. Refuses (release.sh, before the server
+# changes) a release that adds migrations to production's database unless a
+# backup in the bucket is under an hour old — README §3, "The migration rule".
 #
 # Builds: the envelope WASM (the web bundle inlines it), the server, and the
 # web app with VITE_API_ORIGIN=https://$VITRINA_API_HOST (default
@@ -37,10 +42,12 @@ cd "$repo"
 fingerprint=$(ssh-keygen -lf "$KEY.pub" 2>/dev/null | awk '{print $2}')
 ssh-add -l 2>/dev/null | grep -qF "${fingerprint:-none}" || fail "load the key first: ssh-add --apple-use-keychain $KEY"
 
-# What runs on the server is a commit, so the repository can say what it was.
-[[ -z "$(git status --porcelain)" ]] || fail "uncommitted changes — commit first, so the release is a commit"
-commit=$(git rev-parse --short=12 HEAD)
-release="$(date -u +%Y%m%dT%H%M%SZ)-$commit"
+# Only tags on main are deployable, from a clean tree (tag-check.sh). The tag
+# is part of the release's name on the server, which is how live.sh answers
+# "what's live?".
+checked=$(bash "$here/tag-check.sh") || exit 1
+read -r tag commit <<<"$checked"
+release="$(date -u +%Y%m%dT%H%M%SZ)-$tag-$commit"
 
 # pnpm for the server: the version root package.json pins, and the integrity
 # of its native executable as the lockfile records it.
@@ -96,5 +103,9 @@ ssh -t "${SSH_OPTS[@]}" "$ADMIN_USER@$HOST" \
 
 step "from outside"
 node "$here/public-check.mjs"
+step "what's live, asked again"
+live=$(bash "$here/live.sh" "$HOST" "$ADMIN_USER") || fail "could not read what is live"
+[[ "$live" == "$tag" ]] || fail "the server reports $live live, not $tag"
 echo
-echo "released $release"
+echo "released $tag ($release)"
+echo "Last step (README §3): two lines to the testers about anything they will see."
