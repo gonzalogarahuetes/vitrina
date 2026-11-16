@@ -105,7 +105,7 @@ describe("the owner's album copy (flows §3.4, §3.6, §3.7)", () => {
 
   it("nothing says a photo is uploaded or done: only the server's ready is (api-sketch §9.7)", () => {
     expect(album().length).toBeGreaterThan(25);
-    expect(album().filter(([, s]) => /\b(uploaded|upload complete|done|finished uploading)\b/i.test(s) && !/didn't finish uploading|never finished uploading/i.test(s))).toEqual([]);
+    expect(album().filter(([, s]) => /\b(uploaded|upload complete|done|finished uploading)\b/i.test(s) && !/(didn't|hasn't|haven't) finish(ed)? uploading|never finished uploading/i.test(s))).toEqual([]);
   });
 
   it("failures give no reason, because the server sends none (api-sketch §9.8)", () => {

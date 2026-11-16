@@ -235,6 +235,16 @@ export const es: Copy = {
   "upload.uploading": "Enviando…",
   "upload.waiting": "Esperando a que el servidor lo confirme…",
 
+  "upload.batch.label": "Envío de fotos",
+  "upload.batch.progress": (done: number, total: number) =>
+    `Enviando fotos: ${n_(done)} de ${n_(total)}`,
+  "upload.batch.failed": (n: number) =>
+    plural(L, n, {
+      one: (k) => `${k} foto no ha terminado de subirse.`,
+      other: (k) => `${k} fotos no han terminado de subirse.`,
+    }),
+  "upload.batch.stay": "Deja esta página abierta hasta que termine.",
+
   "media.pending": "Empezada, todavía sin terminar",
   "media.processing": "Todavía está llegando",
   "upload.failed":

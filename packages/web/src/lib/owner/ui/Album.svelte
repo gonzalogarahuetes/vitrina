@@ -82,6 +82,16 @@
       : album.items.find((i) => i.key === album.confirm?.key),
   );
 
+  const batchText = $derived(
+    album.batch === null
+      ? ""
+      : !album.batch.running
+        ? t["upload.batch.failed"](album.batch.failed)
+        : album.batch.failed === 0
+        ? t["upload.batch.progress"](album.batch.finished, album.batch.total)
+        : `${t["upload.batch.progress"](album.batch.finished, album.batch.total)} ${t["upload.batch.failed"](album.batch.failed)}`,
+  );
+
   function chosen(): void {
     const files =
       input?.files === null || input?.files === undefined
@@ -90,6 +100,13 @@
     // Cleared at once: the same photo can be chosen again, and the input holds nothing afterwards.
     if (input !== undefined) input.value = "";
     if (files.length > 0) onChoose(files);
+  }
+
+  /** Closing or reloading the tab abandons everything in flight (flows §3.6): the browser asks first. */
+  function beforeUnload(e: BeforeUnloadEvent): void {
+    if (album.batch?.running !== true) return;
+    e.preventDefault();
+    e.returnValue = "";
   }
 
   function statement(
@@ -101,6 +118,8 @@
     return t["remove.checking"];
   }
 </script>
+
+<svelte:window onbeforeunload={beforeUnload} />
 
 <main
   class="screen album"
@@ -165,6 +184,22 @@
       <p class="note">{t["upload.stripped"]}</p>
       <p class="note">{t["upload.downscale"]}</p>
     </div>
+
+    {#if album.batch !== null}
+      {@const b = album.batch}
+      <section class="batch" aria-label={t["upload.batch.label"]}>
+        <!-- The live region holds only the count: it changes when the count does, not with every step of every photo. -->
+        <p role="status">{batchText}</p>
+        {#if b.running}
+          <progress
+            max={b.total}
+            value={b.finished}
+            aria-label={t["upload.batch.label"]}
+          ></progress>
+          <p class="note">{t["upload.batch.stay"]}</p>
+        {/if}
+      </section>
+    {/if}
 
     {#if album.erasurePending > 0}
       <p class="pending" role="status">
@@ -289,6 +324,39 @@
     border-radius: var(--radius);
     background: var(--accent-soft);
     border: 2px solid var(--accent);
+  }
+  .batch {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 14px 16px;
+    border-radius: var(--radius);
+    background: var(--accent-soft);
+    border: 2px solid var(--accent);
+  }
+  .batch p {
+    margin: 0;
+  }
+  .batch progress {
+    appearance: none;
+    width: 100%;
+    height: 12px;
+    border: 0;
+    border-radius: 6px;
+    background: var(--surface-sunk);
+    overflow: hidden;
+  }
+  .batch progress::-webkit-progress-bar {
+    background: var(--surface-sunk);
+    border-radius: 6px;
+  }
+  .batch progress::-webkit-progress-value {
+    background: var(--accent);
+    border-radius: 6px;
+  }
+  .batch progress::-moz-progress-bar {
+    background: var(--accent);
+    border-radius: 6px;
   }
   .sharing {
     display: flex;

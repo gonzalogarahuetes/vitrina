@@ -91,6 +91,8 @@
     return t["upload.stalled"](fmt.stuckFor(now.getTime() - since.getTime()), fmt.stuckSince(since, now));
   });
 
+  /** Something on this device is working on it right now (not just queued): it visibly moves. */
+  const active = $derived(item.local !== null && item.local !== "queued");
   const ready = $derived(item.status === "ready" && item.local === null);
   const removable = $derived(item.id !== null && item.status !== null && item.local === null);
 </script>
@@ -113,9 +115,12 @@
         <span>{failureText}</span>
       </div>
     {:else if localText !== null}
-      <div class="state busy" role="status">
+      <!-- Not a live region: the batch summary announces progress, not every step of every photo. -->
+      <div class="state busy">
         {#if item.name !== null}<span class="name">{item.name}</span>{/if}
         <span>{localText}</span>
+        <!-- Indeterminate: no percentage, because none is known. -->
+        {#if active}<span class="activity" aria-hidden="true"><span></span></span>{/if}
       </div>
     {:else if item.status === "failed"}
       <div class="state failed" role="alert"><span>{item.resendable ? t["upload.failed"] : t["upload.failed.gone"]}</span></div>
@@ -212,6 +217,39 @@
   }
   button.state.failed {
     cursor: pointer;
+  }
+  .activity {
+    position: relative;
+    display: block;
+    height: 6px;
+    border-radius: 3px;
+    background: var(--surface-sunk);
+    overflow: hidden;
+  }
+  .activity span {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    width: 40%;
+    border-radius: 3px;
+    background: var(--accent);
+    animation: slide 1.4s ease-in-out infinite;
+  }
+  @keyframes slide {
+    from {
+      transform: translateX(-100%);
+    }
+    to {
+      transform: translateX(250%);
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    /* Still: a fixed mark, no motion. */
+    .activity span {
+      animation: none;
+      left: 30%;
+    }
   }
   .name {
     font-weight: 700;
