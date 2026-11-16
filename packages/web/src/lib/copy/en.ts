@@ -283,6 +283,20 @@ export const en = {
   /** Sent; not done until the server says ready (#9). */
   "upload.waiting": "Waiting for the server to confirm…",
 
+  // The batch, while anything is queued or in flight (flows §3.6). An item counts once the server says ready or failed (#9).
+  "upload.batch.label": "Sending photos",
+  /** Changes only when the count does: it is the live region. */
+  "upload.batch.progress": (done: number, total: number) =>
+    `Sending photos: ${n_(done)} of ${n_(total)}`,
+  /** The cells say what to do about each one; no reason (api-sketch §9.8). */
+  "upload.batch.failed": (n: number) =>
+    plural(L, n, {
+      one: (k) => `${k} didn't finish.`,
+      other: (k) => `${k} didn't finish.`,
+    }),
+  /** No technical reason, and no claim about security (brief §3). */
+  "upload.batch.stay": "Keep this page open until it finishes.",
+
   // Per item, as the server reports it.
   /** pending, not on this device and not yet old: started somewhere and not finished. */
   "media.pending": "Started, not finished yet",

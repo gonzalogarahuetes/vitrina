@@ -135,6 +135,22 @@ export type AlbumScreen = {
   readonly erasurePending: number;
   /** Asked to leave while uploads are in flight: they stop if the owner goes. */
   readonly leaving: boolean;
+  /** The batch under way: non-null exactly while anything is queued or in flight (`busy`). */
+  readonly batch: BatchSummary | null;
+};
+
+/**
+ * One batch of uploads (flows §3.6). It starts when the queue goes from empty
+ * to non-empty; whatever is sent or sent again while it runs joins it; it ends
+ * when nothing is queued or in flight. `finished` counts an item only once
+ * nothing here is moving it and the server has said `ready` or `failed`, or it
+ * failed on this device: never on a PUT's return (#9, api-sketch §9.7).
+ */
+export type BatchSummary = {
+  readonly total: number;
+  /** Ready or failed. Failed ones are counted here too, and again in `failed`. */
+  readonly finished: number;
+  readonly failed: number;
 };
 
 // ── What it needs from the session ─────────────────────────────────────────
@@ -221,6 +237,8 @@ export class OwnerAlbum {
   private preparing: Original | null = null;
   private pickCount = 0;
   private previewing = false;
+  /** The batch under way, by item key: null while open, else how it settled. Null between batches. */
+  private batch: Map<string, Settled | null> | null = null;
   /** Serialises every full-size decode: previews and preparation never overlap (brief §11). */
   private decodeTurn: Promise<unknown> = Promise.resolve();
 
@@ -273,7 +291,39 @@ export class OwnerAlbum {
   }
 
   private show(patch: Partial<AlbumScreen>): void {
-    this.ctx.show({ ...this.screen(), ...patch });
+    this.put({ ...this.screen(), ...patch });
+  }
+
+  /** Every screen this album shows goes through here, so the batch summary is always of the items shown. */
+  private put(s: AlbumScreen): void {
+    this.ctx.show(this.batch === null ? s : { ...s, batch: this.tally(s.items) });
+  }
+
+  /** Re-reads each batch item's outcome from the screen. Once settled, dismissing or removing it keeps its count. */
+  private tally(items: readonly MediaItem[]): BatchSummary {
+    const batch = this.batch as Map<string, Settled | null>;
+    const shown = new Map(items.map((i) => [i.key, i]));
+    let finished = 0;
+    let failed = 0;
+    for (const [key, was] of batch) {
+      const i = shown.get(key);
+      // Gone before it settled: removed from another tab or device (a 404). Out of the batch.
+      if (i === undefined && was === null) {
+        batch.delete(key);
+        continue;
+      }
+      const now = i === undefined ? was : settled(i);
+      batch.set(key, now);
+      if (now !== null) finished++;
+      if (now === "failed") failed++;
+    }
+    return { total: batch.size, finished, failed };
+  }
+
+  /** `wasBusy` is `busy` from before these were queued: if nothing was, they start a batch; otherwise they join it. */
+  private join(keys: readonly string[], wasBusy: boolean): void {
+    if (!wasBusy || this.batch === null) this.batch = new Map();
+    for (const k of keys) this.batch.set(k, null);
   }
 
   private item(key: string): MediaItem | undefined {
@@ -283,7 +333,7 @@ export class OwnerAlbum {
   private update(key: string, patch: Partial<MediaItem>): boolean {
     const s = this.screen();
     if (!s.items.some((i) => i.key === key)) return false;
-    this.ctx.show({ ...s, items: s.items.map((i) => (i.key === key ? withStall({ ...i, ...patch }, this.ctx.now()) : i)) });
+    this.put({ ...s, items: s.items.map((i) => (i.key === key ? withStall({ ...i, ...patch }, this.ctx.now()) : i)) });
     return true;
   }
 
@@ -291,7 +341,7 @@ export class OwnerAlbum {
     const s = this.screen();
     const gone = s.items.find((i) => i.key === key);
     if (gone?.thumb.kind === "ready") gone.thumb.picture.close();
-    this.ctx.show({ ...s, items: s.items.filter((i) => i.key !== key) });
+    this.put({ ...s, items: s.items.filter((i) => i.key !== key) });
   }
 
   private async call<T>(op: () => Promise<T>): Promise<T> {
@@ -580,6 +630,7 @@ export class OwnerAlbum {
     if (r === null || r.rows.some((row) => row.read === "reading")) return;
     const send = OwnerAlbum.sendable(r.rows);
     if (send.length === 0 || send.some((row) => checkCaption(row.caption) !== "ok")) return;
+    const wasBusy = this.busy;
     const added = r.rows.flatMap((row) => {
       if (row.preview.kind === "ready") row.preview.picture.close();
       const original = this.picked.get(row.key);
@@ -589,6 +640,10 @@ export class OwnerAlbum {
       this.queue.push({ key, original, caption: captionValue(row.caption) });
       return [{ ...blank(key, null), local: "queued" as const, name: original.name }];
     });
+    this.join(
+      added.map((i) => i.key),
+      wasBusy,
+    );
     this.show({ review: null, items: [...s.items, ...added] });
     this.pump();
   }
@@ -640,6 +695,7 @@ export class OwnerAlbum {
   resend(key: string): void {
     const i = this.item(key);
     if (i === undefined || i.id === null || !this.canResend(i.id, i.status) || i.local !== null) return;
+    this.join([key], this.busy);
     this.queue.push({ key, resend: i.id });
     this.update(key, { local: "queued", resendable: false });
     this.pump();
@@ -660,6 +716,11 @@ export class OwnerAlbum {
         for (let job = this.queue.shift(); job !== undefined; job = this.queue.shift()) await this.one(job);
       } finally {
         this.pumping = false;
+        // Nothing queued or in flight: the batch is over. A stop with jobs left keeps it (busy is still true).
+        if (this.alive && this.queue.length === 0) {
+          this.batch = null;
+          this.show({ batch: null });
+        }
       }
     });
   }
@@ -979,6 +1040,21 @@ function blank(key: string, id: string | null): MediaItem {
     size: null,
     caption: null,
   };
+}
+
+type Settled = "ready" | "failed";
+
+/**
+ * How a batch item has settled, on the server's word only: `ready` or `failed`
+ * as last reported, or failed on this device. Null while this device is still
+ * moving it, and for `pending`/`processing` with nothing moving it, which is
+ * not finished (#9).
+ */
+export function settled(i: MediaItem): Settled | null {
+  if (i.local !== null) return null;
+  if (i.localFailure !== null) return "failed";
+  if (i.status === "ready" || i.status === "failed") return i.status;
+  return null;
 }
 
 /** Stalled: not ready, nothing here moving it, and the server's updated_at is old (flows §3.4). */

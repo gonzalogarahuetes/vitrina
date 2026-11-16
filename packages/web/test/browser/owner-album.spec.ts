@@ -303,6 +303,81 @@ test("ready only on the server's word: an item the relay still calls processing 
   await ctx.close();
 });
 
+test("a batch never looks frozen: the summary counts the server's ready, the working cell moves, and leaving asks only while it runs", async ({ browser }) => {
+  test.setTimeout(240_000);
+  const relay = fakeRelay({ expiresInMs: 14 * 24 * 60 * 60 * 1000 });
+  const { ctx, page, violations } = await signedUpInAlbum(browser, relay);
+
+  // Every thumbnail PUT is held until the test lets it through: the relay's answer, delayed.
+  const gates: (() => void)[] = [];
+  await page.route(/\/v1\/media\/[0-9a-f-]{36}\/thumbnail$/, async (route) => {
+    if (route.request().method() !== "PUT") return route.fallback();
+    await new Promise<void>((r) => gates.push(r));
+    await route.fallback();
+  });
+  const letOneThrough = async (): Promise<void> => {
+    await expect.poll(() => gates.length, { timeout: 30_000 }).toBe(1);
+    gates.shift()?.();
+  };
+
+  const files = await Promise.all(["one.jpg", "two.jpg", "three.jpg"].map(async (name, i) => ({ name, buffer: await phonePhoto(page, 1200 + i * 8, 900, 1) })));
+  await add(page, files);
+
+  const summary = page.getByRole("region", { name: en["upload.batch.label"] });
+  const count = summary.getByRole("status");
+  const bar = summary.getByRole("progressbar", { name: en["upload.batch.label"] });
+  await expect(count).toHaveText(en["upload.batch.progress"](0, 3));
+  await expect(summary.getByText(en["upload.batch.stay"])).toBeVisible();
+  await expect(bar).toHaveAttribute("max", "3");
+  await expect(bar).toHaveAttribute("value", "0");
+
+  // The first photo is held on its way: its cell moves, the queued ones do not.
+  await expect.poll(() => gates.length, { timeout: 30_000 }).toBe(1);
+  await expect(cells(page).nth(0)).toHaveAttribute("data-state", "uploading");
+  await expect(cells(page).nth(0).locator(".activity")).toBeVisible();
+  await expect(cells(page).nth(1)).toHaveAttribute("data-state", "queued");
+  await expect(cells(page).locator(".activity")).toHaveCount(1);
+  // It moves, unless the person asked for less motion: then it is still.
+  const animation = () => cells(page).nth(0).locator(".activity span").evaluate((e) => getComputedStyle(e).animationName);
+  expect(await animation()).not.toBe("none");
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  expect(await animation()).toBe("none");
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+
+  // Navigating away mid-batch: the browser asks first. Staying keeps everything.
+  const asked = page.waitForEvent("dialog");
+  const away = page.goto("about:blank", { timeout: 15_000 }).catch(() => null);
+  const dialog = await asked;
+  expect(dialog.type()).toBe("beforeunload");
+  await dialog.dismiss();
+  await away;
+  await expect(count).toHaveText(en["upload.batch.progress"](0, 3));
+
+  // Counted on the server's ready, one at a time.
+  await letOneThrough();
+  await expect(count).toHaveText(en["upload.batch.progress"](1, 3), { timeout: 30_000 });
+  await expect(bar).toHaveAttribute("value", "1");
+  await expect(cells(page).nth(0)).toHaveAttribute("data-state", "ready");
+  await letOneThrough();
+  await expect(count).toHaveText(en["upload.batch.progress"](2, 3), { timeout: 30_000 });
+  await letOneThrough();
+  await expect(summary).toHaveCount(0, { timeout: 30_000 });
+  await expect(page.locator('li.cell[data-state="ready"]')).toHaveCount(3);
+  await expect(cells(page).locator(".activity")).toHaveCount(0);
+  expect(await violations(), "CSP violations and page errors").toEqual([]);
+
+  // After the batch: leaving does not ask.
+  let askedAfter = false;
+  page.on("dialog", (d) => {
+    askedAfter = true;
+    void d.dismiss();
+  });
+  await page.goto("about:blank");
+  expect(askedAfter).toBe(false);
+  expect(page.url()).toBe("about:blank");
+  await ctx.close();
+});
+
 // ── The guards, broken on purpose ─────────────────────────────────────────
 
 test("a canvas that answers PNG: the photo fails on this device and nothing reaches the relay", async ({ browser }) => {

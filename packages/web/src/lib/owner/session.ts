@@ -1143,6 +1143,7 @@ export class OwnerSession {
       chooseRefused: false,
       erasurePending: 0,
       leaving: false,
+      batch: null,
     });
     album.start();
   }
