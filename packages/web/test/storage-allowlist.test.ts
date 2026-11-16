@@ -37,6 +37,11 @@ describe("the storage allowlist", () => {
     ["a cookie", with_({ cookies: "a=1" })],
     ["window.name", with_({ windowName: "x" })],
     ["history.state with a page URL", with_({ historyState: { "sveltekit:history": 1, "sveltekit:pageurl": "https://x/v/" } })],
+    ["a depth marker outside 1–3", with_({ historyState: { "sveltekit:history": 1, "vitrina:depth": 4 } })],
+    ["a depth marker of 0", with_({ historyState: { "sveltekit:history": 1, "vitrina:depth": 0 } })],
+    ["a depth marker as text", with_({ historyState: { "sveltekit:history": 1, "vitrina:depth": "2" } })],
+    ["a depth marker holding an id", with_({ historyState: { "sveltekit:history": 1, "vitrina:depth": "album:6f1c2a8e-3b4d-4e5f-8a9b-0c1d2e3f4a5b" } })],
+    ["a second vitrina key in history.state", with_({ historyState: { "sveltekit:history": 1, "vitrina:depth": 1, "vitrina:album": 1 } })],
   ];
   for (const [what, dump] of refused) {
     it(`refuses ${what}`, () => {
@@ -78,6 +83,10 @@ describe("the storage allowlist", () => {
   it("does not print a key name that is itself the secret", () => {
     const found = storageViolations(session({ [KEY]: "1" }), [KEY]);
     expect(found).toEqual(["sessionStorage a key whose name is a secret holds secret #0"]);
+  });
+
+  it("accepts the Back marker at depths 1, 2 and 3 beside SvelteKit's indices", () => {
+    for (const d of [1, 2, 3]) expect(storageViolations(with_({ historyState: { ...OBSERVED.historyState as object, "vitrina:depth": d } }), [KEY])).toEqual([]);
   });
 
   it("finds nothing in clean storage, secrets or not", () => {

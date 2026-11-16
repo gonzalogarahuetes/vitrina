@@ -18,6 +18,8 @@
  * It is the one place a secret may be, and only there, only that value: the
  * secret search skips it and nothing else, so K_invite under any other key,
  * or a different value under this one, is still found.
+ * history.state may also hold `vitrina:depth`, lib/history.ts's Back marker:
+ * 1, 2 or 3, nothing else.
  * Nothing else may exist anywhere.
  *
  * One finding per place at most, naming the place. A place holding a secret
@@ -71,12 +73,21 @@ function scrollIsNumbersOnly(raw: string): boolean {
   });
 }
 
-/** SvelteKit's history entries: `sveltekit:*` keys only, holding numbers or an empty states object. */
+/** lib/history.ts's one key: how deep the entry sits, from a fixed set. Never an id, a title or anything derived. */
+const HISTORY_DEPTH = "vitrina:depth";
+const HISTORY_DEPTHS: readonly unknown[] = [1, 2, 3];
+
+/**
+ * SvelteKit's history entries: `sveltekit:*` keys only, holding numbers or an
+ * empty states object. Plus the app's Back marker, and only one of its values.
+ */
 function historyStateIsSvelteKitOnly(state: unknown): boolean {
   if (state === null || state === undefined) return true;
   if (!isRecord(state)) return false;
   return Object.entries(state).every(
-    ([k, v]) => k.startsWith("sveltekit:") && (typeof v === "number" || (isRecord(v) && Object.keys(v).length === 0)),
+    ([k, v]) =>
+      (k === HISTORY_DEPTH && HISTORY_DEPTHS.includes(v)) ||
+      (k.startsWith("sveltekit:") && (typeof v === "number" || (isRecord(v) && Object.keys(v).length === 0))),
   );
 }
 
@@ -117,7 +128,7 @@ function places(dump: StorageDump, secrets: readonly string[], opts: AllowOption
   out.push({ where: "window.name", problem: dump.windowName === "" ? null : "is not empty", content: dump.windowName });
   out.push({
     where: "history.state",
-    problem: historyStateIsSvelteKitOnly(dump.historyState) ? null : "holds more than SvelteKit's indices",
+    problem: historyStateIsSvelteKitOnly(dump.historyState) ? null : "holds more than SvelteKit's indices and the depth marker",
     content: JSON.stringify(dump.historyState) ?? "",
   });
   return out;
