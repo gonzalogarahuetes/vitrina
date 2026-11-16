@@ -86,6 +86,25 @@ async function startOutside(page: Page): Promise<void> {
   await page.goto(OUTSIDE);
 }
 
+/**
+ * Reloads, and counts every document load that follows until the screen has
+ * settled and a little longer: a start-up that traversed onto an entry from
+ * before the reload would load the app a second time.
+ */
+async function reloadCountingLoads(page: Page, settle: () => Promise<void>): Promise<number> {
+  let loads = 0;
+  const count = (): void => void loads++;
+  page.on("load", count);
+  await page.reload();
+  await settle();
+  await page.waitForTimeout(1000);
+  page.off("load", count);
+  // The document on screen is the reload's own, not one a traversal loaded afterwards.
+  const type = await page.evaluate(() => (performance.getEntriesByType("navigation")[0] as PerformanceNavigationTiming | undefined)?.type);
+  expect(type, "the document on screen came from the reload").toBe("reload");
+  return loads;
+}
+
 const opened: BrowserContext[] = [];
 test.afterEach(async () => {
   await Promise.all(opened.splice(0).map((c) => c.close()));
@@ -347,9 +366,11 @@ test("owner: a reload on the viewer starts at unlock; its sign-out sheet closes 
   await expect(button(page, en["viewer.back"])).toBeVisible();
   await settled(page, c, 2, "viewer");
 
-  await page.reload();
-  await expect(heading(page, en["unlock.prompt"])).toBeVisible();
-  await settled(page, c, 0, "reloaded: unlock, at the top");
+  const loads = await reloadCountingLoads(page, async () => {
+    await expect(heading(page, en["unlock.prompt"])).toBeVisible();
+    await settled(page, c, 0, "reloaded: unlock, at the top");
+  });
+  expect(loads, "the reload loaded the page exactly once").toBe(1);
 
   await button(page, en["unlock.signout"]).click();
   await expect(page.getByRole("dialog")).toContainText(en["unlock.signout.confirm"]);
@@ -431,9 +452,11 @@ test.describe("recipient", () => {
     const c = await open(page, context, baseURL, "qr");
     await viewer(page);
     await settled(page, c, 1, "viewer");
-    await page.reload();
-    await expect(page.getByRole("button", { name: en["onboarding.continue"] })).toBeVisible();
-    await settled(page, c, 0, "reloaded: onboarding, at the top");
+    const loads = await reloadCountingLoads(page, async () => {
+      await expect(page.getByRole("button", { name: en["onboarding.continue"] })).toBeVisible();
+      await settled(page, c, 0, "reloaded: onboarding, at the top");
+    });
+    expect(loads, "the reload loaded the page exactly once").toBe(1);
     await page.getByRole("button", { name: en["onboarding.continue"] }).click();
     await expect(page.getByRole("button", { name: photo })).toBeVisible();
     await settled(page, c, 0, "reloaded: grid");
@@ -444,5 +467,22 @@ test.describe("recipient", () => {
     await back(page);
     await leftTheApp(page);
     expect(await violations()).toEqual([]);
+  });
+
+  test("the load count notices a second load after the reload (the check, broken on purpose)", async ({ page, context, baseURL }) => {
+    const c = await open(page, context, baseURL, "qr");
+    await viewer(page);
+    let forced = false;
+    const loads = await reloadCountingLoads(page, async () => {
+      await expect(page.getByRole("button", { name: en["onboarding.continue"] })).toBeVisible();
+      if (!forced) {
+        forced = true;
+        // What a start-up traversing onto a pre-reload document would cost: the app loaded again.
+        await page.evaluate(() => location.reload());
+        await expect(page.getByRole("button", { name: en["onboarding.continue"] })).toBeVisible();
+      }
+      await settled(page, c, 0, "reloaded twice");
+    });
+    expect(loads).toBe(2);
   });
 });

@@ -50,6 +50,11 @@ export class FakeHistory {
     this.traverse(-1);
   }
 
+  /** Several entries at once: the browser's long-press history menu. */
+  jump(delta: number): void {
+    this.traverse(delta);
+  }
+
   forward(): void {
     this.traverse(1);
   }

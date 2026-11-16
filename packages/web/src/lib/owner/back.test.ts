@@ -294,6 +294,39 @@ describe("Back goes through the same guards (flows §3.6, §3.8, §3.9)", () => 
   });
 });
 
+describe("a Back that skips several levels at once (the history menu)", () => {
+  it("two levels, both of which leave: access log → people → album", async () => {
+    const o = await onList();
+    const { h } = o;
+    await act(o, () => h.session.openAlbum(ALBUM_A));
+    await act(o, () => h.session.openPeople());
+    expect(await act(o, () => h.session.openLog(null))).toBe("log");
+    o.history.jump(-2);
+    await settle();
+    expect(at(o)).toBe("album");
+    expect(o.history.index).toBe(1);
+    expect(await back(o)).toBe("albums");
+  });
+
+  it("two levels, the second of which asks first: the viewer closes, the album asks and stays", async () => {
+    const o = await onList();
+    const { h } = o;
+    await act(o, () => h.session.openAlbum(ALBUM_A));
+    const key = firstKey(h);
+    h.override(`POST /v1/albums/${ALBUM_A}/media`, "network");
+    await act(o, () => h.session.choosePhotos([photo()]));
+    expect(await act(o, () => h.session.sendReview())).toBe("album");
+    expect(await act(o, () => h.session.openViewer(key))).toBe("viewer");
+    expect(o.history.depths).toEqual([0, 1, 2]);
+    o.history.jump(-2);
+    await settle();
+    expect(at(o), "the viewer closed, and leaving asked instead of leaving").toBe("album leaving?");
+    expect(o.history.index, "history is back at the ask's depth").toBe(2);
+    expect(await back(o), "the next Back is the ask's Stay").toBe("album");
+    expect(await back(o)).toBe("album leaving?");
+  });
+});
+
 describe("depth, not a growing stack", () => {
   it("the viewer opened and closed 20 times with its own controls, then one Back from the album lands on the list", async () => {
     const o = await onList();
