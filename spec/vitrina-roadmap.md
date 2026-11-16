@@ -65,13 +65,15 @@ _The goal is a working private album you would actually send to your own mother.
 
 _Triggered by: v1 works and you want a second family using it._
 
+**Split 16 November 2026** into 2a, Hardening (this list) and 2b, Features: co-owners, reactions and comments to the owners, and smaller items. Order and status live in `vitrina-phase-2-plan.md`. Phase 3 stays video only.
+
 - Password reset and recipient re-invitation flows
 - Rate limiting, abuse basics, upload size caps
 - Error handling that a non-technical user can act on
 - GDPR: privacy policy, lawful basis, retention policy, erasure
 - Accessibility audit — real one, with a real elderly user
 - Storage lifecycle and retention decisions
-- **Invite sharing:** decide whether to surface per-invite device counts to the owner. Invite spec §8 — the reasoning is recorded, including why hard single-use is not obviously the right answer
+- **Invite sharing:** decide whether to surface per-invite device counts to the owner. Invite spec §8 — the reasoning is recorded, including why hard single-use is not obviously the right answer. **Decided 16 November 2026: not built** (invite spec §8.5)
 - Observability: know when uploads fail without being told
 - **Resolve the abuse question (brief §11) if there is any path to public availability.** This gates public launch, not Phase 3.
 

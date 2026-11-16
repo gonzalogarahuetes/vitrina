@@ -83,16 +83,16 @@ pnpm infra:up           # one command; brings up the whole local stack
 
 `pnpm infra:up` is `docker compose up -d`. It brings up:
 
-| Service            | Where                    | What                                                                                 |
-| ------------------ | ------------------------ | ------------------------------------------------------------------------------------ |
-| `vitrina-postgres` | `localhost:5432`         | Postgres 15. Database `vitrina`, user `admin`, password `password`.                   |
-| `seaweedfs`        | `localhost:8333`         | SeaweedFS S3 gateway — the S3-compatible object store that holds ciphertext.          |
-| `createbucket`     | — (one-shot, then exits) | Waits for the gateway, then creates the `vitrina-media` bucket. Exiting `0` is done.  |
+| Service            | Where                    | What                                                                                                                                |
+| ------------------ | ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `vitrina-postgres` | `localhost:5432`         | Postgres 15. Database `vitrina`, user `admin`, password `password`.                                                                 |
+| `seaweedfs`        | `localhost:8333`         | SeaweedFS S3 gateway — the S3-compatible object store that holds ciphertext.                                                        |
+| `createbucket`     | — (one-shot, then exits) | Waits for the gateway, then creates the `vitrina-media` bucket. Exiting `0` is done.                                                |
 | `migrate`          | — (one-shot, then exits) | Waits for Postgres to be healthy, then applies every file in `packages/server/migrations/` the database lacks. Exiting `0` is done. |
 
 `pnpm infra:wait` blocks until both one-shots have exited, and fails with their
 logs if either exited non-zero. `up -d` alone returns as soon as the containers
-have *started*.
+have _started_.
 
 Migrations are applied by the `migrate` one-shot, never by hand. It is
 idempotent — a second run applies nothing — and records what it applied, with a
@@ -116,11 +116,11 @@ the runner has no record of what was applied to it and cannot be told.
 The API reads three variables and validates all three at boot, before it
 listens. There is no fallback for any of them.
 
-| Variable                | What                                                                             |
-| ----------------------- | -------------------------------------------------------------------------------- |
-| `CLIENT_ORIGIN`         | The single allowlisted browser origin for CORS. Never `*`.                       |
+| Variable                | What                                                                                 |
+| ----------------------- | ------------------------------------------------------------------------------------ |
+| `CLIENT_ORIGIN`         | The single allowlisted browser origin for CORS. Never `*`.                           |
 | `DATABASE_URL`          | Postgres. The compose stack's is `postgres://admin:password@localhost:5432/vitrina`. |
-| `VITRINA_SERVER_SECRET` | The one server secret, base64url, at least 32 bytes.                             |
+| `VITRINA_SERVER_SECRET` | The one server secret, base64url, at least 32 bytes.                                 |
 
 `.env.example` carries local-only values for all three — the same class as the
 object-store credentials in `s3-config.json`, and with no production
@@ -213,13 +213,14 @@ it.
 
 ## Status
 
-- [ ] **Phase 0** — specs, repo foundations, envelope crate, test vectors
-- [ ] **Phase 1** — v1: web, photos only
+- [x] **Phase 0** — specs, repo foundations, envelope crate, test vectors
+- [x] **Phase 1** — v1: web, photos only
 - [ ] **Phase 2** — hardening, GDPR, accessibility, abuse policy
 - [ ] **Phase 3** — video
 - [ ] **Phase 4** — native mobile
 
 Phase 0 progress and exit criteria are tracked in `spec/vitrina-phase-0-plan.md`.
+Phase 2 progress and exit criteria are tracked in `spec/vitrina-phase-2-plan.md`.
 
 ## Known limitations
 

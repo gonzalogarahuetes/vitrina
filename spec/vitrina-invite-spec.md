@@ -177,6 +177,8 @@ If invite sharing ever becomes the primary concern, that asymmetry — not a pre
 
 **"María's invite has been opened on 2 devices," surfaced to the owner** alongside the existing access log.
 
+_**Decided 16 November 2026: not built.** The relay cannot count devices honestly. A recipient has no device identity: the stored invite lives in `sessionStorage` and dies with the tab (§2.2), so every tab would count as a device, and a real count needs a persistent identifier on the recipient's device — a tracking identifier. Inferring devices from IP address or browser is unreliable on phones and is personal data. The answers to forwarding are passphrase mode, revocation and re-invitation, and the access log. The reasoning below is kept for the record._
+
 This matches the threat model. Forwarding an invite to an aunt who would love to see the photographs is an accident of ordinary generosity, not an attack — and it is the same reasoning that makes the watermark social rather than forensic (brief §5). A hard lock generates support calls; a visible device count generates a conversation the parent can have themselves.
 
 It is also closer to what a nervous parent actually wants to hear. Not _this is impossible_, but _you would know_.
