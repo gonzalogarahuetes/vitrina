@@ -9,6 +9,7 @@ dist/
 *.tsbuildinfo
 
 .claude/
+!.claude/settings.json
 
 # The server's local environment, copied from .env.example. Never committed.
 # Root only: packages/web/.env is committed on purpose (VITE_API_ORIGIN).
