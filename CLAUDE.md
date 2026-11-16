@@ -1,19 +1,19 @@
 # Vitrina
 
-Private photo sharing built on a blind relay: the client encrypts before upload, the server only ever stores ciphertext it cannot read, and keys travel out of band. Currently Phase 1: the server is complete (`packages/server`), and the web client (`packages/web`) is starting. Phase 0 is closed.
+Private photo sharing built on a blind relay: the client encrypts before upload, the server only ever stores ciphertext it cannot read, and keys travel out of band. Product name **Lirio** (`lirioapp.eu`); the code keeps `vitrina`. Phase 1 is deployed (v1.0.0) and in testing with a small group of owners and recipients. Phase 0 is closed.
 
 ## Canonical documents
 
 `spec/` governs this repository. Those documents win over anything inferred from the code.
 
-| File                              | What it covers                                                              |
-| --------------------------------- | --------------------------------------------------------------------------- |
-| `spec/vitrina-project-brief.md`   | **Canonical.** Threat model, promises, non-negotiables (§6), open decisions |
-| `spec/vitrina-encryption-spec.md` | The envelope format. **Read in full before any work in `crates/envelope/`** |
-| `spec/vitrina-invite-spec.md`     | Invite payload and its serialisations                                       |
-| `spec/vitrina-phase-0-plan.md`    | Phase 0 history: the C ladder, V.1's device measurements. Closed            |
-| `spec/vitrina-schema.md`          | Database schema, and §6 the canonical token-hashing rules                   |
-| `spec/vitrina-api-sketch.md`      | The HTTP API. §11.8 is the one table of every route                         |
+| File                              | What it covers                                                                     |
+| --------------------------------- | ---------------------------------------------------------------------------------- |
+| `spec/vitrina-project-brief.md`   | **Canonical.** Threat model, promises, non-negotiables (§6), open decisions        |
+| `spec/vitrina-encryption-spec.md` | The envelope format. **Read in full before any work in `crates/envelope/`**        |
+| `spec/vitrina-invite-spec.md`     | Invite payload and its serialisations                                              |
+| `spec/vitrina-phase-0-plan.md`    | Phase 0 history: the C ladder, V.1's device measurements. Closed                   |
+| `spec/vitrina-schema.md`          | Database schema, and §6 the canonical token-hashing rules                          |
+| `spec/vitrina-api-sketch.md`      | The HTTP API. §11.8 is the one table of every route                                |
 | `spec/vitrina-client-flows.md`    | Screens, their states, and key state per step. Read before any `packages/web` work |
 
 They are not auto-imported. Read the ones relevant to the task at hand.
@@ -28,7 +28,7 @@ I implement the cryptographic layer myself, because a subtle error there is unre
 
 Review, critique, failing-test suggestions, edge cases I've missed, and design discussion are all wanted. Finished implementations of the above are not, even if I ask for one in a moment of impatience.
 
-Delegable: repo tooling, CI, `docker-compose`, migrations, the JSON vector export plumbing (C.9), the TypeScript smoke-test harness (C.10), and UI work once Phase 1 begins.
+Delegable: repo tooling, CI, `docker-compose`, migrations, deploy scripts, the JSON vector export plumbing (C.9), the TypeScript smoke-test harness (C.10), the WASM bindings, and UI work.
 
 ## Hard rules
 
@@ -62,6 +62,13 @@ _"This could be more precise"_ is not a reason. If you notice imprecision with n
 - Chunk offsets are computed arithmetically, never discovered by scanning. That property is load-bearing.
 - Filenames, EXIF, and GPS are stripped client-side before encryption. Plaintext filenames must never reach the server, including as object keys.
 
+## Working in this repository
+
+- Every chat and agent works in its own git worktree, on its own branch. Never commit to `main`, push, merge, or tag — I do.
+- Never deploy, SSH, or touch production. Never read `~/.vitrina/` or `~/.ssh/`. `.claude/settings.json` enforces part of this; the rule covers the rest.
+- Only `vX.Y.Z` tags on `origin/main` are deployable (`deploy/README.md` §3).
+- **The migration rule:** every migration works with the previous release's code — add first, use later, remove last. A new column is nullable or has a default; a column goes only in a release after the one that stopped using it.
+
 ## Before reporting anything done
 
 Run the relevant checks. Do not describe work as complete against an unrun or red suite.
@@ -73,6 +80,7 @@ pnpm test && pnpm lint
 pnpm check:citations                        # if spec/ was touched
 pnpm test:infra                             # if anything under adapters/driven/ moved; needs `pnpm infra:up`
                                             # and `pnpm --filter @vitrina/envelope build:wasm` (gitignored; CI ships it as an artifact)
+pnpm test:deploy                            # if anything under deploy/ changed
 ```
 
 `test:infra` builds first, deliberately: it imports `packages/server/dist/`, so without
@@ -82,4 +90,4 @@ Run the `cargo` lines only when `crates/` changed — a TypeScript-only change i
 
 ## Scope
 
-Phase 1: photos only, web client only. Nothing from Phase 2 unless I explicitly ask. Nothing from Phase 3 (video) or Phase 4 (native) gets built early — the non-negotiables exist so that waiting costs nothing.
+Phase 2 items only when I assign them — one at a time, each in its own worktree. Nothing from Phase 3 (video) or Phase 4 (native) gets built early — the non-negotiables exist so that waiting costs nothing.
