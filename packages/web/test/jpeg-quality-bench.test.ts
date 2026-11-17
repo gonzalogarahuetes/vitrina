@@ -7,7 +7,7 @@
  */
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { CSV_HEADER, browserLabel, gridCell, median, shuffled, summarise, toCsv, viewerStage, type Row } from "../scripts/jpeg-quality/bench";
+import { CSV_HEADER, browserLabel, describeError, gridCell, median, report, shuffled, summarise, toCsv, viewerStage, type Row } from "../scripts/jpeg-quality/bench";
 
 const read = (path: string) => readFileSync(new URL(path, import.meta.url), "utf8");
 const MARKER = /"(vitrina:jpeg-quality-bench)"/;
@@ -99,4 +99,18 @@ describe("summarise", () => {
     expect(s).toEqual({ quality: 0.85, n: 3, medianBytes: 200, maxBytes: 300, album30: 6000, medianMs: 10, maxMs: 50 });
   });
   it("takes the middle two's mean for an even count", () => expect(median([4, 1, 3, 2])).toBe(2.5));
+});
+
+describe("the failure report", () => {
+  it("gives the browser's error name and message", () => {
+    expect(describeError(new DOMException("The source image could not be decoded.", "InvalidStateError"), "IMG_1.jpg")).toBe("InvalidStateError: The source image could not be decoded.");
+  });
+  it("drops a message that names the file", () => {
+    expect(describeError(new Error("cannot read IMG_20260612_bathtime.jpg"), "IMG_20260612_bathtime.jpg")).toBe("Error");
+  });
+  it("puts one comment line per failed photo after the CSV, in photo order", () => {
+    const text = report([row(1, "asset", 0.7, 100)], new Map([[3, "not-decoded: x"], [2, "not-decoded: y\nz"]]));
+    expect(text).toBe(`${CSV_HEADER}\n1,Safari / macOS,1600,1200,asset,0.70,100,10.0\n# 2 failed\n# photo 2 failed: not-decoded: y z\n# photo 3 failed: not-decoded: x\n`);
+  });
+  it("adds nothing when nothing failed", () => expect(report([], new Map())).toBe(`${CSV_HEADER}\n`));
 });

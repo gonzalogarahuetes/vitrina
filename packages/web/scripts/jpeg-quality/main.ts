@@ -20,10 +20,11 @@
  * closed when another photo is opened.
  */
 import { browserImaging } from "../../src/lib/owner/imaging";
-import { ASSET_LONG_EDGE, ASSET_QUALITY, CHUNK_SIZE, THUMB_LONG_EDGE, THUMB_QUALITY, decode, fitLongEdge, jpeg, type Dims } from "../../src/lib/owner/prepare";
+import { jpegFrameSize } from "../../src/lib/owner/jpeg-scan";
+import { ASSET_LONG_EDGE, ASSET_QUALITY, CHUNK_SIZE, HEAD_BYTES, THUMB_LONG_EDGE, THUMB_QUALITY, decode, fitLongEdge, jpeg, type Dims, type Resize } from "../../src/lib/owner/prepare";
 import { Gestures } from "../../src/lib/recipient/gestures";
 import { DOUBLE_TAP_SCALE, FIT, MAX_SCALE, clampView, drawCell, drawViewer, moveView, type Size, type View } from "../../src/lib/recipient/render";
-import { ASSET_QUALITIES, THUMB_QUALITIES, browserLabel, gridCell, shuffled, summarise, toCsv, viewerStage, type Kind, type Row } from "./bench";
+import { ASSET_QUALITIES, THUMB_QUALITIES, browserLabel, describeError, gridCell, report, shuffled, summarise, viewerStage, type Kind, type Row } from "./bench";
 
 /**
  * check-build.mjs fails a production build that contains this string. It is
@@ -49,6 +50,7 @@ const ui = {
   blind: $<HTMLInputElement>("blind"),
   reveal: $<HTMLButtonElement>("reveal"),
   stageNote: $("stage-note"),
+  photoError: $("photo-error"),
   stage: $("stage"),
   photo: $<HTMLCanvasElement>("photo"),
   fit: $<HTMLButtonElement>("fit"),
@@ -92,10 +94,10 @@ async function encodePhoto(file: File): Promise<Encoded | string> {
   let bitmap;
   try {
     bitmap = await decode(file, browserImaging);
-  } catch {
-    return "not-decoded";
+  } catch (e) {
+    return `not-decoded: the browser refused it (${describeError(e, file.name)})`;
   }
-  if (bitmap === null) return "not-decoded";
+  if (bitmap === null) return "not-decoded: it opened, but not at the size its header gives";
   const decodeMs = performance.now() - t0;
   const encodes: Encode[] = [];
   try {
@@ -127,6 +129,38 @@ async function encodePhoto(file: File): Promise<Encoded | string> {
   }
 }
 
+/**
+ * Why a photo failed, in numbers: its type and size, the frame size its
+ * header gives, and what the browser answered to each decode prepare.ts
+ * would ask for. Runs only after a failure; never part of a measurement.
+ */
+async function diagnose(file: File): Promise<string> {
+  const parts = [`type ${file.type || "(none given)"}`, `${(file.size / 1e6).toFixed(1)} MB`];
+  let frame: Dims | null = null;
+  try {
+    frame = jpegFrameSize(new Uint8Array(await file.slice(0, HEAD_BYTES).arrayBuffer()));
+  } catch {
+    frame = null;
+  }
+  parts.push(frame === null ? "no JPEG frame in its first 256 KiB" : `frame ${frame.width}×${frame.height}`);
+  const attempt = async (label: string, resize: Resize | null): Promise<string> => {
+    try {
+      const b = await browserImaging.decode(file, resize);
+      const got = `${label} → ${b.width}×${b.height}`;
+      b.close();
+      return got;
+    } catch (e) {
+      return `${label} → ${describeError(e, file.name)}`;
+    }
+  };
+  if (frame !== null && Math.max(frame.width, frame.height) > ASSET_LONG_EDGE) {
+    parts.push(await attempt("decode at width 1600", { width: ASSET_LONG_EDGE }));
+    parts.push(await attempt("decode at height 1600", { height: ASSET_LONG_EDGE }));
+  }
+  parts.push(await attempt("full decode", null));
+  return parts.join("; ");
+}
+
 // ── Measuring pass: numbers only ───────────────────────────────────────────
 
 let files: File[] = [];
@@ -148,7 +182,8 @@ async function measure(list: File[]): Promise<void> {
     ui.status.textContent = `Encoding photo ${i + 1} of ${files.length}…`;
     const r = await encodePhoto(files[i] as File);
     if (typeof r === "string") {
-      failures.set(i + 1, r);
+      ui.status.textContent = `Photo ${i + 1} of ${files.length} failed; finding out why…`;
+      failures.set(i + 1, `${r} | ${await diagnose(files[i] as File)}`);
       continue;
     }
     decodeTimes.set(i + 1, r.decodeMs);
@@ -161,7 +196,7 @@ async function measure(list: File[]): Promise<void> {
   }
   busy = false;
   const ok = files.length - failures.size;
-  ui.status.textContent = `${ok} of ${files.length} photos measured${failures.size ? `; ${failures.size} failed (see Each photo)` : ""}.`;
+  ui.status.textContent = `${ok} of ${files.length} photos measured${failures.size ? `; ${failures.size} failed. Why is shown on each failed photo, and is included when you copy the numbers` : ""}.`;
   renderNumbers();
   ui.numbers.hidden = false;
   if (ok > 0) {
@@ -209,7 +244,7 @@ function renderNumbers(): void {
     return [String(n), a ? `${a.width}×${a.height}` : "", ms(decodeTimes.get(n) ?? NaN), ...ASSET_QUALITIES.map((q) => cell("asset", q)), ...THUMB_QUALITIES.map((q) => cell("thumb", q))];
   });
   table(ui.perPhoto, head, body);
-  ui.csv.value = toCsv(rows);
+  ui.csv.value = report(rows, failures);
 }
 
 ui.copy.addEventListener("click", () => {
@@ -272,9 +307,12 @@ async function openPhoto(index: number): Promise<void> {
   ui.prev.disabled = index === 0;
   ui.next.disabled = index === files.length - 1;
   ui.determinism.textContent = "";
+  ui.photoError.hidden = true;
   const failed = failures.get(index + 1);
   if (failed !== undefined) {
-    ui.assetNow.textContent = `This photo failed: ${failed}`;
+    ui.photoError.textContent = `Photo ${index + 1} could not be prepared, so there is nothing to compare. ${failed}`;
+    ui.photoError.hidden = false;
+    ui.assetNow.textContent = "";
     ui.thumbNow.textContent = "";
     ui.assetQ.replaceChildren();
     ui.thumbQ.replaceChildren();

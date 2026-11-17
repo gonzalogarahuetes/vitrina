@@ -48,6 +48,24 @@ export function browserLabel(ua: string, maxTouchPoints = 0): string {
   return `other / ${os}`;
 }
 
+/**
+ * What a browser said when it refused a photo: the error's name and message,
+ * for the failure report. A message that names the file is cut to the name
+ * alone, so a filename never reaches the text that is copied out.
+ */
+export function describeError(e: unknown, fileName: string): string {
+  if (!(e instanceof Error)) return typeof e;
+  const message = e.message.trim();
+  if (message === "" || (fileName !== "" && message.includes(fileName))) return e.name;
+  return `${e.name}: ${message}`;
+}
+
+/** The copied text: the CSV, then one comment line per failed photo, numbers and browser answers only. */
+export function report(rows: readonly Row[], failed: ReadonlyMap<number, string>): string {
+  const lines = [...failed].sort(([a], [b]) => a - b).map(([photo, why]) => `# photo ${photo} failed: ${why.replace(/\n/g, " ")}`);
+  return toCsv(rows) + (lines.length ? `# ${lines.length} failed\n${lines.join("\n")}\n` : "");
+}
+
 export const CSV_HEADER = "photo,browser,width,height,kind,quality,bytes,encode_ms";
 
 export function toCsv(rows: readonly Row[]): string {

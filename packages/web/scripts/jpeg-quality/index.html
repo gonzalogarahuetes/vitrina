@@ -41,6 +41,7 @@
         <button type="button" id="reveal" hidden>Reveal</button>
       </div>
       <p class="note" id="stage-note"></p>
+      <p class="error" id="photo-error" role="alert" hidden></p>
 
       <div id="stage" class="stage"><canvas id="photo"></canvas></div>
       <div class="row">
@@ -68,10 +69,10 @@
         <summary>Each photo</summary>
         <div class="scroll"><table id="per-photo"></table></div>
       </details>
-      <h3>CSV</h3>
-      <p class="note">Numbers only: no pixels, no filenames.</p>
+      <h3>Numbers to paste back</h3>
+      <p class="note">The CSV, then a line for each failed photo. Numbers and browser answers only: no pixels, no filenames.</p>
       <textarea id="csv" readonly rows="8"></textarea>
-      <div class="row"><button type="button" id="copy">Copy CSV</button> <span id="copied" role="status"></span></div>
+      <div class="row"><button type="button" id="copy">Copy numbers</button> <span id="copied" role="status"></span></div>
     </section>
 
     <script type="module" src="./main.ts"></script>

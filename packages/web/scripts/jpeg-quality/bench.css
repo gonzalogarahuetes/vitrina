@@ -113,3 +113,11 @@ textarea {
   margin-inline: -16px;
   max-width: none;
 }
+.error {
+  background: #fbe9e4;
+  border: 2px solid #a33a1f;
+  border-radius: 8px;
+  padding: 10px 12px;
+  color: #5c1a0a;
+  overflow-wrap: anywhere;
+}
