@@ -118,7 +118,7 @@ export function plausible(frame: Dims, got: Dims): boolean {
   return near(have, want) || near(have, 1 / want);
 }
 
-type Encoded =
+export type Encoded =
   | { readonly ok: true; readonly bytes: Uint8Array<ArrayBuffer> }
   | {
       readonly ok: false;
@@ -126,7 +126,7 @@ type Encoded =
       readonly finding?: ScanFinding;
     };
 
-async function jpeg(
+export async function jpeg(
   imaging: Imaging,
   bitmap: Bitmap,
   size: Dims,
@@ -163,10 +163,11 @@ async function jpeg(
 
 /**
  * One decode at the target long edge where that works, else one at full
- * size. At most one bitmap is open at a time; any bitmap not returned is
+ * size. Exported, with jpeg(), for the JPEG quality page
+ * (scripts/jpeg-quality/), which must measure this path and no copy of it. At most one bitmap is open at a time; any bitmap not returned is
  * closed before the next decode starts.
  */
-async function decode(file: File, imaging: Imaging): Promise<Bitmap | null> {
+export async function decode(file: File, imaging: Imaging): Promise<Bitmap | null> {
   let frame: Dims | null = null;
   try {
     frame = jpegFrameSize(

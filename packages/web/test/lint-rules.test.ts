@@ -69,3 +69,24 @@ describe("sessionStorage only in the owner's and the recipient's session modules
     }
   }
 });
+
+describe("the JPEG quality page keeps the app's bans, though it lives under scripts/", () => {
+  const PAGE = "scripts/jpeg-quality/main.ts";
+  const refused: [string, RegExp][] = [
+    ['fetch("/x");', /Every request goes through/],
+    ['navigator.sendBeacon("/x", "y");', /Every request goes through/],
+    ['new WebSocket("ws://x");', /Every request goes through/],
+    ['localStorage.setItem("k", "v");', /Nothing is stored on this device/],
+    ['sessionStorage.setItem("k", "v");', /Nothing is stored on this device/],
+    ["URL.createObjectURL(new Blob());", /makes no URL for a photo/],
+  ];
+  for (const [code, message] of refused) {
+    it(`refuses \`${code}\``, async () => {
+      expect(await messages(code, PAGE)).toEqual(expect.arrayContaining([expect.stringMatching(message)]));
+    }, 30_000);
+  }
+
+  it("leaves the Node-side scripts beside it as they were", async () => {
+    expect(await messages('fetch("/x");', "scripts/check-build.mjs")).toEqual([]);
+  }, 30_000);
+});

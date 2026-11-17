@@ -194,6 +194,16 @@ let wordlistReport = "";
   }
 }
 
+// --- No JPEG quality page -----------------------------------------------------
+// scripts/jpeg-quality/ is a dev-only measurement page, built and served on its
+// own. Its main.ts writes this string into the page, so any bundle that imports
+// it carries it (test/jpeg-quality-bench.test.ts keeps the two in step).
+const BENCH_MARKER = "vitrina:jpeg-quality-bench";
+for (const f of files(BUILD)) {
+  if (relative(BUILD, f).includes("jpeg-quality")) fail(`the JPEG quality page is in build/: ${relative(BUILD, f)}`);
+  else if (readFileSync(f).includes(BENCH_MARKER)) fail(`${relative(BUILD, f)} contains the JPEG quality page (${BENCH_MARKER})`);
+}
+
 if (failures.length > 0) {
   console.error("check-build: build/ violates the static-SPA guards\n  " + failures.join("\n  "));
   process.exit(1);

@@ -73,8 +73,18 @@ function restrictions(except) {
   };
 }
 
+const BENCH_URL = "The JPEG quality page makes no URL for a photo: bytes go to a Blob and straight to createImageBitmap.";
+
+function benchRestrictions() {
+  const r = restrictions(undefined);
+  return {
+    ...r,
+    "no-restricted-properties": [...r["no-restricted-properties"], { object: "URL", property: "createObjectURL", message: BENCH_URL }],
+  };
+}
+
 export default ts.config(
-  { ignores: [".svelte-kit/**", "build/**", "node_modules/**"] },
+  { ignores: [".svelte-kit/**", "build/**", "node_modules/**", "scripts/jpeg-quality/dist/**"] },
   ...svelte.configs.recommended,
   {
     languageOptions: {
@@ -112,5 +122,12 @@ export default ts.config(
     // Config and Node-side scripts run at build time, not in the browser.
     files: ["vite.config.ts", "vite-plugins.ts", "eslint.config.js", "playwright.config.ts", "scripts/**"],
     rules: { "no-restricted-globals": "off", "no-restricted-properties": "off" },
+  },
+  {
+    // The JPEG quality page is under scripts/ but runs in a phone's browser on the
+    // owner's photos, so the app's bans come back for it, and one more: it never
+    // makes a URL for a photo. Its CSP (index.html) refuses every request besides.
+    files: ["scripts/jpeg-quality/**"],
+    rules: benchRestrictions(),
   },
 );

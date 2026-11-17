@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <!-- Page zoom stays on, as in the app. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <!--
+      Nothing leaves this page: no request of any kind (connect-src), no image
+      load (img-src), no form post. Photos come from the file input and stay in
+      memory. test/jpeg-quality-bench.test.ts holds this line to that.
+    -->
+    <meta http-equiv="content-security-policy" content="default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'none'; img-src 'none'; form-action 'none'; base-uri 'none'" />
+    <title>JPEG quality (dev only)</title>
+    <link rel="stylesheet" href="./bench.css" />
+  </head>
+  <body>
+    <header>
+      <h1>JPEG quality <small>dev only</small></h1>
+      <p id="device"></p>
+      <label class="pick">
+        <span>Choose photos</span>
+        <input id="files" type="file" accept="image/*" multiple />
+      </label>
+      <p id="status" role="status">No photos yet. They stay on this device, in memory.</p>
+    </header>
+
+    <section id="compare" hidden>
+      <h2>Compare</h2>
+      <div class="row">
+        <button type="button" id="prev">‹ Photo</button>
+        <span id="which"></span>
+        <button type="button" id="next">Photo ›</button>
+      </div>
+      <div class="row">
+        <label>Stage <select id="frame">
+          <option value="window">This window</option>
+          <option value="390x844">Phone 390 × 844</option>
+          <option value="360x800">Phone 360 × 800</option>
+        </select></label>
+        <label><input type="checkbox" id="blind" /> Blind</label>
+        <button type="button" id="reveal" hidden>Reveal</button>
+      </div>
+      <p class="note" id="stage-note"></p>
+
+      <div id="stage" class="stage"><canvas id="photo"></canvas></div>
+      <div class="row">
+        <button type="button" id="fit">Fit</button>
+        <button type="button" id="z2">2×</button>
+        <button type="button" id="zmax">Max zoom</button>
+      </div>
+      <div class="row qualities" id="asset-q"></div>
+      <p id="asset-now" class="now"></p>
+
+      <h3>Thumbnail, at the grid's cell size</h3>
+      <div class="cell-wrap"><canvas id="cell"></canvas></div>
+      <div class="row qualities" id="thumb-q"></div>
+      <p id="thumb-now" class="now"></p>
+      <p class="note" id="determinism"></p>
+    </section>
+
+    <section id="numbers" hidden>
+      <h2>Numbers</h2>
+      <h3>Photo (1600 px)</h3>
+      <div class="scroll"><table id="sum-asset"></table></div>
+      <h3>Thumbnail (480 px)</h3>
+      <div class="scroll"><table id="sum-thumb"></table></div>
+      <details>
+        <summary>Each photo</summary>
+        <div class="scroll"><table id="per-photo"></table></div>
+      </details>
+      <h3>CSV</h3>
+      <p class="note">Numbers only: no pixels, no filenames.</p>
+      <textarea id="csv" readonly rows="8"></textarea>
+      <div class="row"><button type="button" id="copy">Copy CSV</button> <span id="copied" role="status"></span></div>
+    </section>
+
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>
