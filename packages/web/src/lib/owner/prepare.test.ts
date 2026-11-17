@@ -94,8 +94,8 @@ describe("prepare (flows §3.6 step 1)", () => {
       "decode width 1600",
       "close 1600x2133",
       "decode height 1600",
-      "encode 1200x1600 from 1200x1600 image/jpeg 0.85",
-      "encode 360x480 from 1200x1600 image/jpeg 0.8",
+      "encode 1200x1600 from 1200x1600 image/jpeg 0.75",
+      "encode 360x480 from 1200x1600 image/jpeg 0.7",
       "close 1200x1600",
     ]);
     expect(f.open.size).toBe(0);
@@ -104,7 +104,7 @@ describe("prepare (flows §3.6 step 1)", () => {
   it("a landscape photo: one downscaled decode", async () => {
     const f = fakeImaging({ oriented: { width: 4000, height: 3000 }, frame: { width: 4000, height: 3000 } });
     expect((await prepare(f.file(), f.imaging)).ok).toBe(true);
-    expect(f.log.slice(0, 2)).toEqual(["decode width 1600", "encode 1600x1200 from 1600x1200 image/jpeg 0.85"]);
+    expect(f.log.slice(0, 2)).toEqual(["decode width 1600", "encode 1600x1200 from 1600x1200 image/jpeg 0.75"]);
   });
 
   it("the metadata is encryption spec §7 exactly: the oriented dimensions as encrypted and the original filename, no taken_at", async () => {
@@ -119,14 +119,14 @@ describe("prepare (flows §3.6 step 1)", () => {
     const f = fakeImaging({ oriented: { width: 640, height: 480 }, frame: { width: 640, height: 480 } });
     const r = await prepare(f.file(), f.imaging);
     if (!r.ok) throw new Error(r.error);
-    expect(f.log).toEqual(["decode full", "encode 640x480 from 640x480 image/jpeg 0.85", "encode 480x360 from 640x480 image/jpeg 0.8", "close 640x480"]);
+    expect(f.log).toEqual(["decode full", "encode 640x480 from 640x480 image/jpeg 0.75", "encode 480x360 from 640x480 image/jpeg 0.7", "close 640x480"]);
     expect(meta(r.prepared.meta)).toMatchObject({ width: 640, height: 480 });
   });
 
   it("a photo smaller than a thumbnail is not upscaled either", async () => {
     const f = fakeImaging({ oriented: { width: 300, height: 200 }, frame: { width: 300, height: 200 } });
     expect((await prepare(f.file(), f.imaging)).ok).toBe(true);
-    expect(f.log).toContain("encode 300x200 from 300x200 image/jpeg 0.8");
+    expect(f.log).toContain("encode 300x200 from 300x200 image/jpeg 0.7");
   });
 
   it("a browser that ignores the resize: the full-size bitmap is drawn down, and only one is open at a time", async () => {
@@ -140,8 +140,8 @@ describe("prepare (flows §3.6 step 1)", () => {
       "decode height 1600",
       "close 3024x4032",
       "decode full",
-      "encode 1200x1600 from 3024x4032 image/jpeg 0.85",
-      "encode 360x480 from 3024x4032 image/jpeg 0.8",
+      "encode 1200x1600 from 3024x4032 image/jpeg 0.75",
+      "encode 360x480 from 3024x4032 image/jpeg 0.7",
       "close 3024x4032",
     ]);
   });

@@ -9,9 +9,10 @@
     "build": "vite build && node scripts/check-build.mjs",
     "preview": "vite preview",
     "prepare": "svelte-kit sync || echo ''",
-    "lint": "svelte-kit sync && eslint . && svelte-check --tsconfig ./tsconfig.json --fail-on-warnings",
+    "lint": "svelte-kit sync && eslint . && svelte-check --tsconfig ./tsconfig.json --fail-on-warnings && tsc -p scripts/jpeg-quality",
     "test": "vitest run",
     "test:browser": "playwright test",
+    "jpeg-quality": "vite build scripts/jpeg-quality && vite preview scripts/jpeg-quality",
     "wordlist:es": "node --experimental-strip-types scripts/build-wordlist-es.mjs"
   },
   "dependencies": {
