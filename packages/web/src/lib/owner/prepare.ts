@@ -46,8 +46,8 @@ export const META_MAX_PLAINTEXT = 4096 - 64 - 16;
 /** How much of an original is read to find its frame size. EXIF and its embedded thumbnail come first, in up to 64 KiB. */
 export const HEAD_BYTES = 256 * 1024;
 
-export const ASSET_QUALITY = 0.85;
-export const THUMB_QUALITY = 0.8;
+export const ASSET_QUALITY = 0.75;
+export const THUMB_QUALITY = 0.7;
 
 export type Dims = { readonly width: number; readonly height: number };
 export type Bitmap = Dims & { close(): void };
