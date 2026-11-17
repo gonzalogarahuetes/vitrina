@@ -24,7 +24,7 @@ import { jpegFrameSize } from "../../src/lib/owner/jpeg-scan";
 import { ASSET_LONG_EDGE, ASSET_QUALITY, CHUNK_SIZE, HEAD_BYTES, THUMB_LONG_EDGE, THUMB_QUALITY, decode, fitLongEdge, jpeg, type Dims, type Resize } from "../../src/lib/owner/prepare";
 import { Gestures } from "../../src/lib/recipient/gestures";
 import { DOUBLE_TAP_SCALE, FIT, MAX_SCALE, clampView, drawCell, drawViewer, moveView, type Size, type View } from "../../src/lib/recipient/render";
-import { ASSET_QUALITIES, THUMB_QUALITIES, browserLabel, describeError, gridCell, report, shuffled, summarise, viewerStage, type Kind, type Row } from "./bench";
+import { ASSET_QUALITIES, THUMB_QUALITIES, browserLabel, describeError, exifOrientation, gridCell, orientationWords, report, shuffled, summarise, viewerStage, type Kind, type Row } from "./bench";
 
 /**
  * check-build.mjs fails a production build that contains this string. It is
@@ -46,6 +46,7 @@ const ui = {
   prev: $<HTMLButtonElement>("prev"),
   next: $<HTMLButtonElement>("next"),
   which: $("which"),
+  source: $("source"),
   frame: $<HTMLSelectElement>("frame"),
   blind: $<HTMLInputElement>("blind"),
   reveal: $<HTMLButtonElement>("reveal"),
@@ -184,6 +185,8 @@ const later: string[] = [];
 let copyNote = "";
 let rows: Row[] = [];
 const failures = new Map<number, string>();
+/** Each original's stored frame and EXIF orientation, read from its first bytes before decoding. */
+const sources = new Map<number, { frame: Dims | null; orientation: number | null }>();
 const decodeTimes = new Map<number, number>();
 let busy = false;
 
@@ -197,6 +200,7 @@ async function measure(list: File[]): Promise<void> {
   rows = [];
   failures.clear();
   decodeTimes.clear();
+  sources.clear();
   // Every photo copied into memory first, before any decoding. On an Android phone short
   // of memory, the app the photos were picked from can be closed as soon as the work
   // begins, and with it the browser's right to read them: photo 1 read, the rest
@@ -220,6 +224,15 @@ async function measure(list: File[]): Promise<void> {
       failures.set(i + 1, notRead);
       continue;
     }
+    const head = new Uint8Array(await (files[i] as File).slice(0, HEAD_BYTES).arrayBuffer());
+    let frame: Dims | null = null;
+    try {
+      frame = jpegFrameSize(head);
+    } catch {
+      frame = null; // as prepare.ts's decode(): no frame size, so decoded whole
+    }
+    const source = { frame, orientation: exifOrientation(head) };
+    sources.set(i + 1, source);
     ui.status.textContent = `Encoding photo ${i + 1} of ${files.length}…`;
     const r = await encodePhoto(files[i] as File);
     if (typeof r === "string") {
@@ -231,7 +244,7 @@ async function measure(list: File[]): Promise<void> {
     const thumbSize = fitLongEdge(r.size, THUMB_LONG_EDGE);
     for (const e of r.encodes) {
       const at = e.kind === "asset" ? r.size : thumbSize;
-      rows.push({ photo: i + 1, browser, width: at.width, height: at.height, kind: e.kind, quality: e.quality, bytes: e.bytes.length, encodeMs: e.ms });
+      rows.push({ photo: i + 1, browser, width: at.width, height: at.height, kind: e.kind, quality: e.quality, bytes: e.bytes.length, encodeMs: e.ms, frame: source.frame, orientation: source.orientation });
     }
     zero(r.encodes);
   }
@@ -274,7 +287,7 @@ function renderNumbers(): void {
   const thumbs = summarise(rows, "thumb", THUMB_QUALITIES);
   table(ui.sumThumb, [...sumHead, "fits one chunk"], thumbs.map((s) => [...sumRow(s), s.n === 0 ? "–" : s.maxBytes <= CHUNK_SIZE ? "yes" : "NO"]));
 
-  const head = ["photo", "size", "decode ms", ...ASSET_QUALITIES.map((q) => `${q.toFixed(2)} kB`), ...THUMB_QUALITIES.map((q) => `thumb ${q.toFixed(2)} kB`)];
+  const head = ["photo", "size", "stored", "EXIF orientation", "decode ms", ...ASSET_QUALITIES.map((q) => `${q.toFixed(2)} kB`), ...THUMB_QUALITIES.map((q) => `thumb ${q.toFixed(2)} kB`)];
   const body = files.map((_, i) => {
     const n = i + 1;
     const failed = failures.get(n);
@@ -282,7 +295,8 @@ function renderNumbers(): void {
     const of = rows.filter((r) => r.photo === n);
     const a = of.find((r) => r.kind === "asset");
     const cell = (kind: Kind, q: number) => kB(of.find((r) => r.kind === kind && r.quality === q)?.bytes ?? NaN);
-    return [String(n), a ? `${a.width}×${a.height}` : "", ms(decodeTimes.get(n) ?? NaN), ...ASSET_QUALITIES.map((q) => cell("asset", q)), ...THUMB_QUALITIES.map((q) => cell("thumb", q))];
+    const src = sources.get(n);
+    return [String(n), a ? `${a.width}×${a.height}` : "", src?.frame ? `${src.frame.width}×${src.frame.height}` : "not a JPEG", String(src?.orientation ?? "none"), ms(decodeTimes.get(n) ?? NaN), ...ASSET_QUALITIES.map((q) => cell("asset", q)), ...THUMB_QUALITIES.map((q) => cell("thumb", q))];
   });
   table(ui.perPhoto, head, body);
   ui.csv.value = report(rows, failures, later, copyNote);
@@ -345,6 +359,12 @@ async function openPhoto(index: number): Promise<void> {
   view = FIT;
   current = index;
   ui.which.textContent = `Photo ${index + 1} of ${files.length}`;
+  const src = sources.get(index + 1);
+  const out = rows.find((x) => x.photo === index + 1 && x.kind === "asset");
+  ui.source.textContent =
+    src === undefined
+      ? ""
+      : `Stored ${src.frame ? `${src.frame.width}×${src.frame.height}` : "(not a JPEG)"} · EXIF orientation ${orientationWords(src.orientation)}${out ? ` · came out ${out.width}×${out.height}` : ""}`;
   ui.prev.disabled = index === 0;
   ui.next.disabled = index === files.length - 1;
   ui.determinism.textContent = "";

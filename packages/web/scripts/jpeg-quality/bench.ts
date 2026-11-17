@@ -19,7 +19,82 @@ export type Row = {
   readonly quality: number;
   readonly bytes: number;
   readonly encodeMs: number;
+  /** The original's stored frame, from its SOF; null when it has none (not a JPEG). */
+  readonly frame: { readonly width: number; readonly height: number } | null;
+  /** The original's EXIF orientation tag (1–8); null when it has none. */
+  readonly orientation: number | null;
 };
+
+/**
+ * The EXIF Orientation tag (0x0112) from IFD0 of a JPEG's first Exif APP1, or
+ * null for no tag, no Exif, or anything malformed. Read only, for the page's
+ * report: the app's decode never looks at it, the browser applies it.
+ */
+export function exifOrientation(b: Uint8Array): number | null {
+  if (b.length < 4 || b[0] !== 0xff || b[1] !== 0xd8) return null;
+  let i = 2;
+  while (i + 4 <= b.length) {
+    if (b[i] !== 0xff) return null;
+    const marker = b[i + 1] as number;
+    if (marker === 0xff) {
+      i++; // fill byte
+      continue;
+    }
+    if (marker === 0xda || marker === 0xd9) return null; // image data or the end: no Exif before it
+    const len = ((b[i + 2] as number) << 8) | (b[i + 3] as number);
+    if (len < 2 || i + 2 + len > b.length) return null;
+    const start = i + 4;
+    if (marker === 0xe1 && len >= 8 && String.fromCharCode(...b.subarray(start, start + 6)) === "Exif\0\0") {
+      return tiffOrientation(b.subarray(start + 6, i + 2 + len));
+    }
+    i += 2 + len;
+  }
+  return null;
+}
+
+function tiffOrientation(t: Uint8Array): number | null {
+  if (t.length < 8) return null;
+  const le = t[0] === 0x49 && t[1] === 0x49;
+  if (!le && !(t[0] === 0x4d && t[1] === 0x4d)) return null;
+  const u16 = (o: number): number | null => (o + 2 > t.length ? null : le ? (t[o] as number) | ((t[o + 1] as number) << 8) : ((t[o] as number) << 8) | (t[o + 1] as number));
+  const u32 = (o: number): number | null => {
+    const a = u16(o);
+    const c = u16(o + 2);
+    if (a === null || c === null) return null;
+    return le ? a + c * 65536 : a * 65536 + c;
+  };
+  if (u16(2) !== 42) return null;
+  const ifd = u32(4);
+  if (ifd === null) return null;
+  const n = u16(ifd);
+  if (n === null) return null;
+  for (let k = 0; k < n; k++) {
+    const e = ifd + 2 + 12 * k;
+    if (u16(e) !== 0x0112) continue;
+    if (u16(e + 2) !== 3) return null; // SHORT, as the standard has it
+    const v = u16(e + 8);
+    return v !== null && v >= 1 && v <= 8 ? v : null;
+  }
+  return null;
+}
+
+/** What an orientation value asks of a viewer, in words. */
+export function orientationWords(o: number | null): string {
+  switch (o) {
+    case null:
+      return "no orientation tag: shown as stored";
+    case 1:
+      return "1: shown as stored";
+    case 3:
+      return "3: stored upside down, turned 180°";
+    case 6:
+      return "6: stored on its side, turned 90° clockwise";
+    case 8:
+      return "8: stored on its side, turned 90° anticlockwise";
+    default:
+      return `${o}: mirrored`;
+  }
+}
 
 /**
  * A short label from the user agent: browser, major version where it says
@@ -69,12 +144,12 @@ export function report(rows: readonly Row[], failed: ReadonlyMap<number, string>
   return toCsv(rows) + (note ? `# ${flat(note)}\n` : "") + first + again;
 }
 
-export const CSV_HEADER = "photo,browser,width,height,kind,quality,bytes,encode_ms";
+export const CSV_HEADER = "photo,browser,width,height,kind,quality,bytes,encode_ms,frame_width,frame_height,exif_orientation";
 
 export function toCsv(rows: readonly Row[]): string {
   const field = (s: string) => (/[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s);
   const lines = rows.map((r) =>
-    [r.photo, field(r.browser), r.width, r.height, r.kind, r.quality.toFixed(2), r.bytes, r.encodeMs.toFixed(1)].join(","),
+    [r.photo, field(r.browser), r.width, r.height, r.kind, r.quality.toFixed(2), r.bytes, r.encodeMs.toFixed(1), r.frame?.width ?? "none", r.frame?.height ?? "none", r.orientation ?? "none"].join(","),
   );
   return [CSV_HEADER, ...lines].join("\n") + "\n";
 }

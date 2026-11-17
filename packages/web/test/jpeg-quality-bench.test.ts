@@ -7,7 +7,8 @@
  */
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { CSV_HEADER, browserLabel, describeError, gridCell, median, report, shuffled, summarise, toCsv, viewerStage, type Row } from "../scripts/jpeg-quality/bench";
+import { CSV_HEADER, browserLabel, describeError, exifOrientation, gridCell, median, orientationWords, report, shuffled, summarise, toCsv, viewerStage, type Row } from "../scripts/jpeg-quality/bench";
+import { exifApp1, fakeJpeg, segment, spliceAfterSoi } from "../src/lib/owner/jpeg.test-support";
 
 const read = (path: string) => readFileSync(new URL(path, import.meta.url), "utf8");
 const MARKER = /"(vitrina:jpeg-quality-bench)"/;
@@ -38,7 +39,7 @@ describe("the JPEG quality page sends nothing", () => {
   });
 
   it("exports numbers only: no filename, no pixels", () => {
-    expect(CSV_HEADER).toBe("photo,browser,width,height,kind,quality,bytes,encode_ms");
+    expect(CSV_HEADER).toBe("photo,browser,width,height,kind,quality,bytes,encode_ms,frame_width,frame_height,exif_orientation");
   });
 });
 
@@ -56,13 +57,16 @@ describe("browserLabel", () => {
   it("never carries the device model", () => expect(browserLabel(cases[5]?.[1] ?? "", 5)).not.toMatch(/SM-/));
 });
 
-const row = (photo: number, kind: Row["kind"], quality: number, bytes: number, encodeMs = 10): Row => ({ photo, browser: "Safari / macOS", width: 1600, height: 1200, kind, quality, bytes, encodeMs });
+const row = (photo: number, kind: Row["kind"], quality: number, bytes: number, encodeMs = 10): Row => ({ photo, browser: "Safari / macOS", width: 1600, height: 1200, kind, quality, bytes, encodeMs, frame: { width: 4000, height: 3000 }, orientation: 1 });
 
 describe("toCsv", () => {
   it("writes one line per encode, quality to two places, time to one", () => {
     expect(toCsv([row(1, "asset", 0.7, 312345, 182.04), row(1, "thumb", 0.8, 41000, 9)])).toBe(
-      `${CSV_HEADER}\n1,Safari / macOS,1600,1200,asset,0.70,312345,182.0\n1,Safari / macOS,1600,1200,thumb,0.80,41000,9.0\n`,
+      `${CSV_HEADER}\n1,Safari / macOS,1600,1200,asset,0.70,312345,182.0,4000,3000,1\n1,Safari / macOS,1600,1200,thumb,0.80,41000,9.0,4000,3000,1\n`,
     );
+  });
+  it("writes none for an original with no frame and no orientation tag", () => {
+    expect(toCsv([{ ...row(2, "asset", 0.85, 5), frame: null, orientation: null }])).toContain(",none,none,none\n");
   });
   it("quotes a browser label with a comma", () => {
     expect(toCsv([{ ...row(1, "asset", 0.7, 1), browser: 'a,"b"' }])).toContain('"a,""b"""');
@@ -110,7 +114,7 @@ describe("the failure report", () => {
   });
   it("puts one comment line per failed photo after the CSV, in photo order", () => {
     const text = report([row(1, "asset", 0.7, 100)], new Map([[3, "not-decoded: x"], [2, "not-decoded: y\nz"]]));
-    expect(text).toBe(`${CSV_HEADER}\n1,Safari / macOS,1600,1200,asset,0.70,100,10.0\n# 2 failed\n# photo 2 failed: not-decoded: y z\n# photo 3 failed: not-decoded: x\n`);
+    expect(text).toBe(`${CSV_HEADER}\n1,Safari / macOS,1600,1200,asset,0.70,100,10.0,4000,3000,1\n# 2 failed\n# photo 2 failed: not-decoded: y z\n# photo 3 failed: not-decoded: x\n`);
   });
   it("adds nothing when nothing failed", () => expect(report([], new Map())).toBe(`${CSV_HEADER}\n`));
   it("says how the copy at pick went, before any failure", () => {
@@ -119,5 +123,29 @@ describe("the failure report", () => {
   it("lists failures on opening a photo again after the first ones", () => {
     const text = report([], new Map([[2, "a"]]), ["photo 1, preparing it again: NotReadableError"]);
     expect(text).toBe(`${CSV_HEADER}\n# 1 failed\n# photo 2 failed: a\n# 1 failed when opened again to compare\n# photo 1, preparing it again: NotReadableError\n`);
+  });
+});
+
+describe("exifOrientation", () => {
+  // A little-endian TIFF, as most Android cameras write it: IFD0 with one entry, Orientation.
+  const leExif = (o: number) => segment(0xe1, [..."Exif".split("").map((c) => c.charCodeAt(0)), 0, 0, 0x49, 0x49, 42, 0, 8, 0, 0, 0, 1, 0, 0x12, 0x01, 3, 0, 1, 0, 0, 0, o, 0, 0, 0, 0, 0, 0, 0]);
+
+  for (const o of [1, 3, 6, 8]) {
+    it(`reads ${o} from a big-endian Exif straight after SOI, as the browser check's phone photo has it`, () => {
+      expect(exifOrientation(spliceAfterSoi(fakeJpeg(4000, 3000), exifApp1(o)))).toBe(o);
+    });
+  }
+  it("reads a little-endian Exif after a JFIF APP0", () => expect(exifOrientation(fakeJpeg(4000, 3008, [leExif(6)]))).toBe(6));
+  it("is null with no Exif at all", () => expect(exifOrientation(fakeJpeg(4000, 3000))).toBeNull());
+  it("is null for something that is not a JPEG", () => expect(exifOrientation(new Uint8Array([1, 2, 3, 4, 5]))).toBeNull());
+  it("is null, not a throw, for an Exif cut short", () => {
+    const whole = spliceAfterSoi(fakeJpeg(4000, 3000), exifApp1(6));
+    for (let n = 2; n < 60; n++) expect(exifOrientation(whole.subarray(0, n))).toBeNull();
+  });
+  it("is null for an out-of-range value", () => expect(exifOrientation(fakeJpeg(10, 10, [leExif(9)]))).toBeNull());
+  it("says what each value asks of a viewer", () => {
+    expect(orientationWords(null)).toMatch(/shown as stored/);
+    expect(orientationWords(6)).toMatch(/90° clockwise/);
+    expect(orientationWords(5)).toMatch(/mirrored/);
   });
 });
