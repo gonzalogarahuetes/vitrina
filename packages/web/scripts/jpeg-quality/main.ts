@@ -75,6 +75,11 @@ document.documentElement.dataset["page"] = BENCH_MARKER;
 
 const browser = browserLabel(navigator.userAgent, navigator.maxTouchPoints);
 const dpr = (): number => window.devicePixelRatio || 1;
+/** Chrome's rounded RAM figure (navigator.deviceMemory); Safari and Firefox give none. */
+const deviceMemory = (): string => {
+  const gb = (navigator as Navigator & { deviceMemory?: number }).deviceMemory;
+  return typeof gb === "number" ? `${gb} GB` : "not reported";
+};
 const kB = (b: number): string => (Number.isFinite(b) ? (b / 1000).toFixed(1) : "–");
 const ms = (t: number): string => (Number.isFinite(t) ? t.toFixed(0) : "–");
 
@@ -135,14 +140,21 @@ async function encodePhoto(file: File): Promise<Encoded | string> {
  * would ask for. Runs only after a failure; never part of a measurement.
  */
 async function diagnose(file: File): Promise<string> {
-  const parts = [`type ${file.type || "(none given)"}`, `${(file.size / 1e6).toFixed(1)} MB`];
+  const parts = [
+    `picked ${Math.round((performance.now() - pickedAt) / 1000)} s ago`,
+    `phone memory ${deviceMemory()}`,
+    `type ${file.type || "(none given)"}`,
+    `${(file.size / 1e6).toFixed(1)} MB`,
+  ];
   let frame: Dims | null = null;
   try {
-    frame = jpegFrameSize(new Uint8Array(await file.slice(0, HEAD_BYTES).arrayBuffer()));
-  } catch {
-    frame = null;
+    const head = new Uint8Array(await file.slice(0, HEAD_BYTES).arrayBuffer());
+    parts.push("reading the file → ok");
+    frame = jpegFrameSize(head);
+    parts.push(frame === null ? "no JPEG frame in its first 256 KiB" : `frame ${frame.width}×${frame.height}`);
+  } catch (e) {
+    parts.push(`reading the file → ${describeError(e, file.name)}`);
   }
-  parts.push(frame === null ? "no JPEG frame in its first 256 KiB" : `frame ${frame.width}×${frame.height}`);
   const attempt = async (label: string, resize: Resize | null): Promise<string> => {
     try {
       const b = await browserImaging.decode(file, resize);
@@ -164,6 +176,10 @@ async function diagnose(file: File): Promise<string> {
 // ── Measuring pass: numbers only ───────────────────────────────────────────
 
 let files: File[] = [];
+/** When the photos were picked: a photo that reads at first and not later is a different failure from one that never reads. */
+let pickedAt = 0;
+/** Failures on opening a photo again to compare, after it measured. */
+const later: string[] = [];
 let rows: Row[] = [];
 const failures = new Map<number, string>();
 const decodeTimes = new Map<number, number>();
@@ -175,6 +191,8 @@ async function measure(list: File[]): Promise<void> {
   ui.compare.hidden = true;
   ui.numbers.hidden = true;
   files = list;
+  pickedAt = performance.now();
+  later.length = 0;
   rows = [];
   failures.clear();
   decodeTimes.clear();
@@ -244,7 +262,7 @@ function renderNumbers(): void {
     return [String(n), a ? `${a.width}×${a.height}` : "", ms(decodeTimes.get(n) ?? NaN), ...ASSET_QUALITIES.map((q) => cell("asset", q)), ...THUMB_QUALITIES.map((q) => cell("thumb", q))];
   });
   table(ui.perPhoto, head, body);
-  ui.csv.value = report(rows, failures);
+  ui.csv.value = report(rows, failures, later);
 }
 
 ui.copy.addEventListener("click", () => {
@@ -321,9 +339,10 @@ async function openPhoto(index: number): Promise<void> {
     return;
   }
   ui.assetNow.textContent = "Encoding this photo again for the comparison…";
-  const r = await encodePhoto(files[index] as File);
+  const file = files[index] as File;
+  const r = await encodePhoto(file);
   if (typeof r === "string") {
-    if (mine === opening) ui.assetNow.textContent = `This photo failed: ${r}`;
+    if (mine === opening) failAgain(index, "preparing it again", `${r} | ${await diagnose(file)}`);
     return;
   }
   const asset = new Map<number, ImageBitmap>();
@@ -333,7 +352,14 @@ async function openPhoto(index: number): Promise<void> {
   try {
     for (const e of r.encodes) {
       // As the recipient decodes: bytes to a Blob to a bitmap, no URL.
-      const bitmap = await createImageBitmap(new Blob([e.bytes], { type: "image/jpeg" }));
+      let bitmap: ImageBitmap;
+      try {
+        bitmap = await createImageBitmap(new Blob([e.bytes], { type: "image/jpeg" }));
+      } catch (err) {
+        for (const b of [...asset.values(), ...thumb.values()]) b.close();
+        if (mine === opening) failAgain(index, `showing its ${e.kind} at ${e.quality.toFixed(2)}`, `${describeError(err, file.name)} | picked ${Math.round((performance.now() - pickedAt) / 1000)} s ago; phone memory ${deviceMemory()}`);
+        return;
+      }
       (e.kind === "asset" ? asset : thumb).set(e.quality, bitmap);
       encodes.set(`${e.kind}${e.quality}`, e);
       const first = rows.find((x) => x.photo === index + 1 && x.kind === e.kind && x.quality === e.quality);
@@ -352,6 +378,20 @@ async function openPhoto(index: number): Promise<void> {
   revealed = false;
   renderButtons();
   draw();
+}
+
+/** A photo that measured, failing when opened again: said on the photo, kept for the copied numbers. */
+function failAgain(index: number, step: string, why: string): void {
+  later.push(`photo ${index + 1}, ${step}: ${why}`);
+  ui.photoError.textContent = `Photo ${index + 1} was measured, but failed when opened again (${step}). ${why}`;
+  ui.photoError.hidden = false;
+  ui.assetNow.textContent = "";
+  ui.thumbNow.textContent = "";
+  ui.assetQ.replaceChildren();
+  ui.thumbQ.replaceChildren();
+  clear(ui.photo);
+  clear(ui.cell);
+  ui.csv.value = report(rows, failures, later);
 }
 
 function clear(c: HTMLCanvasElement): void {

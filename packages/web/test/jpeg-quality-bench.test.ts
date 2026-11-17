@@ -113,4 +113,8 @@ describe("the failure report", () => {
     expect(text).toBe(`${CSV_HEADER}\n1,Safari / macOS,1600,1200,asset,0.70,100,10.0\n# 2 failed\n# photo 2 failed: not-decoded: y z\n# photo 3 failed: not-decoded: x\n`);
   });
   it("adds nothing when nothing failed", () => expect(report([], new Map())).toBe(`${CSV_HEADER}\n`));
+  it("lists failures on opening a photo again after the first ones", () => {
+    const text = report([], new Map([[2, "a"]]), ["photo 1, preparing it again: NotReadableError"]);
+    expect(text).toBe(`${CSV_HEADER}\n# 1 failed\n# photo 2 failed: a\n# 1 failed when opened again to compare\n# photo 1, preparing it again: NotReadableError\n`);
+  });
 });

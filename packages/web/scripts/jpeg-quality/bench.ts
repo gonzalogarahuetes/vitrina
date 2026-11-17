@@ -61,9 +61,12 @@ export function describeError(e: unknown, fileName: string): string {
 }
 
 /** The copied text: the CSV, then one comment line per failed photo, numbers and browser answers only. */
-export function report(rows: readonly Row[], failed: ReadonlyMap<number, string>): string {
-  const lines = [...failed].sort(([a], [b]) => a - b).map(([photo, why]) => `# photo ${photo} failed: ${why.replace(/\n/g, " ")}`);
-  return toCsv(rows) + (lines.length ? `# ${lines.length} failed\n${lines.join("\n")}\n` : "");
+export function report(rows: readonly Row[], failed: ReadonlyMap<number, string>, later: readonly string[] = []): string {
+  const flat = (s: string) => s.replace(/\n/g, " ");
+  const lines = [...failed].sort(([a], [b]) => a - b).map(([photo, why]) => `# photo ${photo} failed: ${flat(why)}`);
+  const first = lines.length ? `# ${lines.length} failed\n${lines.join("\n")}\n` : "";
+  const again = later.length ? `# ${later.length} failed when opened again to compare\n${later.map((l) => `# ${flat(l)}`).join("\n")}\n` : "";
+  return toCsv(rows) + first + again;
 }
 
 export const CSV_HEADER = "photo,browser,width,height,kind,quality,bytes,encode_ms";
