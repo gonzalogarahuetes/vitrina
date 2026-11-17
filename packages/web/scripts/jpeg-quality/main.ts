@@ -180,6 +180,8 @@ let files: File[] = [];
 let pickedAt = 0;
 /** Failures on opening a photo again to compare, after it measured. */
 const later: string[] = [];
+/** How the copy at pick went, for the copied numbers. */
+let copyNote = "";
 let rows: Row[] = [];
 const failures = new Map<number, string>();
 const decodeTimes = new Map<number, number>();
@@ -190,13 +192,34 @@ async function measure(list: File[]): Promise<void> {
   closeShown();
   ui.compare.hidden = true;
   ui.numbers.hidden = true;
-  files = list;
   pickedAt = performance.now();
   later.length = 0;
   rows = [];
   failures.clear();
   decodeTimes.clear();
+  // Every photo copied into memory first, before any decoding. On an Android phone short
+  // of memory, the app the photos were picked from can be closed as soon as the work
+  // begins, and with it the browser's right to read them: photo 1 read, the rest
+  // NotReadableError within seconds. The copy keeps the bytes and the type, not the name.
+  files = [];
+  const unread = new Map<number, string>();
+  for (let i = 0; i < list.length; i++) {
+    ui.status.textContent = `Reading photo ${i + 1} of ${list.length} into memory…`;
+    const f = list[i] as File;
+    try {
+      files.push(new File([await f.arrayBuffer()], "", { type: f.type, lastModified: f.lastModified }));
+    } catch (e) {
+      unread.set(i + 1, `could not be read when picked (${describeError(e, f.name)}) | ${(f.size / 1e6).toFixed(1)} MB, ${Math.round((performance.now() - pickedAt) / 1000)} s after picking`);
+      files.push(new File([], "", { type: f.type }));
+    }
+  }
+  copyNote = `copied into memory at pick: ${list.length - unread.size} of ${list.length} read, in ${((performance.now() - pickedAt) / 1000).toFixed(1)} s`;
   for (let i = 0; i < files.length; i++) {
+    const notRead = unread.get(i + 1);
+    if (notRead !== undefined) {
+      failures.set(i + 1, notRead);
+      continue;
+    }
     ui.status.textContent = `Encoding photo ${i + 1} of ${files.length}…`;
     const r = await encodePhoto(files[i] as File);
     if (typeof r === "string") {
@@ -262,7 +285,7 @@ function renderNumbers(): void {
     return [String(n), a ? `${a.width}×${a.height}` : "", ms(decodeTimes.get(n) ?? NaN), ...ASSET_QUALITIES.map((q) => cell("asset", q)), ...THUMB_QUALITIES.map((q) => cell("thumb", q))];
   });
   table(ui.perPhoto, head, body);
-  ui.csv.value = report(rows, failures, later);
+  ui.csv.value = report(rows, failures, later, copyNote);
 }
 
 ui.copy.addEventListener("click", () => {
@@ -391,7 +414,7 @@ function failAgain(index: number, step: string, why: string): void {
   ui.thumbQ.replaceChildren();
   clear(ui.photo);
   clear(ui.cell);
-  ui.csv.value = report(rows, failures, later);
+  ui.csv.value = report(rows, failures, later, copyNote);
 }
 
 function clear(c: HTMLCanvasElement): void {
