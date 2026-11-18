@@ -9,7 +9,7 @@ scripts stop with a usage line when one is empty:
 
 ```
 IP=<the server's IPv4 address>     # from the Hetzner console
-ADMIN=<the admin user's name>      # chosen at first provision
+ADMIN=<the admin user's name>      # chosen at first provision; password manager (§4)
 KEY=~/.ssh/vitrina_hetzner
 ```
 
@@ -32,10 +32,12 @@ backups. Nothing else is needed.
 ### 1a. Recovery
 
 1. **Server.** Hetzner console, production project: Ubuntu 24.04, the media
-   bucket's location, the SSH key, public IPv4 and IPv6, **Backups off**, no
-   volumes, firewalls, placement group, labels or cloud config. Note `IP`.
-2. **DNS.** Point the A and AAAA records of the app and API hostnames at the
-   new server (IPv6: the `::1` of its `/64`). Check:
+   bucket's location, the SSH key selected, public IPv4 and IPv6, **Backups
+   off**, no volumes, firewalls, placement group, labels or cloud config. Note
+   `IP`. No key selected means Hetzner emails a root password instead: delete
+   the server and create it again with the key.
+2. **DNS** (the zone: §4). Point the A and AAAA records of the app and API
+   hostnames at the new server (IPv6: the `::1` of its `/64`). Check:
    `dig +short <app-hostname> A` and `AAAA`, for both names.
 3. **Provision** (first run as root; it asks for the admin's sudo password):
    ```
@@ -57,11 +59,20 @@ backups. Nothing else is needed.
    ssh -t -i $KEY $ADMIN@$IP sudo bash vitrina-server/configure.sh --restore-secret --allow <addresses>
    deploy/server/check-config.sh $IP $ADMIN
    ```
-5. **Database**, before any deploy. Put the age key file and the backup bucket's
-   values on the Mac (§4), then:
+5. **Database**, before any deploy. First the backup bucket's values, on the Mac:
    ```
+   cp deploy/backup/backup-bucket.env.example ~/.vitrina/backup-bucket.env && chmod 600 ~/.vitrina/backup-bucket.env
+   ```
+   The template holds names only: fill every value from the password manager's
+   backup-bucket entry (`s3.mjs: missing BACKUP_…` means one is empty). Then
+   the age key: copy the entry "Vitrina backup key (age)" and, at once:
+   ```
+   deploy/backup/agekey.sh
    AGE_IDENTITY=~/vitrina-backup.agekey deploy/backup/recover.sh $IP $ADMIN
    ```
+   `agekey.sh` prints the key's public key: it must equal the entry's
+   `# public key:` line. Never `age-keygen -o` here — that makes a new key,
+   which decrypts no backup.
 6. **Release**: the tag that was live — the newest one deployed (the server
    that recorded it is gone). Its migrations must report `0 applied`; a tag
    that adds migrations is refused (no backups here yet), an older one fails
@@ -98,20 +109,39 @@ The same recovery, run against copies, so that nothing production is written:
 - no backups set up on the rehearsal server, so the production backup bucket
   and the heartbeat are never written.
 
-Steps:
+Follow these steps from main's copy of this file (e.g. on GitHub): step 1's
+checkout replaces the working tree's.
 
-1. **Names.** Pick two temporary hostnames under the domain, e.g. `dr-app.` and
-   `dr-api.` In this shell, for every step below:
+1. **Window, tag, names.** A new terminal window for all of it, closed at the
+   end. The rehearsal restores production's database, so it runs production's
+   code from the start: the live tag, read with production's values. Then two
+   temporary hostnames under the domain, e.g. `dr-app.` and `dr-api.`:
    ```
+   deploy/release/live.sh <production IPv4> <production admin>
+   git status                       # clean
+   git checkout <live tag>          # every script below is the tag's own
    export VITRINA_APP_HOST=<temporary app hostname> VITRINA_API_HOST=<temporary API hostname>
    ```
-2. **Hetzner:** a new project for the rehearsal, with
-   - a server as in 1a step 1 (any location);
-   - an empty, private bucket, and S3 credentials for it.
-   Put that bucket's values in `~/.vitrina/rehearsal-storage.env`
-   (names: `deploy/storage/storage.env.example`, `chmod 600`).
-3. **DNS:** add A and AAAA records for the two temporary names only, pointing at
-   the rehearsal server. Check with `dig`.
+   `untagged`: tag it first, as §5 step 8. Set `KEY` and `ADMIN` (any name for
+   the rehearsal's admin user), and start a password-manager entry for that
+   name; its sudo password joins it in step 4.
+2. **Hetzner:** a new project for the rehearsal. In it:
+   - **Security → SSH keys:** add the public key (`pbcopy < $KEY.pub`). Keys
+     belong to a project: production's is not visible here;
+   - a server as in 1a step 1 (any location), with that key selected. Set `IP`;
+   - an empty, private bucket, and **Security → S3 credentials** for it. The
+     secret key is shown once.
+
+   Then the bucket's file:
+   ```
+   cp deploy/storage/storage.env.example ~/.vitrina/rehearsal-storage.env && chmod 600 ~/.vitrina/rehearsal-storage.env
+   ```
+   The template holds names only: fill every value — the endpoint and region of
+   the bucket's location as the console shows them, the bucket's name, both
+   keys. New credentials can take minutes to work everywhere; `copy-media.mjs`
+   waits up to 5 minutes for them.
+3. **DNS** (the zone: §4): A and AAAA records for the two temporary names only,
+   pointing at the rehearsal server. Check with `dig`.
 4. **Provision**, as 1a step 3, but with the names on the first run:
    ```
    scp -i $KEY -r deploy/server root@$IP:/root/vitrina-server
@@ -123,21 +153,38 @@ Steps:
    ```
    node deploy/backup/copy-media.mjs ~/.vitrina/storage.env ~/.vitrina/rehearsal-storage.env
    ```
+   After a failure, run it again: it resumes a partial copy. It refuses a
+   target holding anything production's `media/` does not, and production's
+   buckets by name.
 6. **Configure** as 1a step 4, with `--restore-secret` and `--allow`, but the
    storage values of the **rehearsal** bucket. Then `check-config.sh`.
-7. **Database, release, checks:** 1a steps 5 and 6, unchanged (`deploy.sh`,
-   `verify.sh` and `public-check.mjs` use the exported names).
+7. **Database, release, checks:** 1a steps 5 and 6 (already on the live tag;
+   `deploy.sh`, `verify.sh` and `public-check.mjs` use the exported names).
 8. **Proof:** at `https://$VITRINA_APP_HOST`, sign in with an owner's real
    password — it works only if the server secret was restored — and see the
    albums and photos. Make a new invite there and open it on another device.
    (Invites made in production point at production and are not used here.)
-9. **Teardown:**
-   - Hetzner: delete the rehearsal server, its bucket and credentials, and the
-     rehearsal project;
-   - DNS: delete the two temporary records;
-   - Mac: delete `~/.vitrina/rehearsal-storage.env`, `~/.vitrina/backup-bucket.env`
-     and `~/vitrina-backup.agekey`; `ssh-keygen -R $IP`; `unset VITRINA_APP_HOST VITRINA_API_HOST`;
-   - password manager: delete the rehearsal sudo password.
+9. **Teardown**, the same day: the rehearsal server holds production's secret
+   and a copy of its database.
+   - **Empty the bucket** — Hetzner deletes only empty buckets — from main
+     (the tag may predate the script):
+     ```
+     git checkout main
+     node deploy/backup/empty-bucket.mjs ~/.vitrina/rehearsal-storage.env <rehearsal bucket name>
+     ```
+   - Hetzner: delete the rehearsal server, then its bucket, then its S3
+     credentials, then the rehearsal project;
+   - DNS: delete the temporary records (A and AAAA, both names), only those;
+   - Mac:
+     ```
+     rm ~/.vitrina/rehearsal-storage.env ~/.vitrina/backup-bucket.env ~/vitrina-backup.agekey
+     ssh-keygen -R $IP
+     unset VITRINA_APP_HOST VITRINA_API_HOST
+     ls ~/.vitrina/                   # storage.env only
+     ```
+     then close the window;
+   - password manager: delete the rehearsal admin entry, and any rehearsal S3
+     keys saved; email: Hetzner's root-password message, if one came.
 
 ---
 
@@ -185,7 +232,7 @@ From nothing, with no backup to restore.
 2. **Staging** (§5) first if the release adds a migration, or touches
    accounts, keys or deletion.
 3. **Backup**, if it adds a migration, within the hour before step 4 — the
-   age key from the password manager first, deleted after:
+   age key from the password manager first (`agekey.sh`, 1a step 5), deleted after:
    ```
    pnpm infra:up && pnpm infra:wait && pnpm --filter @vitrina/server build
    AGE_IDENTITY=~/vitrina-backup.agekey deploy/backup/restore-test.sh $IP $ADMIN
@@ -242,9 +289,10 @@ ssh -t -i $KEY $ADMIN@$IP sudo bash vitrina-server/configure.sh --allow <every a
 deploy/server/check-config.sh $IP $ADMIN
 ```
 
-**Rerun the restore test** — recreate `~/vitrina-backup.agekey` from the password
-manager first, delete it after:
+**Rerun the restore test** — copy the entry "Vitrina backup key (age)" first;
+delete `~/vitrina-backup.agekey` after:
 ```
+deploy/backup/agekey.sh
 pnpm infra:up && pnpm infra:wait && pnpm --filter @vitrina/server build
 AGE_IDENTITY=~/vitrina-backup.agekey deploy/backup/restore-test.sh $IP $ADMIN
 ```
@@ -260,7 +308,10 @@ Names only. Values live where each line says.
   the media bucket's S3 credentials. Server backups and snapshots: **off**;
 - backups project, in another location: the backup bucket and its S3 credentials.
 
-**DNS** — the domain's zone: A and AAAA records for the app and API hostnames.
+**DNS** — the domain's zone, on Hetzner's older DNS service: edited in Hetzner
+Robot or konsoleH, not the Cloud Console (which shows no zones). A and AAAA
+records for the app and API hostnames. A rehearsal's or staging's temporary
+records go into this zone; a zone is never created or imported.
 
 **Better Stack**
 - uptime monitor: `GET https://<API hostname>/health`, keyword `ok`; never `HEAD`;
@@ -273,10 +324,12 @@ Names only. Values live where each line says.
 - Vitrina backup key (age) — the whole key file
 - media bucket: endpoint, region, bucket, access key, secret key
 - backup bucket: endpoint, region, bucket, access key, secret key
-- admin user's sudo password
+- admin user: its name and its sudo password, one entry
+- during a rehearsal or staging: that server's admin entry, the same way;
+  deleted at teardown
 - SSH key passphrase
 - Better Stack heartbeat URL
-- accounts: Hetzner, DNS provider, Better Stack
+- accounts: Hetzner Cloud, Hetzner Robot or konsoleH (the DNS zone), Better Stack
 
 **On the server, written by scripts, root-only**
 - `/opt/vitrina/history` — the last two releases that went live, the live one
@@ -292,6 +345,7 @@ Names only. Values live where each line says.
 - `~/.vitrina/storage.env` — the media bucket's values
 - during a recovery only: `~/.vitrina/backup-bucket.env`
   (names: `deploy/backup/backup-bucket.env.example`), `~/vitrina-backup.agekey`
+  (`agekey.sh`)
 - during a rehearsal only: `~/.vitrina/rehearsal-storage.env`
 - during staging only: `~/.vitrina/staging-storage.env`, and the recovery files above
 
@@ -330,10 +384,10 @@ server's; close it at the end. A deploy built in the wrong window is refused
 before anything changes (`release.sh`: the app was built for another host).
 
 1. **Names:** `export VITRINA_APP_HOST=stg-app.<domain> VITRINA_API_HOST=stg-api.<domain>`
-2. **Hetzner:** a new project, e.g. `staging-vX.Y.Z`: a server as in 1a step 1,
-   an empty private bucket and S3 credentials for it, in
-   `~/.vitrina/staging-storage.env` (names: `deploy/storage/storage.env.example`,
-   `chmod 600`). Set `IP`.
+2. **Hetzner:** a new project, e.g. `staging-vX.Y.Z`, set up as 1b step 2 (the
+   SSH key, the server, the bucket and its credentials), with
+   `~/.vitrina/staging-storage.env` for the bucket's values. Set `IP`, and an
+   admin entry in the password manager.
 3. **DNS:** A and AAAA records for the two temporary names only (1b step 3).
 4. **Provision:** 1b step 4.
 5. **Photos:**
@@ -376,11 +430,14 @@ before anything changes (`release.sh`: the app was built for another host).
    ```
    A failure here is the migration breaking the rule: fix it before production.
 10. **Teardown**, the same day:
+    - **Empty the bucket** (Hetzner deletes only empty buckets):
+      ```
+      node deploy/backup/empty-bucket.mjs ~/.vitrina/staging-storage.env <staging bucket name>
+      ```
     - Hetzner: delete the staging server — production's server secret and
-      database copy go with it — its bucket and credentials, and the project;
-    - DNS: delete the two temporary records;
-    - Mac: delete `~/.vitrina/staging-storage.env`, `~/.vitrina/backup-bucket.env`
-      and `~/vitrina-backup.agekey`; `ssh-keygen -R $IP`; close the window;
-    - password manager: delete the staging sudo password.
+      database copy go with it — then its bucket, its credentials, and the project;
+    - DNS: delete the temporary records (A and AAAA, both names), only those;
+    - Mac: as 1b step 9, with `staging-storage.env`; close the window;
+    - password manager: delete the staging admin entry.
 
 Then §3, deploy a release, step 4, in production's window.
