@@ -62,7 +62,8 @@ function album(h: ReturnType<typeof harness>): AlbumScreen {
   return s;
 }
 
-const photo = (name = NAME, bytes: Uint8Array<ArrayBuffer> = spliceAfterSoi(fakeJpeg(4032, 3024), exifApp1())) => new File([bytes], name, { type: "image/jpeg" });
+// Orientation 1: okImaging decodes it as stored, landscape. A 6 here would be a browser ignoring it, which prepare.ts refuses.
+const photo = (name = NAME, bytes: Uint8Array<ArrayBuffer> = spliceAfterSoi(fakeJpeg(4032, 3024), exifApp1(1))) => new File([bytes], name, { type: "image/jpeg" });
 
 /** An Imaging that records into the relay's event log, so its steps can be ordered against requests. */
 function recordedImaging(events: string[], base: Imaging = okImaging()): Imaging {
@@ -801,7 +802,7 @@ class PickedFile extends File {
     name: string,
     private readonly opts: { readable?: number; size?: number } = {},
   ) {
-    super([spliceAfterSoi(fakeJpeg(4032, 3024), exifApp1())], name, { type: "image/jpeg" });
+    super([spliceAfterSoi(fakeJpeg(4032, 3024), exifApp1(1))], name, { type: "image/jpeg" });
   }
   override get size(): number {
     return this.opts.size ?? super.size;

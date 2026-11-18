@@ -7,8 +7,7 @@
  */
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { CSV_HEADER, browserLabel, describeError, exifOrientation, gridCell, median, orientationWords, report, shuffled, summarise, toCsv, viewerStage, type Row } from "../scripts/jpeg-quality/bench";
-import { exifApp1, fakeJpeg, segment, spliceAfterSoi } from "../src/lib/owner/jpeg.test-support";
+import { CSV_HEADER, browserLabel, describeError, gridCell, median, orientationWords, report, shuffled, summarise, toCsv, viewerStage, type Row } from "../scripts/jpeg-quality/bench";
 
 const read = (path: string) => readFileSync(new URL(path, import.meta.url), "utf8");
 const MARKER = /"(vitrina:jpeg-quality-bench)"/;
@@ -126,23 +125,7 @@ describe("the failure report", () => {
   });
 });
 
-describe("exifOrientation", () => {
-  // A little-endian TIFF, as most Android cameras write it: IFD0 with one entry, Orientation.
-  const leExif = (o: number) => segment(0xe1, [..."Exif".split("").map((c) => c.charCodeAt(0)), 0, 0, 0x49, 0x49, 42, 0, 8, 0, 0, 0, 1, 0, 0x12, 0x01, 3, 0, 1, 0, 0, 0, o, 0, 0, 0, 0, 0, 0, 0]);
-
-  for (const o of [1, 3, 6, 8]) {
-    it(`reads ${o} from a big-endian Exif straight after SOI, as the browser check's phone photo has it`, () => {
-      expect(exifOrientation(spliceAfterSoi(fakeJpeg(4000, 3000), exifApp1(o)))).toBe(o);
-    });
-  }
-  it("reads a little-endian Exif after a JFIF APP0", () => expect(exifOrientation(fakeJpeg(4000, 3008, [leExif(6)]))).toBe(6));
-  it("is null with no Exif at all", () => expect(exifOrientation(fakeJpeg(4000, 3000))).toBeNull());
-  it("is null for something that is not a JPEG", () => expect(exifOrientation(new Uint8Array([1, 2, 3, 4, 5]))).toBeNull());
-  it("is null, not a throw, for an Exif cut short", () => {
-    const whole = spliceAfterSoi(fakeJpeg(4000, 3000), exifApp1(6));
-    for (let n = 2; n < 60; n++) expect(exifOrientation(whole.subarray(0, n))).toBeNull();
-  });
-  it("is null for an out-of-range value", () => expect(exifOrientation(fakeJpeg(10, 10, [leExif(9)]))).toBeNull());
+describe("orientationWords", () => {
   it("says what each value asks of a viewer", () => {
     expect(orientationWords(null)).toMatch(/shown as stored/);
     expect(orientationWords(6)).toMatch(/90° clockwise/);

@@ -1,13 +1,17 @@
 import { describe, expect, it } from "vitest";
 import { jpegFrameSize } from "./jpeg-scan";
 import { exifApp1, fakeJpeg, HIDDEN_EXIF, segment, spliceAfterSoi } from "./jpeg.test-support";
-import { CHUNK_SIZE, fitLongEdge, prepare, type Bitmap, type Dims, type Imaging, type Resize } from "./prepare";
+import { CHUNK_SIZE, decode, fitLongEdge, orientedShape, prepare, type Bitmap, type Dims, type Imaging, type Resize } from "./prepare";
 
 type Opts = {
   /** What a full decode yields: the photo with its EXIF orientation applied. */
   oriented?: Dims;
   /** The stored frame, as the file's SOF says. Default: `oriented` turned a quarter, as phones store portraits. */
   frame?: Dims | null;
+  /** The file's EXIF orientation tag, null for none. Default: 6 when `frame` is `oriented` turned a quarter, else 1. */
+  orientation?: number | null;
+  /** A browser that decodes without applying the orientation: the stored frame, as it is. "resized": only when asked to resize. */
+  ignoresOrientation?: boolean | "resized";
   /** How decode treats a resize: honour it after orienting (default), ignore it, apply it before orienting, or throw. */
   decode?: "honour" | "ignore" | "before-orienting" | "throw";
   encode?: (size: Dims, call: number) => Blob | null;
@@ -16,6 +20,11 @@ type Opts = {
 function fakeImaging(opts: Opts = {}) {
   const oriented = opts.oriented ?? { width: 3024, height: 4032 };
   const frame = opts.frame === undefined ? { width: oriented.height, height: oriented.width } : opts.frame;
+  const turned = frame !== null && frame.width === oriented.height && frame.height === oriented.width && frame.width !== frame.height;
+  const orientation = opts.orientation === undefined ? (turned ? 6 : 1) : opts.orientation;
+  // What the browser hands back for a whole decode: the photo oriented, or the frame as stored.
+  const shown = (resized: boolean): Dims =>
+    frame !== null && (opts.ignoresOrientation === true || (opts.ignoresOrientation === "resized" && resized)) ? frame : oriented;
   const log: string[] = [];
   const open = new Set<Bitmap>();
   const bitmap = (d: Dims): Bitmap => {
@@ -39,13 +48,13 @@ function fakeImaging(opts: Opts = {}) {
       log.push(`decode ${r === null ? "full" : "width" in r ? `width ${r.width}` : `height ${r.height}`}`);
       const mode = opts.decode ?? "honour";
       if (mode === "throw") throw new Error("out of memory");
-      if (r === null || mode === "ignore") return bitmap(oriented);
+      if (r === null || mode === "ignore") return bitmap(shown(false));
       if (mode === "before-orienting" && frame !== null) {
         const s = scale(frame, r);
         const rotated = frame.width !== oriented.width;
         return bitmap(rotated ? { width: s.height, height: s.width } : s);
       }
-      return bitmap(scale(oriented, r));
+      return bitmap(scale(shown(true), r));
     },
     encode: async (b, size, type, quality) => {
       log.push(`encode ${size.width}x${size.height} from ${b.width}x${b.height} ${type} ${quality}`);
@@ -56,7 +65,11 @@ function fakeImaging(opts: Opts = {}) {
     },
   };
   const file = (name = "IMG_20260612_bathtime.jpg") =>
-    new File([frame === null ? new Uint8Array([1, 2, 3]) : spliceAfterSoi(fakeJpeg(frame.width, frame.height), exifApp1())], name, { type: "image/jpeg" });
+    new File(
+      [frame === null ? new Uint8Array([1, 2, 3]) : orientation === null ? fakeJpeg(frame.width, frame.height) : spliceAfterSoi(fakeJpeg(frame.width, frame.height), exifApp1(orientation))],
+      name,
+      { type: "image/jpeg" },
+    );
   return { imaging, log, open, file };
 }
 
@@ -243,5 +256,93 @@ describe("prepare (flows §3.6 step 1)", () => {
     if (!r.ok) throw new Error(r.error);
     expect(meta(r.prepared.meta)).toEqual({ width: 1200, height: 1600 });
     expect(await prepare(f.file("x".repeat(5000)), f.imaging)).toEqual({ ok: false, error: "meta-too-large" });
+  });
+});
+
+describe("decode: the EXIF orientation decides the shape (encryption spec §7, #17)", () => {
+  it("5–8 turn the frame a quarter; 1–4 keep it", () => {
+    const frame = { width: 4032, height: 3024 };
+    for (const o of [1, 2, 3, 4]) expect(orientedShape(frame, o), String(o)).toEqual({ width: 4032, height: 3024 });
+    for (const o of [5, 6, 7, 8]) expect(orientedShape(frame, o), String(o)).toEqual({ width: 3024, height: 4032 });
+  });
+
+  it("orientation 6, a browser that applies it: portrait", async () => {
+    const f = fakeImaging({ oriented: { width: 3024, height: 4032 }, orientation: 6 });
+    const b = await decode(f.file(), f.imaging);
+    expect(b).toMatchObject({ width: 1200, height: 1600 });
+    b?.close();
+    expect(f.open.size).toBe(0);
+  });
+
+  it("orientation 6, a browser that ignores it on the resized and the full decode: nothing returned, nothing encoded, every bitmap closed", async () => {
+    const f = fakeImaging({ oriented: { width: 3024, height: 4032 }, orientation: 6, ignoresOrientation: true });
+    expect(await decode(f.file(), f.imaging)).toBeNull();
+    expect(f.log).toEqual(["decode width 1600", "close 1600x1200", "decode full", "close 4032x3024"]);
+    expect(f.open.size).toBe(0);
+
+    const p = fakeImaging({ oriented: { width: 3024, height: 4032 }, orientation: 6, ignoresOrientation: true });
+    expect(await prepare(p.file(), p.imaging)).toEqual({ ok: false, error: "not-decoded" });
+    expect(p.log.some((l) => l.startsWith("encode"))).toBe(false);
+    expect(p.open.size).toBe(0);
+  });
+
+  it("orientation 6, a small photo decoded whole by a browser that ignores it: fails, never stored turned", async () => {
+    const f = fakeImaging({ oriented: { width: 900, height: 1200 }, orientation: 6, ignoresOrientation: true });
+    expect(await prepare(f.file(), f.imaging)).toEqual({ ok: false, error: "not-decoded" });
+    expect(f.log).toEqual(["decode full", "close 1200x900"]);
+    expect(f.open.size).toBe(0);
+  });
+
+  it("orientation 6, ignored only by the resized decode: that bitmap is closed and the full decode, oriented, is used", async () => {
+    const f = fakeImaging({ oriented: { width: 3024, height: 4032 }, orientation: 6, ignoresOrientation: "resized" });
+    const r = await prepare(f.file(), f.imaging);
+    if (!r.ok) throw new Error(r.error);
+    expect(r.prepared.size).toEqual({ width: 1200, height: 1600 });
+    expect(f.log.slice(0, 3)).toEqual(["decode width 1600", "close 1600x1200", "decode full"]);
+    expect(f.open.size).toBe(0);
+  });
+
+  it("orientation 1, a landscape result: passes", async () => {
+    const f = fakeImaging({ oriented: { width: 4000, height: 3000 }, frame: { width: 4000, height: 3000 }, orientation: 1 });
+    const r = await prepare(f.file(), f.imaging);
+    if (!r.ok) throw new Error(r.error);
+    expect(r.prepared.size).toEqual({ width: 1600, height: 1200 });
+  });
+
+  it("orientation 1, a result turned a quarter: refused, though either shape passed before the tag was read", async () => {
+    const f = fakeImaging({ oriented: { width: 3000, height: 4000 }, frame: { width: 4000, height: 3000 }, orientation: 1 });
+    expect(await prepare(f.file(), f.imaging)).toEqual({ ok: false, error: "not-decoded" });
+    expect(f.open.size).toBe(0);
+  });
+
+  it("a square frame passes either way: its shape cannot tell", async () => {
+    const f = fakeImaging({ oriented: { width: 3000, height: 3000 }, frame: { width: 3000, height: 3000 }, orientation: 6, ignoresOrientation: true });
+    expect((await prepare(f.file(), f.imaging)).ok).toBe(true);
+  });
+
+  it("no tag: either way round passes, as before the tag was read", async () => {
+    const asStored = fakeImaging({ oriented: { width: 3024, height: 4032 }, orientation: null, ignoresOrientation: true });
+    const a = await prepare(asStored.file(), asStored.imaging);
+    if (!a.ok) throw new Error(a.error);
+    expect(a.prepared.size).toEqual({ width: 1600, height: 1200 });
+
+    const turned = fakeImaging({ oriented: { width: 3024, height: 4032 }, orientation: null });
+    const t = await prepare(turned.file(), turned.imaging);
+    if (!t.ok) throw new Error(t.error);
+    expect(t.prepared.size).toEqual({ width: 1200, height: 1600 });
+  });
+
+  it("no tag: a squashed full decode still fails", async () => {
+    const f = fakeImaging({ oriented: { width: 3000, height: 3000 }, frame: { width: 4000, height: 3000 }, orientation: null });
+    expect(await prepare(f.file(), f.imaging)).toEqual({ ok: false, error: "not-decoded" });
+  });
+
+  it("orientation 6, a browser that resizes before orienting: still falls back to the full decode and succeeds", async () => {
+    const f = fakeImaging({ decode: "before-orienting", orientation: 6 });
+    const r = await prepare(f.file(), f.imaging);
+    if (!r.ok) throw new Error(r.error);
+    expect(f.log).toContain("decode full");
+    expect(r.prepared.size).toEqual({ width: 1200, height: 1600 });
+    expect(f.open.size).toBe(0);
   });
 });

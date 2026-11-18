@@ -20,11 +20,11 @@
  * closed when another photo is opened.
  */
 import { browserImaging } from "../../src/lib/owner/imaging";
-import { jpegFrameSize } from "../../src/lib/owner/jpeg-scan";
+import { exifOrientation, jpegFrameSize } from "../../src/lib/owner/jpeg-scan";
 import { ASSET_LONG_EDGE, ASSET_QUALITY, CHUNK_SIZE, HEAD_BYTES, THUMB_LONG_EDGE, THUMB_QUALITY, decode, fitLongEdge, jpeg, type Dims, type Resize } from "../../src/lib/owner/prepare";
 import { Gestures } from "../../src/lib/recipient/gestures";
 import { DOUBLE_TAP_SCALE, FIT, MAX_SCALE, clampView, drawCell, drawViewer, moveView, type Size, type View } from "../../src/lib/recipient/render";
-import { ASSET_QUALITIES, THUMB_QUALITIES, browserLabel, describeError, exifOrientation, gridCell, orientationWords, report, shuffled, summarise, viewerStage, type Kind, type Row } from "./bench";
+import { ASSET_QUALITIES, THUMB_QUALITIES, browserLabel, describeError, gridCell, orientationWords, report, shuffled, summarise, viewerStage, type Kind, type Row } from "./bench";
 
 /**
  * check-build.mjs fails a production build that contains this string. It is

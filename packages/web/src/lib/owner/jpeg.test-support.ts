@@ -51,6 +51,14 @@ export function exifApp1(orientation = 6): number[] {
   return segment(0xe1, [...ascii("Exif"), 0, 0, ...tiff]);
 }
 
+/** APP1 Exif, little-endian TIFF as most Android cameras write it: IFD0 with one entry, Orientation. */
+export function exifApp1LE(orientation = 6): number[] {
+  const le16 = (n: number) => [n & 0xff, (n >> 8) & 0xff];
+  const le32 = (n: number) => [...le16(n & 0xffff), ...le16(n >>> 16)];
+  const tiff = [...ascii("II"), ...le16(42), ...le32(8), ...le16(1), ...le16(0x0112), ...le16(3), ...le32(1), ...le16(orientation), 0, 0, ...le32(0)];
+  return segment(0xe1, [...ascii("Exif"), 0, 0, ...tiff]);
+}
+
 export const XMP_APP1 = segment(0xe1, [...ascii("http://ns.adobe.com/xap/1.0/"), 0, ...ascii('<x:xmpmeta xmlns:x="adobe:ns:meta/"><exif:GPSLatitude>40,25N</exif:GPSLatitude></x:xmpmeta>')]);
 
 /**
