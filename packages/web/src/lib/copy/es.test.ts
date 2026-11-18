@@ -378,3 +378,41 @@ describe("dates, numbers and plurals, through Intl in Spanish", () => {
     expect(es["invite.passphrase.language"](esFormat.languageName("en"))).toBe("Palabras en inglés");
   });
 });
+
+describe("every dead end says what the person can do next, in Spanish", () => {
+  it("a recipient dead end that names a person names the one who invited them or sent the link", () => {
+    for (const slot of ["dead", "open.newer-version", "notrecognised", "revoked", "grid.cell.unavailable", "pass.lost"] as const) {
+      expect(es[slot], slot).toMatch(/(la persona que|quien) te (invitó|ha invitado|la envió|lo envió)/i);
+    }
+  });
+
+  it("the newer-version screen says the invitation needs a newer version (invite spec §6)", () => {
+    expect(es["open.newer-version"]).toMatch(/necesita una versión más reciente/);
+  });
+
+  it("a device failure is never a wrong secret (flows §2)", () => {
+    expect(es["derive.failed"]).not.toBe(es["pass.wrong"]);
+    expect(es["derive.failed.owner"]).not.toBe(es["unlock.wrong"]);
+    for (const s of [es["derive.failed"], es["derive.failed.owner"]]) expect(s).not.toMatch(/contraseña|palabras|incorrect/i);
+  });
+
+  it("the empty-field and not-invited messages say nothing about whether an account exists (flows §3.2, §3.3)", () => {
+    for (const s of [es["signin.empty"], es["signup.empty"], es["signup.not-allowed"]]) {
+      expect(s).not.toMatch(/ya (hay|existe)|no (hay|existe) (ninguna )?cuenta|registrad|desconocid/i);
+    }
+    expect(es["signin.empty"]).not.toBe(es["signin.failed"]);
+  });
+
+  it("the unreadable photo names the two buttons as they read", () => {
+    expect(es["upload.review.unreadable"]).toContain(es["upload.review.remove"]);
+    expect(es["upload.review.unreadable"]).toContain(es["album.add"]);
+  });
+
+  it("only signup.loss and pass.lost mention reset or recovery, and only to say there is none", () => {
+    expect(strings().filter(([, s]) => /restablec|recuper/i.test(s)).map(([slot]) => slot).sort()).toEqual(["pass.lost", "signup.loss"]);
+  });
+
+  it("no string uses the product's new name yet", () => {
+    expect(strings().filter(([, s]) => /lirio/i.test(s))).toEqual([]);
+  });
+});

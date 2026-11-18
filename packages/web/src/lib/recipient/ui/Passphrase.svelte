@@ -23,6 +23,10 @@
 <main class="screen">
   <h1>{t["recipient.passphrase.title"]}</h1>
   <form onsubmit={submit} novalidate>
+    {#if phase === "loading"}
+      <!-- GET /v1/recipient/key in flight: the same line the QR path shows at this point. -->
+      <p class="hint" role="status">{t["open.loading"]}</p>
+    {/if}
     <fieldset disabled={busy}>
       <legend>{t["recipient.passphrase.label"]}</legend>
       <p class="hint">{t["pass.entry"]}</p>

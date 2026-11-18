@@ -318,3 +318,41 @@ describe("the access-log copy (flows §3.10, api-sketch §11.6)", () => {
     expect(s).not.toMatch(/under ?way|in progress|being erased|soon|shortly|automatically|in the background|eventually/i);
   });
 });
+
+describe("every dead end says what the person can do next", () => {
+  it("a recipient dead end that names a person names the one who invited them or sent the link", () => {
+    for (const slot of ["dead", "open.newer-version", "notrecognised", "revoked", "grid.cell.unavailable", "pass.lost"] as const) {
+      expect(en[slot], slot).toMatch(/the person who (invited you|sent it)/i);
+    }
+  });
+
+  it("the newer-version screen says the invitation needs a newer version (invite spec §6)", () => {
+    expect(en["open.newer-version"]).toMatch(/needs a newer version/);
+  });
+
+  it("a device failure is never a wrong secret (flows §2)", () => {
+    expect(en["derive.failed"]).not.toBe(en["pass.wrong"]);
+    expect(en["derive.failed.owner"]).not.toBe(en["unlock.wrong"]);
+    for (const s of [en["derive.failed"], en["derive.failed.owner"]]) expect(s).not.toMatch(/password|passphrase|words|wrong/i);
+  });
+
+  it("the empty-field and not-invited messages say nothing about whether an account exists (flows §3.2, §3.3)", () => {
+    for (const s of [en["signin.empty"], en["signup.empty"], en["signup.not-allowed"]]) {
+      expect(s).not.toMatch(/already|no account|not registered|doesn't exist|exists|unknown (email|address)/i);
+    }
+    expect(en["signin.empty"]).not.toBe(en["signin.failed"]);
+  });
+
+  it("the unreadable photo names the two buttons as they read", () => {
+    expect(en["upload.review.unreadable"]).toContain(en["upload.review.remove"]);
+    expect(en["upload.review.unreadable"]).toContain(en["album.add"]);
+  });
+
+  it("only signup.loss and pass.lost mention reset or recovery, and only to say there is none", () => {
+    expect(strings().filter(([, s]) => /\b(reset|recover)/i.test(s)).map(([slot]) => slot).sort()).toEqual(["pass.lost", "signup.loss"]);
+  });
+
+  it("no string uses the product's new name yet", () => {
+    expect(strings().filter(([, s]) => /lirio/i.test(s))).toEqual([]);
+  });
+});

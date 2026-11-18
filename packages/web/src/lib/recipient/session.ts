@@ -71,7 +71,12 @@ export type Screen =
       readonly viewer: Viewer | null;
     };
 
-export type State = { readonly screen: Screen; readonly offline: boolean };
+export type State = {
+  readonly screen: Screen;
+  readonly offline: boolean;
+  /** Waiting out a 429's Retry-After (flows §0). Shown as the owner path shows it. */
+  readonly rateLimited: boolean;
+};
 
 export type Deps = {
   readonly client: ApiClient;
@@ -139,7 +144,7 @@ const serverFault = (e: unknown): boolean =>
   (e instanceof ApiFailure && e.status >= 500) || e instanceof UnexpectedResponse;
 
 export class RecipientSession {
-  private state: State = { screen: { kind: "starting" }, offline: false };
+  private state: State = { screen: { kind: "starting" }, offline: false, rateLimited: false };
   private readonly listeners = new Set<(s: State) => void>();
 
   // Key state. Nothing here is ever serialised or stored.
@@ -201,6 +206,24 @@ export class RecipientSession {
     for (const l of this.listeners) l(this.state);
   }
 
+  /** Counted, because thumbnails wait in parallel: the line goes when the last wait ends. */
+  private waits = 0;
+
+  private async rateLimitWait(ms: number): Promise<void> {
+    if (this.waits++ === 0) this.setRateLimited(true);
+    try {
+      await this.deps.sleep(ms);
+    } finally {
+      if (--this.waits === 0 && !this.halted) this.setRateLimited(false);
+    }
+  }
+
+  private setRateLimited(rateLimited: boolean): void {
+    if (this.state.rateLimited === rateLimited) return;
+    this.state = { ...this.state, rateLimited };
+    for (const l of this.listeners) l(this.state);
+  }
+
   private album(): Extract<Screen, { kind: "album" }> | null {
     return this.state.screen.kind === "album" ? this.state.screen : null;
   }
@@ -241,7 +264,7 @@ export class RecipientSession {
     this.dropKeyState(kind !== "device-failed" && !this.deps.poison.poisoned);
     this.online?.resolve();
     this.online = null;
-    this.state = { screen: { kind }, offline: false };
+    this.state = { screen: { kind }, offline: false, rateLimited: false };
     for (const l of this.listeners) l(this.state);
   }
 
@@ -271,7 +294,7 @@ export class RecipientSession {
         }
         if (e instanceof ApiFailure) {
           if (e.status === 429) {
-            await this.deps.sleep((e.retryAfter ?? DEFAULT_RETRY_AFTER_S) * 1000);
+            await this.rateLimitWait((e.retryAfter ?? DEFAULT_RETRY_AFTER_S) * 1000);
             continue;
           }
           if (e.status === 403 && e.code === "ACCESS_REVOKED") {
@@ -352,7 +375,18 @@ export class RecipientSession {
    * recognised, never a guess at the other unwrap. Null once terminal.
    */
   private async fetchMaterial<K extends RecipientKeyMaterial["kind"]>(kind: K): Promise<Extract<RecipientKeyMaterial, { kind: K }> | null> {
-    const material = await this.call((api) => api.key());
+    let material: RecipientKeyMaterial;
+    try {
+      material = await this.call((api) => api.key());
+    } catch (e) {
+      // Flows §4.2: a 404 here is not recognised. Left to guarded(), it would
+      // be the offline state, and its retry would meet the same 404 for ever.
+      if (e instanceof ApiFailure && e.status === 404) {
+        this.terminal("not-recognised");
+        return null;
+      }
+      throw e;
+    }
     if (material.kind !== kind) {
       this.terminal("not-recognised");
       return null;

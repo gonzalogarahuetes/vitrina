@@ -108,7 +108,7 @@
     {:else if ready && item.thumb.kind === "failed"}
       <button class="state failed" type="button" onclick={onRetryThumb}>{t["grid.cell.failed"]}</button>
     {:else if ready}
-      <div class="state" role="img" aria-label={t["grid.cell.unavailable"]}><span aria-hidden="true">{t["grid.cell.unavailable"]}</span></div>
+      <div class="state" role="img" aria-label={t["album.cell.unavailable"]}><span aria-hidden="true">{t["album.cell.unavailable"]}</span></div>
     {:else if failureText !== null}
       <div class="state failed" role="alert">
         {#if item.name !== null}<span class="name">{item.name}</span>{/if}
