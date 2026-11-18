@@ -24,7 +24,10 @@
  * the stored frame size is read from the file's first bytes (its SOF marker),
  * which says whether the photo needs downscaling and to what long edge;
  * rotation only swaps width and height, so the long edge is known before the
- * orientation is. The decode then asks for that long edge. A browser that does
+ * orientation is. The EXIF orientation is read from the same bytes, for the
+ * shape alone: a browser that decodes without applying it gives a bitmap the
+ * wrong way round, which is refused (orientedShape). The decode then asks for
+ * that long edge. A browser that does
  * not honour the request, or honours it wrongly, gets a full-size decode drawn
  * down instead: one full-size bitmap is the worst case, and it is closed as
  * soon as the two JPEGs are drawn. Whether a browser's resized decode actually
@@ -35,7 +38,7 @@
  * rule below runs under test without a browser.
  */
 import { keepImageSegments } from "./jpeg-filter";
-import { jpegFrameSize, scanJpeg, type ScanFinding } from "./jpeg-scan";
+import { exifOrientation, jpegFrameSize, scanJpeg, type ScanFinding } from "./jpeg-scan";
 
 export const ASSET_LONG_EDGE = 1600;
 export const THUMB_LONG_EDGE = 480;
@@ -112,10 +115,26 @@ export function fitLongEdge(d: Dims, max: number): Dims {
  * resized before rotating, or squashed the photo, fails this.
  */
 export function plausible(frame: Dims, got: Dims): boolean {
-  const want = frame.width / frame.height;
-  const have = got.width / got.height;
-  const near = (a: number, b: number) => Math.abs(a - b) / b < 0.01;
-  return near(have, want) || near(have, 1 / want);
+  return sameShape(frame, got) || sameShape(quarterTurned(frame), got);
+}
+
+/** The same aspect, within rounding: a resized decode rounds one edge. */
+function sameShape(want: Dims, got: Dims): boolean {
+  const w = want.width / want.height;
+  return Math.abs(got.width / got.height - w) / w < 0.01;
+}
+
+const quarterTurned = (d: Dims): Dims => ({ width: d.height, height: d.width });
+
+/**
+ * The shape a correctly oriented decode has, from the EXIF orientation:
+ * 5–8 turn the frame a quarter, 1–4 keep its shape. A bitmap the browser
+ * decoded without applying the tag has the other shape, and is refused rather
+ * than encrypted sideways (#17): there is no fixing it after upload. A square
+ * frame is the same shape either way, so it cannot tell.
+ */
+export function orientedShape(frame: Dims, orientation: number): Dims {
+  return orientation >= 5 ? quarterTurned(frame) : { width: frame.width, height: frame.height };
 }
 
 export type Encoded =
@@ -169,13 +188,20 @@ export async function jpeg(
  */
 export async function decode(file: File, imaging: Imaging): Promise<Bitmap | null> {
   let frame: Dims | null = null;
+  let orientation: number | null = null;
   try {
-    frame = jpegFrameSize(
-      new Uint8Array(await file.slice(0, HEAD_BYTES).arrayBuffer()),
-    );
+    const head = new Uint8Array(await file.slice(0, HEAD_BYTES).arrayBuffer());
+    frame = jpegFrameSize(head);
+    orientation = exifOrientation(head);
   } catch {
     frame = null; // not readable as bytes: decode it whole and let that fail if it must
+    orientation = null;
   }
+  // With the tag known, only the oriented shape; without it, either way round.
+  const shaped = (frame: Dims, got: Dims): boolean =>
+    orientation === null
+      ? plausible(frame, got)
+      : sameShape(orientedShape(frame, orientation), got);
 
   if (frame !== null && longEdge(frame) > ASSET_LONG_EDGE) {
     let b = await imaging.decode(file, { width: ASSET_LONG_EDGE });
@@ -184,16 +210,16 @@ export async function decode(file: File, imaging: Imaging): Promise<Bitmap | nul
       b.close();
       b = await imaging.decode(file, { height: ASSET_LONG_EDGE });
     }
-    if (longEdge(b) === ASSET_LONG_EDGE && plausible(frame, b)) return b;
-    b.close(); // not honoured, or honoured wrongly
+    if (longEdge(b) === ASSET_LONG_EDGE && shaped(frame, b)) return b;
+    b.close(); // not honoured, or honoured wrongly, or not oriented
   }
 
   const full = await imaging.decode(file, null);
   if (
     frame !== null &&
-    (longEdge(full) !== longEdge(frame) || !plausible(frame, full))
+    (longEdge(full) !== longEdge(frame) || !shaped(frame, full))
   ) {
-    full.close();
+    full.close(); // never encrypted squashed, or sideways
     return null;
   }
   return full;
