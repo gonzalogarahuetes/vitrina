@@ -23,11 +23,22 @@
  *
  * "Leaving the app" is Back landing on a page outside it, opened first.
  */
-import { expect, test, type Browser, type BrowserContext, type Page } from "@playwright/test";
+import {
+  expect,
+  test,
+  type Browser,
+  type BrowserContext,
+  type Page,
+} from "@playwright/test";
 import { en } from "../../src/lib/copy/en.ts";
 import { storageViolations } from "../storage-allowlist.ts";
 import { dumpStorage, watch } from "./helpers.ts";
-import { WORDS, fixtures, relay as recipientRelay, type Fixtures } from "./recipient-fixtures.ts";
+import {
+  WORDS,
+  fixtures,
+  relay as recipientRelay,
+  type Fixtures,
+} from "./recipient-fixtures.ts";
 import { fakeRelay } from "./relay.ts";
 
 const EMAIL = "parent@example.com";
@@ -46,29 +57,69 @@ const SVELTEKIT_KEYS = new Set(["sveltekit:history", "sveltekit:navigation"]);
 /** The allowlist: SvelteKit's numeric indices and empty states, and the marker from the fixed set. Anything else is a finding. */
 function historyStateFindings(state: unknown): string[] {
   if (state === null || state === undefined) return [];
-  if (typeof state !== "object" || Array.isArray(state)) return ["history.state is not an object"];
+  if (typeof state !== "object" || Array.isArray(state))
+    return ["history.state is not an object"];
   return Object.entries(state).flatMap(([k, v]) => {
-    if (k === "vitrina:depth") return [1, 2, 3].includes(v as number) ? [] : ["vitrina:depth outside {1, 2, 3}"];
-    if (SVELTEKIT_KEYS.has(k)) return typeof v === "number" ? [] : [`${k} is not a number`];
+    if (k === "vitrina:depth")
+      return [1, 2, 3].includes(v as number)
+        ? []
+        : ["vitrina:depth outside {1, 2, 3}"];
+    if (SVELTEKIT_KEYS.has(k))
+      return typeof v === "number" ? [] : [`${k} is not a number`];
     // SvelteKit's shallow-routing states: always empty here, since nothing calls its pushState.
-    if (k === "sveltekit:states") return typeof v === "object" && v !== null && Object.keys(v).length === 0 ? [] : ["sveltekit:states is not empty"];
-    return [`history.state holds a key that is not permitted: ${JSON.stringify(k).slice(0, 30)}`];
+    if (k === "sveltekit:states")
+      return typeof v === "object" && v !== null && Object.keys(v).length === 0
+        ? []
+        : ["sveltekit:states is not empty"];
+    return [
+      `history.state holds a key that is not permitted: ${JSON.stringify(k).slice(0, 30)}`,
+    ];
   });
 }
 
-type Check = { path: string; secrets: () => string[]; owner?: boolean; recipientInvite?: string };
+type Check = {
+  path: string;
+  secrets: () => string[];
+  owner?: boolean;
+  recipientInvite?: string;
+};
 
 /** The URL, history.state and storage, and the depth the screen should sit at. */
-async function settled(page: Page, c: Check, depth: number, what: string): Promise<void> {
+async function settled(
+  page: Page,
+  c: Check,
+  depth: number,
+  what: string,
+): Promise<void> {
   // History is moved to the screen's depth by a go(), which lands a task later.
-  const marker = () => page.evaluate(() => ((history.state as Record<string, unknown> | null)?.["vitrina:depth"] ?? 0) as unknown);
-  await expect.poll(marker, { message: `${what}: history's depth` }).toBe(depth);
-  const where = await page.evaluate(() => ({ hash: location.hash, path: location.pathname, search: location.search, state: history.state as unknown }));
+  const marker = () =>
+    page.evaluate(
+      () =>
+        ((history.state as Record<string, unknown> | null)?.["vitrina:depth"] ??
+          0) as unknown,
+    );
+  await expect
+    .poll(marker, { message: `${what}: history's depth` })
+    .toBe(depth);
+  const where = await page.evaluate(() => ({
+    hash: location.hash,
+    path: location.pathname,
+    search: location.search,
+    state: history.state as unknown,
+  }));
   expect(where.hash, `${what}: no fragment`).toBe("");
   expect(where.search, `${what}: no query`).toBe("");
   expect(where.path, `${what}: the path never changes`).toBe(c.path);
-  expect(historyStateFindings(where.state), `${what}: history.state`).toEqual([]);
-  expect(storageViolations(await dumpStorage(page), c.secrets(), { owner: c.owner === true, recipientInvite: c.recipientInvite }), `${what}: storage`).toEqual([]);
+  expect(historyStateFindings(where.state), `${what}: history.state`).toEqual(
+    [],
+  );
+  expect(
+    storageViolations(await dumpStorage(page), c.secrets(), {
+      owner: c.owner === true,
+      recipientInvite: c.recipientInvite,
+    }),
+    `${what}: storage`,
+  ).toEqual([]);
 }
 
 /** Back, as the browser's button. Same-document entries fire popstate and nothing loads. */
@@ -77,12 +128,22 @@ async function back(page: Page): Promise<void> {
 }
 
 async function leftTheApp(page: Page): Promise<void> {
-  await expect.poll(() => page.url(), { message: "Back left the app" }).toBe(OUTSIDE);
+  await expect
+    .poll(() => page.url(), { message: "Back left the app" })
+    .toBe(OUTSIDE);
+  await page.waitForLoadState("load");
+  await expect(page.getByText("outside")).toBeVisible();
 }
 
 /** A page outside the app, opened first, so Back from the app's top lands somewhere. */
 async function startOutside(page: Page): Promise<void> {
-  await page.route(OUTSIDE, (route) => route.fulfill({ status: 200, contentType: "text/html", body: "<!doctype html><title>outside</title><p>outside</p>" }));
+  await page.route(OUTSIDE, (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "text/html",
+      body: "<!doctype html><title>outside</title><p>outside</p>",
+    }),
+  );
   await page.goto(OUTSIDE);
 }
 
@@ -91,7 +152,10 @@ async function startOutside(page: Page): Promise<void> {
  * settled and a little longer: a start-up that traversed onto an entry from
  * before the reload would load the app a second time.
  */
-async function reloadCountingLoads(page: Page, settle: () => Promise<void>): Promise<number> {
+async function reloadCountingLoads(
+  page: Page,
+  settle: () => Promise<void>,
+): Promise<number> {
   let loads = 0;
   const count = (): void => void loads++;
   page.on("load", count);
@@ -100,7 +164,14 @@ async function reloadCountingLoads(page: Page, settle: () => Promise<void>): Pro
   await page.waitForTimeout(1000);
   page.off("load", count);
   // The document on screen is the reload's own, not one a traversal loaded afterwards.
-  const type = await page.evaluate(() => (performance.getEntriesByType("navigation")[0] as PerformanceNavigationTiming | undefined)?.type);
+  const type = await page.evaluate(
+    () =>
+      (
+        performance.getEntriesByType("navigation")[0] as
+          | PerformanceNavigationTiming
+          | undefined
+      )?.type,
+  );
   expect(type, "the document on screen came from the reload").toBe("reload");
   return loads;
 }
@@ -124,10 +195,14 @@ async function canvasJpeg(page: Page, w: number, h: number): Promise<Buffer> {
       const c = document.createElement("canvas");
       c.width = w;
       c.height = h;
-      const ctx = c.getContext("2d", { colorSpace: "srgb" }) as CanvasRenderingContext2D;
+      const ctx = c.getContext("2d", {
+        colorSpace: "srgb",
+      }) as CanvasRenderingContext2D;
       ctx.fillStyle = "#2a6f97";
       ctx.fillRect(0, 0, w, h);
-      const blob = await new Promise<Blob | null>((r) => c.toBlob(r, "image/jpeg", 0.9));
+      const blob = await new Promise<Blob | null>((r) =>
+        c.toBlob(r, "image/jpeg", 0.9),
+      );
       return Array.from(new Uint8Array(await (blob as Blob).arrayBuffer()));
     },
     [w, h] as const,
@@ -135,8 +210,10 @@ async function canvasJpeg(page: Page, w: number, h: number): Promise<Buffer> {
   return Buffer.from(bytes);
 }
 
-const heading = (page: Page, name: string) => page.getByRole("heading", { name, exact: true });
-const button = (page: Page, name: string) => page.getByRole("button", { name, exact: true });
+const heading = (page: Page, name: string) =>
+  page.getByRole("heading", { name, exact: true });
+const button = (page: Page, name: string) =>
+  page.getByRole("button", { name, exact: true });
 
 /** Signed up, on the album list, with an outside page behind the app. */
 async function ownerOnList(browser: Browser, relay: Relay) {
@@ -150,13 +227,29 @@ async function ownerOnList(browser: Browser, relay: Relay) {
   await page.getByLabel(en["signup.email.label"]).fill(EMAIL);
   await page.getByLabel(en["signup.password.label"]).fill(PASSWORD);
   await button(page, en["signup.submit"]).click();
-  await expect(heading(page, en["albums.title"])).toBeVisible({ timeout: ARGON });
-  const albumId = () => (JSON.parse(relay.log.find((r) => r.method === "POST" && r.path === "/v1/albums")?.body ?? "{}") as { id?: string }).id ?? "";
+  await expect(heading(page, en["albums.title"])).toBeVisible({
+    timeout: ARGON,
+  });
+  const albumId = () =>
+    (
+      JSON.parse(
+        relay.log.find((r) => r.method === "POST" && r.path === "/v1/albums")
+          ?.body ?? "{}",
+      ) as { id?: string }
+    ).id ?? "";
   const c: Check = {
     path: "/",
     owner: true,
     // What must never be in history or storage: ids, the title, the invite's label, token and key, once they exist.
-    secrets: () => [albumId(), ...relay.media.keys(), ALBUM_TITLE, LABEL, ...[...relay.recipients.keys()], ...inviteSecrets].filter((s) => s !== ""),
+    secrets: () =>
+      [
+        albumId(),
+        ...relay.media.keys(),
+        ALBUM_TITLE,
+        LABEL,
+        ...[...relay.recipients.keys()],
+        ...inviteSecrets,
+      ].filter((s) => s !== ""),
   };
   const inviteSecrets: string[] = [];
   return { ctx, page, violations, c, inviteSecrets, albumId };
@@ -174,14 +267,25 @@ async function createAndOpenAlbum(page: Page, c: Check): Promise<void> {
 }
 
 async function choose(page: Page, n: number): Promise<void> {
-  await page.locator("#add-photos").setInputFiles([{ name: `photo-${n}.jpg`, mimeType: "image/jpeg", buffer: await canvasJpeg(page, 1200, 900) }]);
+  await page.locator("#add-photos").setInputFiles([
+    {
+      name: `photo-${n}.jpg`,
+      mimeType: "image/jpeg",
+      buffer: await canvasJpeg(page, 1200, 900),
+    },
+  ]);
   await expect(button(page, en["upload.review.send"](1))).toBeVisible();
 }
 
-test("owner: every level and sheet, Back to the top and out; the guards; twenty viewer opens; sign-out", async ({ browser }) => {
+test("owner: every level and sheet, Back to the top and out; the guards; twenty viewer opens; sign-out", async ({
+  browser,
+}) => {
   test.setTimeout(300_000);
   const relay = fakeRelay({ expiresInMs: 14 * 24 * 60 * 60 * 1000 });
-  const { page, violations, c, inviteSecrets } = await ownerOnList(browser, relay);
+  const { page, violations, c, inviteSecrets } = await ownerOnList(
+    browser,
+    relay,
+  );
   await settled(page, c, 0, "album list");
 
   // The create sheet closes on Back.
@@ -226,10 +330,18 @@ test("owner: every level and sheet, Back to the top and out; the guards; twenty 
     await expect(button(page, en["viewer.back"])).toBeHidden();
   }
   await settled(page, c, 1, "after twenty viewer opens");
-  expect(await page.evaluate(() => history.length), "history did not grow").toBeLessThanOrEqual(length);
+  expect(
+    await page.evaluate(() => history.length),
+    "history did not grow",
+  ).toBeLessThanOrEqual(length);
   await back(page);
   await expect(heading(page, en["albums.title"])).toBeVisible();
-  await settled(page, c, 0, "one Back from the album after twenty viewer opens");
+  await settled(
+    page,
+    c,
+    0,
+    "one Back from the album after twenty viewer opens",
+  );
   await button(page, en["albums.open.a11y"](ALBUM_TITLE)).click();
   await expect(cell).toBeVisible();
   await settled(page, c, 1, "album again");
@@ -255,13 +367,21 @@ test("owner: every level and sheet, Back to the top and out; the guards; twenty 
   await button(page, en["album.invite"]).click();
   await page.getByLabel(en["invite.name.label"]).fill(LABEL);
   await button(page, en["invite.create"]).click();
-  await expect(heading(page, en["invite.share.title"](LABEL))).toBeVisible({ timeout: ARGON });
+  await expect(heading(page, en["invite.share.title"](LABEL))).toBeVisible({
+    timeout: ARGON,
+  });
   const link = (await page.locator("[data-invite-link]").textContent()) ?? "";
   const fragment = new URLSearchParams(link.slice(link.indexOf("#") + 1));
-  inviteSecrets.push(link.slice(link.indexOf("#")), fragment.get("t") ?? "", fragment.get("k") ?? "");
+  inviteSecrets.push(
+    link.slice(link.indexOf("#")),
+    fragment.get("t") ?? "",
+    fragment.get("k") ?? "",
+  );
   await settled(page, c, 2, "share step");
   await back(page);
-  await expect(page.getByRole("alertdialog")).toContainText(en["invite.leave.consequence"]);
+  await expect(page.getByRole("alertdialog")).toContainText(
+    en["invite.leave.consequence"],
+  );
   await expect(page.locator("[data-invite-link]")).toHaveText(link);
   await settled(page, c, 3, "share step, Back: asks");
   await back(page);
@@ -269,7 +389,9 @@ test("owner: every level and sheet, Back to the top and out; the guards; twenty 
   await expect(heading(page, en["invite.share.title"](LABEL))).toBeVisible();
   await settled(page, c, 2, "share step, Back again: stays");
   await back(page);
-  await expect(page.getByRole("alertdialog")).toContainText(en["invite.leave.consequence"]);
+  await expect(page.getByRole("alertdialog")).toContainText(
+    en["invite.leave.consequence"],
+  );
   await settled(page, c, 3, "share step, Back: asks again");
   await button(page, en["invite.leave.confirm"]).click();
   await expect(heading(page, ALBUM_TITLE)).toBeVisible();
@@ -279,12 +401,18 @@ test("owner: every level and sheet, Back to the top and out; the guards; twenty 
   await button(page, en["album.people"]).click();
   await expect(heading(page, en["people.title"])).toBeVisible();
   await settled(page, c, 2, "people");
-  await page.locator("li.person").getByRole("button", { name: en["people.revoke"] }).click();
+  await page
+    .locator("li.person")
+    .getByRole("button", { name: en["people.revoke"] })
+    .click();
   await expect(page.getByRole("alertdialog")).toBeVisible();
   await settled(page, c, 3, "revoke sheet");
   await back(page);
   await expect(page.getByRole("alertdialog")).toBeHidden();
-  expect([...relay.recipients.values()][0]?.revoked_at, "nothing was revoked").toBeNull();
+  expect(
+    [...relay.recipients.values()][0]?.revoked_at,
+    "nothing was revoked",
+  ).toBeNull();
   await settled(page, c, 2, "revoke sheet, Back");
   await button(page, en["people.log"]).click();
   await expect(button(page, en["log.back"])).toBeVisible();
@@ -300,17 +428,23 @@ test("owner: every level and sheet, Back to the top and out; the guards; twenty 
   const release = relay.holdReady();
   await choose(page, 2);
   await button(page, en["upload.review.send"](1)).click();
-  await expect(page.getByText(en["upload.waiting"])).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByText(en["upload.waiting"])).toBeVisible({
+    timeout: 30_000,
+  });
   await settled(page, c, 1, "upload in flight");
   await back(page);
-  await expect(page.getByRole("alertdialog")).toContainText(en["album.leaving"]);
+  await expect(page.getByRole("alertdialog")).toContainText(
+    en["album.leaving"],
+  );
   await settled(page, c, 2, "upload in flight, Back: asks");
   await back(page);
   await expect(page.getByRole("alertdialog")).toBeHidden();
   await expect(page.getByText(en["upload.waiting"])).toBeVisible();
   await settled(page, c, 1, "upload in flight, Back again: stays");
   await back(page);
-  await expect(page.getByRole("alertdialog")).toContainText(en["album.leaving"]);
+  await expect(page.getByRole("alertdialog")).toContainText(
+    en["album.leaving"],
+  );
   await settled(page, c, 2, "upload in flight, Back: asks again");
   await button(page, en["album.leaving.go"]).click();
   await expect(heading(page, en["albums.title"])).toBeVisible();
@@ -335,17 +469,23 @@ test("owner: every level and sheet, Back to the top and out; the guards; twenty 
 
   // Sign-out: Back leaves the app, and nothing from before comes back.
   await button(page, en["logout.device"]).click();
-  await expect(page.getByRole("heading", { name: en["signin.title"] })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: en["signin.title"] }),
+  ).toBeVisible();
   await settled(page, c, 0, "signed out");
   await back(page);
   await leftTheApp(page);
   await page.goForward();
-  await expect(page.getByRole("heading", { name: en["signin.title"] })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: en["signin.title"] }),
+  ).toBeVisible();
   await expect(heading(page, ALBUM_TITLE)).toBeHidden();
   await settled(page, c, 0, "signed out, Back, Forward");
   for (let i = 0; i < 3; i++) {
     await page.goForward().catch(() => null);
-    await expect(page.getByRole("heading", { name: en["signin.title"] })).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: en["signin.title"] }),
+    ).toBeVisible();
   }
   await settled(page, c, 0, "signed out, Forward again");
   await back(page);
@@ -353,7 +493,9 @@ test("owner: every level and sheet, Back to the top and out; the guards; twenty 
   expect(await violations(), "CSP violations and page errors").toEqual([]);
 });
 
-test("owner: a reload on the viewer starts at unlock; its sign-out sheet closes on Back; Back again leaves the app", async ({ browser }) => {
+test("owner: a reload on the viewer starts at unlock; its sign-out sheet closes on Back; Back again leaves the app", async ({
+  browser,
+}) => {
   test.setTimeout(240_000);
   const relay = fakeRelay({ expiresInMs: 14 * 24 * 60 * 60 * 1000 });
   const { page, violations, c } = await ownerOnList(browser, relay);
@@ -373,13 +515,18 @@ test("owner: a reload on the viewer starts at unlock; its sign-out sheet closes 
   expect(loads, "the reload loaded the page exactly once").toBe(1);
 
   await button(page, en["unlock.signout"]).click();
-  await expect(page.getByRole("dialog")).toContainText(en["unlock.signout.confirm"]);
+  await expect(page.getByRole("dialog")).toContainText(
+    en["unlock.signout.confirm"],
+  );
   await settled(page, c, 1, "unlock's sign-out sheet");
   await back(page);
   await expect(page.getByRole("dialog")).toBeHidden();
   await expect(heading(page, en["unlock.prompt"])).toBeVisible();
   await settled(page, c, 0, "sheet, Back: unlock stays");
-  expect(relay.log.some((r) => r.path.startsWith("/v1/logout")), "nothing was signed out").toBe(false);
+  expect(
+    relay.log.some((r) => r.path.startsWith("/v1/logout")),
+    "nothing was signed out",
+  ).toBe(false);
   await back(page);
   await leftTheApp(page);
   expect(await violations(), "CSP violations and page errors").toEqual([]);
@@ -395,7 +542,12 @@ test.describe("recipient", () => {
 
   const photo = en["grid.photo.a11y"](1, 1);
 
-  async function open(page: Page, context: BrowserContext, baseURL: string | undefined, kind: "qr" | "passphrase"): Promise<Check> {
+  async function open(
+    page: Page,
+    context: BrowserContext,
+    baseURL: string | undefined,
+    kind: "qr" | "passphrase",
+  ): Promise<Check> {
     await recipientRelay(context, f, new URL(baseURL ?? "").origin);
     await startOutside(page);
     const fragment = kind === "qr" ? f.qrFragment : f.passFragment;
@@ -403,14 +555,28 @@ test.describe("recipient", () => {
     const c: Check = {
       path: "/v/",
       recipientInvite: fragment,
-      secrets: () => [...f.inviteSecrets, f.qr.token, f.pass.token, f.albumId, f.mediaId, ...WORDS],
+      secrets: () => [
+        ...f.inviteSecrets,
+        f.qr.token,
+        f.pass.token,
+        f.albumId,
+        f.mediaId,
+        ...WORDS,
+      ],
     };
     if (kind === "passphrase") {
-      for (const [i, word] of WORDS.entries()) await page.getByLabel(en["recipient.passphrase.word"](i + 1)).fill(word);
+      for (const [i, word] of WORDS.entries())
+        await page
+          .getByLabel(en["recipient.passphrase.word"](i + 1))
+          .fill(word);
       await settled(page, c, 0, "passphrase");
-      await page.getByRole("button", { name: en["recipient.passphrase.submit"] }).click();
+      await page
+        .getByRole("button", { name: en["recipient.passphrase.submit"] })
+        .click();
     }
-    await expect(page.getByRole("button", { name: en["onboarding.continue"] })).toBeVisible({ timeout: ARGON });
+    await expect(
+      page.getByRole("button", { name: en["onboarding.continue"] }),
+    ).toBeVisible({ timeout: ARGON });
     await settled(page, c, 0, "onboarding");
     await page.getByRole("button", { name: en["onboarding.continue"] }).click();
     await expect(page.getByRole("button", { name: photo })).toBeVisible();
@@ -420,40 +586,59 @@ test.describe("recipient", () => {
 
   async function viewer(page: Page): Promise<void> {
     await page.getByRole("button", { name: photo }).click();
-    await expect(page.getByRole("button", { name: en["viewer.back"] })).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: en["viewer.back"] }),
+    ).toBeVisible();
   }
 
   for (const kind of ["qr", "passphrase"] as const) {
-    test(`${kind}: grid → viewer, Back to the grid; twenty opens and closes; Back leaves the app`, async ({ page, context, baseURL }) => {
+    test(`${kind}: grid → viewer, Back to the grid; twenty opens and closes; Back leaves the app`, async ({
+      page,
+      context,
+      baseURL,
+    }) => {
       const violations = await watch(page);
       const c = await open(page, context, baseURL, kind);
       await viewer(page);
       await settled(page, c, 1, "viewer");
       await back(page);
-      await expect(page.getByRole("button", { name: en["viewer.back"] })).toBeHidden();
+      await expect(
+        page.getByRole("button", { name: en["viewer.back"] }),
+      ).toBeHidden();
       await settled(page, c, 0, "viewer, Back");
 
       const length = await page.evaluate(() => history.length);
       for (let i = 0; i < 20; i++) {
         await viewer(page);
         await page.getByRole("button", { name: en["viewer.back"] }).click();
-        await expect(page.getByRole("button", { name: en["viewer.back"] })).toBeHidden();
+        await expect(
+          page.getByRole("button", { name: en["viewer.back"] }),
+        ).toBeHidden();
       }
       await settled(page, c, 0, "after twenty viewer opens");
-      expect(await page.evaluate(() => history.length), "history did not grow").toBeLessThanOrEqual(length + 1);
+      expect(
+        await page.evaluate(() => history.length),
+        "history did not grow",
+      ).toBeLessThanOrEqual(length + 1);
       await back(page);
       await leftTheApp(page);
       expect(await violations()).toEqual([]);
     });
   }
 
-  test("a reload on the viewer, then Back until the app is left", async ({ page, context, baseURL }) => {
+  test("a reload on the viewer, then Back until the app is left", async ({
+    page,
+    context,
+    baseURL,
+  }) => {
     const violations = await watch(page);
     const c = await open(page, context, baseURL, "qr");
     await viewer(page);
     await settled(page, c, 1, "viewer");
     const loads = await reloadCountingLoads(page, async () => {
-      await expect(page.getByRole("button", { name: en["onboarding.continue"] })).toBeVisible();
+      await expect(
+        page.getByRole("button", { name: en["onboarding.continue"] }),
+      ).toBeVisible();
       await settled(page, c, 0, "reloaded: onboarding, at the top");
     });
     expect(loads, "the reload loaded the page exactly once").toBe(1);
@@ -462,24 +647,34 @@ test.describe("recipient", () => {
     await settled(page, c, 0, "reloaded: grid");
     await page.goForward({ waitUntil: "commit" }).catch(() => null);
     await expect(page.getByRole("button", { name: photo })).toBeVisible();
-    await expect(page.getByRole("button", { name: en["viewer.back"] })).toBeHidden();
+    await expect(
+      page.getByRole("button", { name: en["viewer.back"] }),
+    ).toBeHidden();
     await settled(page, c, 0, "Forward reopens nothing");
     await back(page);
     await leftTheApp(page);
     expect(await violations()).toEqual([]);
   });
 
-  test("the load count notices a second load after the reload (the check, broken on purpose)", async ({ page, context, baseURL }) => {
+  test("the load count notices a second load after the reload (the check, broken on purpose)", async ({
+    page,
+    context,
+    baseURL,
+  }) => {
     const c = await open(page, context, baseURL, "qr");
     await viewer(page);
     let forced = false;
     const loads = await reloadCountingLoads(page, async () => {
-      await expect(page.getByRole("button", { name: en["onboarding.continue"] })).toBeVisible();
+      await expect(
+        page.getByRole("button", { name: en["onboarding.continue"] }),
+      ).toBeVisible();
       if (!forced) {
         forced = true;
         // What a start-up traversing onto a pre-reload document would cost: the app loaded again.
         await page.evaluate(() => location.reload());
-        await expect(page.getByRole("button", { name: en["onboarding.continue"] })).toBeVisible();
+        await expect(
+          page.getByRole("button", { name: en["onboarding.continue"] }),
+        ).toBeVisible();
       }
       await settled(page, c, 0, "reloaded twice");
     });
