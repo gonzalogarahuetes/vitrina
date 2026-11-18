@@ -191,8 +191,9 @@ implementation, and its HTTP status comes from one table:
 | ------------------------ | ------ | ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `VALIDATION_FAILED`      | 400    | PR 1          | PR 1 — any schema failure, and framework 400s (§1.2)                                                                                                                                                             |
 | `UNAUTHENTICATED`        | 401    | PR 1          | PR 2 — missing, unknown, expired or revoked **owner** token (§7.3)                                                                                                                                               |
-| `INVALID_CREDENTIALS`    | 401    | PR 2          | PR 2 — `POST /login` only (§7.5)                                                                                                                                                                                 |
+| `INVALID_CREDENTIALS`    | 401    | PR 2          | PR 2 — `POST /login` only (§7.5); since 18 November 2026 also the two recovery routes, §12.4 and §12.5                                                                                                                                                                                 |
 | `SIGNUP_NOT_ALLOWED`     | 403    | Deployment    | `POST /signup` with an address not on the server's signup allowlist (§7.5). Added 28 October 2026 |
+| `CREDENTIAL_REJECTED`    | 403    | Phase 2       | An owner-scheme route that requires proof of an existing credential, and the proof does not verify (§12). Not `401`: the session is valid, and `vitrina-client-flows.md` §1.1 clears storage on any owner `401`. Added 18 November 2026 |
 | `ACCESS_REVOKED`         | 403    | PR 2          | PR 3 — a revoked **recipient** on their own album (§7.3; §9.4, §9.5)                                                                                                                                             |
 | `NOT_FOUND`              | 404    | PR 1          | PR 1 — unknown route; PR 2 adds out-of-scope album and recipient                                                                                                                                                 |
 | `CONFLICT`               | 409    | PR 2          | PR 2 — duplicate `id` or `token_hash` on recipient create (§7.7); also a duplicate address on `POST /signup` (§7.5); PR 3 adds duplicate `albums.id` and `media.id`, and upload after `ready` (§9.2, §9.6, §9.7) |
@@ -922,7 +923,8 @@ recovery key and no rotation are possible afterwards.
   anything derived, and it is why §4.1's audit has a second subject.
 - **N wrappings, not one column.** An `owner_keys` table holds several wrappings
   of the same `K_master`, one per credential. Phase 2 adds a recovery key by
-  `INSERT` rather than by migration. The **per-row client KDF parameters** that
+  `INSERT` rather than by re-encryption _("rather than by migration" until
+  18 November 2026: its verifier needs one additive column, §12)_. The **per-row client KDF parameters** that
   table exists to carry are what force `POST /login/params` to exist at all
   (§7.5): a global constant would have removed the round trip and the property
   with it. **There is no second parameter set.** The relay applies no KDF — it
@@ -1649,7 +1651,7 @@ collection.
   the row of kind password, of which there is exactly one per owner. Phase 2's
   recovery key is a different credential with a different salt, and a recovery
   login is a different route or a different request shape — not this response
-  growing a list. Stated because a `SELECT … LIMIT 1` without the kind predicate
+  growing a list. _It is a different route: §12.4, 18 November 2026._ Stated because a `SELECT … LIMIT 1` without the kind predicate
   works until the second row exists.
 
   **The response names its fields exactly as `/signup`'s body does**, because
@@ -2147,8 +2149,13 @@ and `404`. A malformed `recipient_id` is also `400`, from the path schema.
 | `POST /v1/albums/{album_id}/recipients`     | owner  | §7.7                                                                                                                           | `201` `{id, created_at}`                                                  | 400 · 401 · 404 · 409 · 413 · 415                 |
 | `POST /v1/recipients/{recipient_id}/revoke` | owner  | none                                                                                                                           | `200` `{revoked_at}`                                                      | 400 · 401 · 404                                   |
 | `GET /v1/owner/key` _(PR 2b, §8.3)_         | owner  | none                                                                                                                           | `200` `{kdf_salt, params, wrapped_master, wrap_nonce}`, `no-store`        | 401                                               |
+| `POST /v1/owner/password` _(§12.2)_         | owner + proof | `current_proof` · the new credential as `/signup`'s                                                                          | `204`                                                                     | 400 · 401 · 403 `CREDENTIAL_REJECTED` · 413 · 415 · 429 |
+| `GET /v1/owner/recovery-key` _(§12.3)_      | owner  | none                                                                                                                           | `200` `{created_at}`                                                      | 401 · 404                                         |
+| `PUT /v1/owner/recovery-key` _(§12.3)_      | owner + proof | `current_proof` · `recovery_proof` · `wrapped_master` · `wrap_nonce`                                                     | `200` `{created_at}`                                                      | 400 · 401 · 403 `CREDENTIAL_REJECTED` · 413 · 415 · 429 |
+| `POST /v1/recovery/key` _(§12.4)_           | none   | `email` as typed · `recovery_proof`                                                                                            | `200` `{wrapped_master, wrap_nonce}`, `no-store`                          | 400 · 401 `INVALID_CREDENTIALS` · 413 · 415 · 429 |
+| `POST /v1/recovery/password` _(§12.5)_      | none   | `email` as typed · `recovery_proof` · the new credential as `/signup`'s                                                        | `200` `{token, expires_at}`, `no-store`                                   | 400 · 401 `INVALID_CREDENTIALS` · 413 · 415 · 429 |
 
-**Seven became eight on 13 September 2026**, with PR 2b's owner-key fetch — listed
+**Eight became thirteen on 18 November 2026**, with §12's five routes; two more are unauthenticated and IP-limited, so five in all. **Seven became eight on 13 September 2026**, with PR 2b's owner-key fetch — listed
 here so this table stays the one place every owner-auth route appears, though its
 definition is §8.3. The three credential routes' bodies are now field tables in
 §7.5, at the level §7.7 already had.
@@ -2274,9 +2281,13 @@ to watch for:
 
 **There is exactly one function that inserts an `owner_keys` row**, in the
 repository adapter, and the comment §7.5 asks for — that decoy indistinguishability
-holds only while every row's parameters agree — goes on it. Phase 2's recovery
-key inserts through the same function, which is how the comment is met by whoever
-raises parameters for one account.
+holds only while every row's parameters agree — goes on it. _Phase 2's recovery
+key was to insert through the same function. Superseded 18 November 2026: a
+recovery row carries no parameters, so the comment does not concern it, and it is
+written by its own upsert (§12; `vitrina-schema.md` §3). What still matters is
+that every write of a password row's parameters — signup's insert and §12's
+replacement — carries the comment, since a password change is how one account's
+parameters could rise above the decoys'._
 
 **If V.1 amends the values, nothing here changes shape.** The constant moves, new
 rows carry the new value, existing rows keep theirs, and §7.5's Phase 2 warning
@@ -2348,6 +2359,13 @@ decoy_salt = HMAC-SHA-256(secret, "vitrina-decoy-v1"       ‖ normalised_email)
 auth_hash  = HMAC-SHA-256(secret, "vitrina-auth-pepper-v1" ‖ proof)
 ```
 
+_A third use since 18 November 2026 (§12; encryption spec §6.6.3), on the same
+terms — HMAC-SHA-256, `R_proof` as its 32 raw bytes:_
+
+```
+recovery auth_hash = HMAC-SHA-256(secret, "vitrina-recovery-pepper-v1" ‖ R_proof)
+```
+
 Domain strings are ASCII, no null terminator, no length prefix — the convention
 encryption spec §2 and §6.2 use. `proof` is the 32 raw bytes, never the base64url
 string, on the same rule schema §6 applies to token hashing. `auth_hash` is 32
@@ -2415,6 +2433,8 @@ token and no KEK; it asks the user for the password again and needs the wrapping
 second session for the sake of a read. Phase 2's recovery credential is a second
 `owner_keys` row with its own salt and wrapping, reached by a sibling of this
 route; `/login` would otherwise grow a discriminator it has no other use for.
+_Superseded 18 November 2026: the recovery wrapping has no salt and is reached
+without a session, by `POST /v1/recovery/key` (§12.4)._
 
 **Scope, and why §4.3 does not apply.** No id in the path: the row is the
 caller's, resolved from the bearer token, so there is nothing to enumerate and no
@@ -2448,7 +2468,9 @@ structural, since the table has no column the event would fit.
 nothing; §3's `methods` list already permits it. Singular `key`, because the
 route returns the one password credential, and Phase 2's recovery credential
 arrives as a sibling (`/owner/key/recovery`, or a `kind` segment — its PR's to
-name) rather than by turning this response into a list. No `ETag` and no
+name) rather than by turning this response into a list. _The sibling became
+§12.4, unauthenticated, 18 November 2026; the point about not turning this
+response into a list stands._ No `ETag` and no
 conditional request: `no-store` makes the body uncacheable, and a validator on a
 key artefact is a fingerprint of it for no benefit.
 
@@ -2496,10 +2518,17 @@ A second device runs steps 1–4 in full.
   "re-wraps `K_master` once and leaves album keys untouched" — a new `owner_keys`
   row value and a new `auth_hash`, in one transaction, under the owner scheme.
   Not in the checklist's route surface and not in v1's; when it arrives it is an
-  amendment to §7.5 and inherits §8.1 and §8.2 unchanged.
+  amendment to §7.5 and inherits §8.1 and §8.2 unchanged. _Password change is
+  specified in §12 (18 November 2026), with one difference from this note: the
+  owner scheme alone does not authorise it — the current password's proof does
+  too. Email change is still undecided._
 - **Recovery credentials** — Phase 2, encryption spec §6.6.1. A second
   `owner_keys` row, a sibling of §8.3, and a login shape that names the
   credential. §8.1's one-function rule and §7.5's Phase 2 note are written for it.
+  _Specified in §12 (18 November 2026), differently from this note: the recovery
+  wrapping is fetched without a session, with the recovery proof, and no session
+  exists until a new password is set. §8.1's one-function note is superseded
+  there._
 - **Whether V.1 moves the numbers in §8.1.** It may; the shape does not move.
 
 ---
@@ -3551,7 +3580,7 @@ Every authenticated route in the system sits behind one limiter, keyed on the
 `recipients.token_hash`, whichever §7.3 step 1 resolved. Not on IP, because a
 family behind one NAT shares an address and would share a budget, and because
 mobile data changes a device's address mid-session and would reset one. The
-three unauthenticated routes are the exception and are IP-keyed, for the reason
+unauthenticated routes — three, five since §12 — are the exception and are IP-keyed, for the reason
 §7.6 gives: they have no token to key on.
 
 | Limit           | Value                                  | Applies to                                                                |
@@ -3788,6 +3817,11 @@ count: nothing checks one against the rows.
 | `POST /v1/logout`                              | owner             | 2   | §7.5    | —                                                    | —                |
 | `POST /v1/logout/all`                          | owner             | 2   | §7.5    | —                                                    | —                |
 | `GET /v1/owner/key`                            | owner             | 2b  | §8.3    | —                                                    | yes (wrapping)   |
+| `POST /v1/owner/password`                      | owner + proof     | —   | §12.2   | —                                                    | —                |
+| `GET /v1/owner/recovery-key`                   | owner             | —   | §12.3   | —                                                    | —                |
+| `PUT /v1/owner/recovery-key`                   | owner + proof     | —   | §12.3   | —                                                    | —                |
+| `POST /v1/recovery/key`                        | none · IP-limited | —   | §12.4   | —                                                    | yes (wrapping)   |
+| `POST /v1/recovery/password`                   | none · IP-limited | —   | §12.5   | —                                                    | yes              |
 | `POST /v1/albums`                              | owner             | 3   | §9.2    | —                                                    | —                |
 | `GET /v1/albums`                               | owner             | 3   | §9.2    | —                                                    | yes (wrappings)  |
 | `GET /v1/albums/{album_id}`                    | owner · recipient | 3   | §9.4    | **no** (§11.6)                                       | yes (ciphertext) |
@@ -3806,11 +3840,11 @@ count: nothing checks one against the rows.
 | `GET /v1/albums/{album_id}/access-log`         | owner             | 5   | §11.7   | —                                                    | yes (ciphertext) |
 | `GET /v1/albums/{album_id}/access-log/entries` | owner             | 5   | §11.7   | —                                                    | —                |
 
-Every authenticated row is behind §11.5's token-hash limiter; the three
+Every authenticated row is behind §11.5's token-hash limiter; the five
 `none` rows are behind §7.6's IP limiter; `/health` is behind neither. Methods
-in use: `GET`, `POST`, `PUT`, `DELETE` (§3). Three routes accept a wrapping (§4.1's inbound
-walk: §7.5, §7.7, §9.2); three return one (§4.1's outbound walk: §8.3, §9.2,
-§10.1). Four are shared between schemes — §9.4, §9.5, §11.2, §11.3 — and each
+in use: `GET`, `POST`, `PUT`, `DELETE` (§3). Six routes accept a wrapping (§4.1's inbound
+walk: §7.5, §7.7, §9.2, §12.2, §12.3, §12.5); four return one (§4.1's outbound walk: §8.3, §9.2,
+§10.1, §12.4). _Three, three and three until §12, 18 November 2026._ Four are shared between schemes — §9.4, §9.5, §11.2, §11.3 — and each
 resolves to exactly one `Caller` (§7.1).
 
 **No route answers `HEAD`.** Fastify adds a `HEAD` route for every `GET` by
@@ -3855,3 +3889,135 @@ nobody read.
   design avoids it — the condition is an album with a year of rows. The fix is a
   migration (`(recipient_id, id DESC)`, `(media_id, id DESC)`), not an API
   change: the cursor stays `id`.
+
+---
+
+## 12. Replacing the password credential, and the recovery key
+
+**Phase 2, specified 18 November 2026** (phase-2 plan, items 5 and 6;
+encryption spec §6.6.3, §6.6.4). Five routes. One rule shapes all of them:
+**every route that writes a credential requires proof from an existing
+credential, never a session alone.** The relay cannot check that a posted
+wrapping contains `K_master`, so a session token alone must never be enough to
+replace one (encryption spec §6.6.4).
+
+### 12.1 One write, two authorisers
+
+"Replace the password credential" is one use case and one repository write, in
+one transaction:
+
+1. Lock the `owners` row (`SELECT … FOR UPDATE`).
+2. Verify the authorising proof against its stored verifier, in constant time:
+   the current password's proof against `owners.auth_hash` (§12.2), or
+   `R_proof` against the recovery row's `auth_hash` (§12.5). On §12.5 this is a
+   re-check: §12.5 first verifies without any lock, as §12.4 does, so that a
+   wrong key for a real address does no work an unknown address doesn't.
+3. Write the new `owners.auth_hash`, from the new proof (§8.2).
+4. Update the password row: `kdf_salt`, the three parameters, `wrapped_master`,
+   `wrap_nonce`.
+5. Revoke sessions: for a password change, every `owner_tokens` row except the
+   caller's; for a recovery, every row, then mint one.
+6. Delete the recovery row, if there is one. After a recovery, because a
+   recovery key is single-use; after a password change, because whoever knew
+   the old password could have replaced the recovery key with their own
+   (encryption spec §6.6.4). Either way the owner is asked to make a new one.
+
+**Verifying inside the transaction, under the lock,** means that of two
+concurrent replacements the second fails: the proof it carries no longer
+matches. **The new credential is validated exactly as `/signup`'s** — the same
+fields, bounds and §8.1 floors, the same schema object, not a copy of it.
+
+### 12.2 `POST /v1/owner/password`
+
+Owner scheme, plus the current password's proof.
+
+| Field                         | Notes                                                    |
+| ----------------------------- | -------------------------------------------------------- |
+| `current_proof`               | the proof of the password being replaced                 |
+| `proof`, `kdf_salt`, params, `wrapped_master`, `wrap_nonce` | the new credential, as `/signup`'s body |
+
+`204`. The caller's session survives; every other is revoked (§12.1 step 5).
+
+**Errors:** `400` · `401 UNAUTHENTICATED` (the token) · `403
+CREDENTIAL_REJECTED` (the current proof) · `413` · `415` · `429`. The client
+checks the current password locally first, against the `/owner/key` wrapping
+(`vitrina-client-flows.md` §3.13), so a `403` here means a broken client or a concurrent change.
+
+**Why the caller's session survives here when `/logout/all` revokes it (§7.5).**
+`/logout/all` means "something may be wrong; end everything", and can be issued
+from any device. A password change is authorised by the password itself, on the
+device that just proved it.
+
+**A per-owner cap on failed proofs:** 5 per 15 minutes, across §12.2 and §12.3,
+then `429 RATE_LIMITED`. Provisional, like every number in §7.6 and §11.5.
+
+### 12.3 `GET` and `PUT /v1/owner/recovery-key`
+
+**`GET`** — owner scheme. `200 {created_at}` when the owner has a recovery key,
+`404 NOT_FOUND` when not. For the settings screen; it returns no wrapping.
+
+**`PUT`** — owner scheme, plus the current password's proof.
+
+| Field                           | Notes                                              |
+| ------------------------------- | -------------------------------------------------- |
+| `current_proof`                 | the current password's proof                       |
+| `recovery_proof`                | `R_proof` (encryption spec §6.6.3)                 |
+| `wrapped_master`, `wrap_nonce`  | `K_master` under `R_KEK`                           |
+
+Upserts the recovery row under `UQ_owner_keys_one_recovery`, storing
+`HMAC(secret, "vitrina-recovery-pepper-v1" ‖ recovery_proof)` as its `auth_hash`
+(§8.2; `vitrina-schema.md` §3). `200 {created_at}`; a replacement resets
+`created_at`. A previous recovery key stops working on commit. **Errors:** `400` · `401` · `403 CREDENTIAL_REJECTED` · `413`
+· `415` · `429`. No `DELETE`: a key is replaced, not removed, in this phase.
+
+Straight after signup, the client still holds the signup proof (`vitrina-client-flows.md` §3.2), so
+creating a key there needs no second password entry.
+
+### 12.4 `POST /v1/recovery/key`
+
+No scheme; §7.6's IP limiter. Body: `email`, the address as typed (§7.5's
+field, the same schema object), and `recovery_proof`.
+
+`200 {wrapped_master, wrap_nonce}`, `no-store` — wrapped, never unwrapped
+(§10.2's rule, stated for this route as well).
+
+**§4.3 applies.** The lookup runs unconditionally; on a miss, or for an account
+with no recovery key, a constant dummy verifier is compared instead. An unknown
+address, an account without a recovery key and a wrong key all answer a
+byte-identical `401 INVALID_CREDENTIALS`. No decoys are needed: there is no salt
+to fetch. **Errors:** `400` · `401 INVALID_CREDENTIALS` · `413` · `415` · `429`.
+
+### 12.5 `POST /v1/recovery/password`
+
+No scheme; §7.6's IP limiter. Body: `email` as typed, `recovery_proof`, and
+the new password credential as `/signup`'s body carries it.
+
+Verifies `recovery_proof` exactly as §12.4 does — lookup unconditional, dummy
+verifier on a miss, no lock — and only on success runs §12.1, which re-checks it
+under the lock. It deletes the recovery row, revokes every session and mints
+one. `200 {token, expires_at}`, `no-store`. Errors and
+§4.3 as §12.4.
+
+**No session exists between §12.4 and §12.5.** The client holds `K_master` with
+no token (`vitrina-client-flows.md` §1.1, `O-recovering`). A session is minted only once the account
+can be unlocked again with a password, so there is never a session nobody can
+unlock. The client applies signup's password policy to the new password
+(brief §12).
+
+### 12.6 What this section changes elsewhere
+
+- **§1.1 gains `CREDENTIAL_REJECTED`/403**, and `INVALID_CREDENTIALS` is
+  reachable on §12.4 and §12.5.
+- **§7.9 gains five rows**, and **§8.2's secret a third use.**
+- **§4.3's rule covers §12.4 and §12.5**, and §7.3's unauthenticated routes are
+  five, not three.
+- **§7.6's IP limiter covers five routes**, with the same numbers and a reason
+  that needs restating: online guessing of a 128-bit key is pointless, so the
+  limiter is there for address harvesting, as on `/login/params`.
+- **§4.1's walks:** §12.2, §12.3 and §12.5 accept a wrapping; §12.4 returns one.
+  Each carries proofs — never a password, a KEK or the recovery secret.
+- **§11.8 gains five rows.**
+- **§6 owes rows** for: §4.3 on both recovery routes; every credential write
+  refused (`403`) with a valid session and a missing or wrong proof; the
+  replacement under lock; sessions revoked as step 5 says; the recovery row gone
+  after a recovery.

@@ -55,6 +55,11 @@ These are not stylistic preferences. Each one breaks something specific.
 ## 2. Key hierarchy
 
 ```
+password KEK (Argon2id of the password, one per owner)        ← §6.6.2
+    └── wraps K_master   (owner_keys, kind = 'password')
+recovery KEK (from a random 128-bit secret, at most one per owner) ← §6.6.3
+    └── wraps K_master   (owner_keys, kind = 'recovery')
+            │
 K_master (32 bytes, random, one per owner)          ← §6.6
     │
     └── wraps K_album, one wrapping per album
@@ -114,7 +119,7 @@ The domain strings are 16 ASCII bytes each, and the id is its 16 raw UUID bytes,
 
 **The blob is one field, nonce first, and differs from the key wraps on purpose.** The wraps above and in §6 store `wrap_nonce` in its own column because both halves are fixed length and each is checked independently. Here the ciphertext length varies with the plaintext, so a second field would carry nothing a length check could use. **It is not an envelope** (§3): the envelope exists for random access to chunks, and a title has one chunk by definition.
 
-**The AAD is empty, by the rule every AAD in this document follows: an AAD binds whatever the key does not already separate.** The envelope's AAD authenticates the whole 64-byte header, which §5 requires for `version` and `plaintext_length`; that it also carries `asset_id`, already an input to `K_asset`, is redundant and harmless. The passphrase wrap binds `recipient_id` and the album wrap binds `album_id`, neither of which their keys derive from. The master wrap (§6.6.2) binds a domain string and no identifier, because at signup there is no owner id to bind. The title and label blobs bind nothing: each key derives from its own id, so a title moved to another album meets a different `K_title` and fails to authenticate. The rule is a floor, not a pattern — an AAD may bind more than the key separates, and several do.
+**The AAD is empty, by the rule every AAD in this document follows: an AAD binds whatever the key does not already separate.** The envelope's AAD authenticates the whole 64-byte header, which §5 requires for `version` and `plaintext_length`; that it also carries `asset_id`, already an input to `K_asset`, is redundant and harmless. The passphrase wrap binds `recipient_id` and the album wrap binds `album_id`, neither of which their keys derive from. The master wrap (§6.6.2) and the recovery wrap (§6.6.3) each bind a domain string and no identifier, because the owner id is server-assigned. The title and label blobs bind nothing: each key derives from its own id, so a title moved to another album meets a different `K_title` and fails to authenticate. The rule is a floor, not a pattern — an AAD may bind more than the key separates, and several do.
 
 **Lengths.** A blob is `24 + plaintext length + 16` bytes. A writer MUST refuse an empty plaintext, so the smallest valid blob is **41 bytes**, and MUST reject a title or label containing an unpaired UTF-16 surrogate (§1). A reader MUST reject a blob shorter than 41 bytes before attempting decryption, and MUST reject a blob that authenticates but whose plaintext is not valid UTF-8, **as an error distinct from an authentication failure** — the first means a broken writer, the second a wrong key or tampering. **The format has no maximum.** The relay's 1024-byte ceiling is policy (`vitrina-schema.md` §3) and can move without a migration; a reader that enforced it would reject valid blobs the day it moved. Categories 18 and 19 (§9) pin both constructions.
 
@@ -408,7 +413,7 @@ A distinct route, not a phase flag inside login, so the property below has somew
 - **The server secret is effectively permanent.** Rotating it moves every decoy salt while real salts, being stored, stay put — so anyone comparing responses across the rotation learns which addresses exist. It is durable state rather than a rotatable credential, and must be backed up as reliably as the database — but **not in the same artifact as the database**, for the reason in §6.6's pepper paragraph. One secret serves both uses, so the stricter of the two storage requirements governs.
 - **Absent at boot MUST be a hard error.** The ordinary implementation — read from the environment, generate a random one if missing — silently destroys the property on every restart, and nothing fails while it happens. See brief §6 non-negotiable #17.
 
-**The indistinguishability requirement now spans two routes, and is one rule, not two:** no credential route may reveal whether an account exists — not by status, not by code, not by response shape, and not by timing.
+**The indistinguishability requirement now spans two routes, and is one rule, not two:** no credential route may reveal whether an account exists — not by status, not by code, not by response shape, and not by timing. _Since 18 November 2026 it spans the two recovery routes as well (§6.6.3, api-sketch §12). They need no decoys, because a recovery credential has no salt to fetch: the lookup runs unconditionally and a constant dummy verifier stands in on a miss, as at `/login`._
 
 **Signup is outside that rule, and cannot be brought inside it in v1.** Registration must reject a duplicate address, and with no email sending there is no way to respond identically and deliver the difference out of band. The property is therefore _credential-route indistinguishability_, not account-existence secrecy. Recorded as a limitation in §10 rather than assumed away.
 
@@ -416,7 +421,7 @@ A distinct route, not a phase flag inside login, so the property below has somew
 
 The relay cannot verify that a client derived the proof honestly, so a plain fast hash would leave a database of cheaply crackable passwords if any client implementation were weak — and Argon2id over the proof only _slows_ that attacker, because its protection scales with the proof entropy the relay cannot check. The pepper doesn't: without it the comparison value cannot be computed at all, whatever the client did. It also avoids making §6.6.1's dummy verification a memory-allocation vector, which Argon2id would, by construction.
 
-**One server secret, domain-separated** — `HMAC(secret, "vitrina-decoy-v1" ‖ email)` and `HMAC(secret, "vitrina-auth-pepper-v1" ‖ proof)`. Same §2 pattern, one operational primitive.
+**One server secret, domain-separated** — `HMAC(secret, "vitrina-decoy-v1" ‖ email)` and `HMAC(secret, "vitrina-auth-pepper-v1" ‖ proof)`. Same §2 pattern, one operational primitive. **A third use since 18 November 2026:** `HMAC(secret, "vitrina-recovery-pepper-v1" ‖ R_proof)`, the recovery verifier (§6.6.3, where this secret is written `server_secret` to keep it apart from the recovery secret). Its own domain, so neither verifier can stand in for the other.
 
 **The secret must be recoverable but stored apart from the database.** Losing it bricks every account; storing it in the same backup artifact collapses the pepper to an unpeppered hash, since one snapshot theft yields both — which is the design this section rejected. Different artifact, different access control. _An earlier revision of §6.6.1 said the secret should be backed up "alongside Postgres", meaning as durably as; read as "in the same artifact" it contradicts this paragraph and defeats the pepper. Corrected 21 August 2026._ Absent at boot is a hard error (#17) — note its failure mode differs from the decoy secret's: a missing pepper breaks every login loudly, _except_ on a fresh deployment with no accounts, where generate-if-missing works fine and the damage surfaces later.
 
@@ -424,7 +429,7 @@ The relay cannot verify that a client derived the proof honestly, so a plain fas
 
 **One Argon2id run, two derivations.** The client runs Argon2id once to a root, then derives the KEK and the proof by keyed hash with distinct domain strings — **§6.6.2 names them and the wrap's AAD**; §2's existing pattern, no new primitive, and it halves the cost on the device the parameters are sized for. §6.6's independence requirement is satisfied: a PRF output does not yield its key. **So there is exactly one parameter set, client-side, sized for the weakest phone** — measured by phase-0-plan §8's V.1, which confirmed them on 15 September 2026.
 
-**Recovery is out of v1**, and the consequence is not softenable: forgetting the password loses every album. The relay cannot re-wrap what it cannot read. This is why the `owner_keys` table exists as a table rather than a column — Phase 2 adds recovery by inserting a row, with no migration and no re-encryption.
+**Recovery is out of v1**, and the consequence is not softenable: forgetting the password loses every album. The relay cannot re-wrap what it cannot read. This is why the `owner_keys` table exists as a table rather than a column — Phase 2 adds recovery by inserting a row, with no re-encryption. _This sentence also said "with no migration" until 18 November 2026. That held for the wrapping and not for authentication: the recovery credential needs a verifier, and v1's only verifier column is the password's, on `owners`. Recovery therefore arrives with one additive migration (§6.6.3; `vitrina-schema.md` §3)._
 
 ### 6.6.2 Account creation
 
@@ -455,7 +460,7 @@ Domain strings are ASCII, no null terminator and no length prefix — §2's conv
 
 **Argon2id's own `secret` and `associatedData` inputs are both EMPTY**, as in §6.2. Stated rather than inherited: §6.2's table and its warning are scoped to passphrase recipients, and a field-level omission is the one failure §0 records the consistency check as unable to catch — `wrap_nonce` went undocumented that way once already.
 
-**The owner wrap's AAD is the domain string alone, and the reason is worth stating** because the other two wraps bind an identifier. §6.2 binds `recipient_id` and §2 binds `album_id`, and in both the client holds that id before wrapping. **An owner id is server-assigned** — at signup the client has no id to bind, since the relay assigns it in the same transaction that writes the wrapping. Brief §9.3's rule runs _every id inside an AAD is client-generated_, so by contraposition a server-assigned id is not in one; the two facts agree rather than one deriving the other. So this wrap binds nothing but its own domain string, which is enough to stop a blob being moved between the three wrap types and is all that is available. Consistency check: api-sketch §7.5's signup body correctly carries no `id`.
+**The owner wrap's AAD is the domain string alone, and the reason is worth stating** because the other two wraps bind an identifier. §6.2 binds `recipient_id` and §2 binds `album_id`, and in both the client holds that id before wrapping. **An owner id is server-assigned** — at signup the client has no id to bind, since the relay assigns it in the same transaction that writes the wrapping. Brief §9.3's rule runs _every id inside an AAD is client-generated_, so by contraposition a server-assigned id is not in one; the two facts agree rather than one deriving the other. So this wrap binds nothing but its own domain string, which is enough to stop a blob being moved between the wrap types and is all that is available. Consistency check: api-sketch §7.5's signup body correctly carries no `id`.
 
 **The password is NFC-normalised and nothing else.** Not §6.3's passphrase normalisation — that strips marks and folds case, which is correct for a system-generated passphrase transcribed by a human and wrong for a password its owner typed, where folding `Café` into `cafe` discards entropy the user chose. NFC alone fixes the composition ambiguity two keyboards can produce without weakening anything. **This is the one place in the system where a human-supplied secret is _not_ aggressively normalised, and the asymmetry is deliberate.** A password containing an unpaired UTF-16 surrogate is rejected before NFC (§1).
 
@@ -481,6 +486,79 @@ The relay receives:
 The account and its first `owner_keys` row are created in one transaction. An owner with no wrapping is an account that can authenticate and decrypt nothing.
 
 **Signup reveals whether an address is already registered**, and cannot be made not to in v1 — see §10.
+
+### 6.6.3 The recovery credential
+
+**Specified 18 November 2026** (phase-2 plan, item 5). A second `owner_keys` row, `kind = 'recovery'`, wrapping the same `K_master` under a key derived from a random secret the owner keeps. It lets an owner who has forgotten their password set a new one (§6.6.4). Optional, and at most one per owner.
+
+**The recovery secret, `R_secret`, is 16 random bytes from a CSPRNG, generated by the crate** like every other key. (Not to be confused with §6.6.1's server secret, written `server_secret` in this section.) 128 bits, and no KDF: the recovery wrapping is not peppered, any more than the password's (§6.6.2), so the secret's entropy is its whole defence against an attacker holding the database. 128 bits puts that attack out of reach, and leaves the password as the weakest credential on any account.
+
+```
+rk       = R_secret ‖ 0x00 × 16                                → 32 bytes
+R_KEK    = BLAKE2b-256(key = rk, msg = "vitrina-recovery-kek-v1")
+R_proof  = BLAKE2b-256(key = rk, msg = "vitrina-recovery-proof-v1")
+check    = the first 12 bits of BLAKE2b-256(key = rk, msg = "vitrina-recovery-check-v1")
+
+wrapped_master = XChaCha20-Poly1305(
+                     key   = R_KEK,
+                     nonce = wrap_nonce (24 random bytes),
+                     msg   = K_master,
+                     aad   = "vitrina-recovery-wrap-v1")
+```
+
+| Value                                   | Length                                                    |
+| --------------------------------------- | --------------------------------------------------------- |
+| `R_secret`                              | **16 bytes**                                              |
+| `rk`, `R_KEK`, `R_proof`                | **32 bytes** each                                         |
+| `check`                                 | **12 bits**: digest byte 0, then the high 4 bits of byte 1 |
+| `wrap_nonce`                            | **24 bytes**                                              |
+| `wrapped_master`                        | **48 bytes**                                              |
+| domain strings: kek · proof · check · wrap | 23 · 25 · 25 · 24 ASCII bytes, §2's convention         |
+
+**Why `R_secret` is padded to a 32-byte key.** BLAKE2b writes the key length into its parameter block, so a 16-byte key is a configuration no vector in this document anchors. Padding keeps every keyed BLAKE2b call in the system at category 6's anchored 32-byte key and 32-byte output (§9.2). **The padding is part of the format**: sixteen `0x00` bytes appended, never a hash of `R_secret`.
+
+**Independence**, as §6.6 requires. `R_KEK`, `R_proof` and `check` are PRF outputs under distinct labels; none yields `rk` or another. A relay that receives `R_proof` cannot unwrap. The recovery credential shares nothing with the password credential: a different root (random, not Argon2id) and different labels.
+
+**The AAD is the domain string alone**, on §6.6.2's reasoning: the owner id is server-assigned. Binding a client-generated row id would only stop a party with write access to the database from restoring an old recovery row, and that party can already destroy anything. A string distinct from `"vitrina-master-wrap-v1"` means a password wrapping can never authenticate as a recovery wrapping, or the reverse.
+
+**The relay stores `HMAC(server_secret, "vitrina-recovery-pepper-v1" ‖ R_proof)` on the recovery row** (§6.6.1's third use; `vitrina-schema.md` §3), peppered for §6.6.1's reason: the relay cannot verify how a client produced `R_secret`. The relay never receives `R_secret`, `rk` or `R_KEK`. `check` never leaves the device.
+
+**The written form.** 140 bits: the 16 bytes of `R_secret` in order, each most significant bit first, then the 12 check bits, also most significant first (the 8 bits of digest byte 0, then the top 4 bits of digest byte 1). Split into 28 groups of 5 bits, most significant first, each mapped to Crockford's base32 alphabet `0123456789ABCDEFGHJKMNPQRSTVWXYZ`. Displayed as 7 groups of 4 joined by `-` (U+002D). 140 = 28 × 5, so there are no padding bits and every valid string has exactly one canonical spelling — the problem `vitrina-schema.md` §6 found in base64url cannot arise.
+
+**Reading it back**, before any network call, in this order:
+
+1. Reject an unpaired UTF-16 surrogate (§1).
+2. NFKC, which folds full-width input from an IME to ASCII.
+3. Remove every code point with the `White_Space` property and every code point of `General_Category = Pd`.
+4. Uppercase ASCII `a`–`z`. Then map `O` → `0`, and `I` and `L` → `1`.
+5. Any character left outside the alphabet → **invalid character**. Otherwise, not 28 characters → **wrong length**. Otherwise, decoded, the check bits disagree → **wrong check**.
+
+Three distinct local errors, checked in that order, so an input with both a stray character and a wrong length reports the character. About 1 in 4,096 error patterns pass the check; those reach the relay and fail as a wrong key. **The rule runs in the crate**, under brief §6 #4, and vectors pin it: every client must read the same string as the same secret.
+
+**What holding `R_secret` means.** Whoever has it can set a new password and open every album. It is single-use (§6.6.4). Losing both the password and the recovery key still loses every album: §6.6.1's accepted cost, now conditional on having made one.
+
+**Vectors owed**, added to §9's lists in the same commit as the entries they describe, because the consistency check pins each list to the file:
+
+- **An envelope category:** a fixed `R_secret` → `R_proof`, and `wrapped` with a fixed `wrap_nonce` around category 16's `K_master`. Externally verifiable along the chain: the blob unwraps to `K_master`, which opens category 16's `K_album`, which decrypts category 1's object.
+- **A protocol vector for the written form:** 16 bytes → the 28-character string, check bits included. Spellings that must read back to the same `R_secret` (lowercase, no dashes, spaces, `O`/`I`/`L` substitutions, a full-width spelling). Negatives: a one-character typo the check catches, chosen so it does; a `U`; a wrong length; a correct body with a wrong check.
+- **A protocol vector for the 24-byte recovery-wrap AAD, in hex**, on vectors 8 and 9's terms.
+
+None involves Argon2id, so `scripts/check-vectors` can re-derive every one of them independently (§9.2).
+
+### 6.6.4 Replacing a credential: password change and recovery
+
+**Specified 18 November 2026** (phase-2 plan, items 5 and 6). One operation, "replace the password credential", with two ways to authorise it:
+
+- **Password change.** The client is in `O-open` and holds `K_master`. It derives a new root, KEK and proof from the new password under a fresh salt and the current parameters (§6.6.2), wraps `K_master`, and posts the new credential **with the proof of the current password**. No new construction: category 17 at a fresh salt. **A password change also deletes the recovery key**, in the same transaction, and the owner is asked to make a new one. A password change is the remedy for a password someone else may know, and whoever knew it could have replaced the recovery key with one of their own (creating one needs only the password's proof); left in place, that key would later let them set a password of their choosing.
+- **Recovery.** The client derives `R_KEK` and `R_proof` from the typed `R_secret` (§6.6.3), fetches the recovery wrapping with `R_proof`, and unwraps `K_master`. It then builds the new password credential exactly as above and posts it **with `R_proof`**. The recovery row is deleted in the same transaction: a recovery key is single-use, because it has been typed on some device.
+
+**Neither rotates `K_master`.** Both re-wrap it. Anyone who has already unlocked, or who holds an old copy of the database and the old credential, can still unwrap. Copy must not say otherwise.
+
+**Every write of a credential requires proof from an existing credential, never a session alone.** The relay cannot check that a posted wrapping contains `K_master`. A route that accepted a wrapping on a session token would let a stolen token overwrite the password row with a wrapping of garbage, which locks the owner out of every album for good. It would also let that token install a recovery key of the attacker's choosing, which could then authorise the same overwrite. So creating or replacing the recovery key requires the password's proof, a password change requires the current password's proof, and recovery requires `R_proof` (api-sketch §12).
+
+**The checked wrap.** Before posting any new wrapping of `K_master`, the client MUST unwrap it again and compare the result with `K_master` in constant time, and MUST NOT post on a mismatch. The comparison happens inside the crate, as part of the wrap function these paths call, because §2.2 gives `K_master` no byte accessor and so no caller can make it. **For a recovery key, the wrapping is made under the `R_KEK` of the generated `R_secret`, and the check unwraps it under an `R_KEK` derived anew from the typed-back confirmation** (the owner types the key back before it is activated). The two agree only if the written form was read back to the same 16 bytes, which catches an encoder and parser that disagree as well as a key copied down wrong. For a password, it is the same KEK object: deriving again would cost a second Argon2id run and catch nothing more. The relay cannot make this check, so a client that skips it can destroy an account as surely as an attacker.
+
+**Parameters.** A password change uses the client's current parameters. If those ever rise above some accounts' stored values, §6.6.1's decoy-parameter degradation begins.
 
 ## 7. Metadata
 
@@ -675,6 +753,8 @@ Recorded honestly so they are not mistaken for oversights.
 **Access patterns are visible to the relay.** The server sees which recipient fetched which object and when. This powers the "María viewed this" feature, so it is partly intentional — but it means the relay learns viewing behaviour even though it cannot see content.
 
 **The number of assets in an album is visible**, as is upload timing.
+
+**A password change or a recovery re-wraps `K_master`; it does not rotate it** (§6.6.4). A device that has already unlocked, or an old copy of the database together with the old credential, still opens the account. Rotation would mean a new `K_master` and every album wrapping redone, and is not specified in version 1.
 
 **The 64 MiB allocation is untested on a 2 GB device.** V.1 passed on a 4 GB Helio G35 (phase-0-plan §8). The 2 GB variant of the same phone has an identical SoC, so its _timing_ would match — what differs is the browser's per-tab memory headroom, and that failure mode is the tab being evicted rather than running slowly. A recipient on such a device would see the page vanish rather than wait. Recorded as untested rather than assumed covered, and note that a page cannot distinguish an eviction from a manual reload from inside, so any run claiming to close this must say which occurred.
 
