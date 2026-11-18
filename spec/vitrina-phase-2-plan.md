@@ -1,6 +1,6 @@
 # Vitrina — Phase 2 Plan
 
-**Status:** Draft · 18 November 2026 · items 1–3 done
+**Status:** Draft · 18 November 2026 · section A done
 **Companion to:** `vitrina-project-brief.md` (canonical) and `vitrina-roadmap.md` (Phase 2)
 
 A list, kept current: one row per item, its order, who does it, whether it needs staging, and its status. Decisions are recorded under the item, with their date, the day they are made. When an item lands, its status changes and its decisions stay. No prose beyond that.
@@ -32,13 +32,15 @@ A list, kept current: one row per item, its order, who does it, whether it needs
 | 1   | Browser Back      | Back goes back one screen on both paths                                       | One-shot    | No      | Done   |
 | 2   | Upload progress   | Per-photo and overall progress during upload (`vitrina-client-flows.md` §3.6) | One-shot    | No      | Done   |
 | 3   | JPEG quality      | Measured on real photos from both phones; one number, chosen by eye and size  | Interactive | No      | Done   |
-| 4   | Actionable errors | Every error screen says what the person can do next (roadmap, Phase 2)        | Interactive | No      | —      |
+| 4   | Actionable errors | Every error screen says what the person can do next (roadmap, Phase 2)        | Interactive | No      | Done   |
 
 **1 — decided 16 November 2026:** `history.state` holds a marker from a fixed set and nothing else (no ids); the URL never changes. Back runs the screen's own back or cancel method, guards included. Top levels (owner album list, recipient grid) leave the app. Dialogs and sheets close on Back, including Unlock's sign-out sheet; Unlock itself adds no entry. Forward reopens nothing. Phone gesture check before tagging.
 
 **2 — decided 16 November 2026:** a batch summary ("3 of 12", a bar, "keep this page open") while anything is queued or in flight; an item counts only on the server's `ready` or a failure, never on a PUT's return. A batch ending with anything not `ready` leaves one closing line until the album is left or a new batch starts. `beforeunload` while a batch runs. In-progress cells are no longer live regions. No per-photo percentage: it needs `XMLHttpRequest` beside `fetch`; revisit only if testers on weak connections still report it.
 
 **3 — decided 17 November 2026:** photos 0.75 (was 0.85), thumbnails 0.70 (was 0.80). No visible difference between 0.70 and 0.90 in Chrome on Android or Safari on macOS; 0.75 keeps one step of margin, because the eye test used a low-sharpness phone and a quality cannot be changed after upload. Numbers in `packages/web/scripts/jpeg-quality/RESULTS.md`.
+
+**4 — decided 18 November 2026:** every error, refusal and dead end on both paths was inventoried against its flows slot and given a next step, within the slots' limits: sign-in failure identical for a wrong password and an unknown address; no cause the server does not send; no reset or recovery promised before item 5; nothing brief §3 forbids. Reload buttons where a reload is the remedy. Fixed on the way: a recipient 404 on the key route now reaches "not recognised" instead of an endless offline retry. **Open:** a help contact (an address shown on screen) for the three states nothing on the device can fix — cannot unlock after a good sign-in, an album key that won't open, a photo that never shows. Until decided, they stay honest dead ends.
 
 ## B. Accounts and keys
 
