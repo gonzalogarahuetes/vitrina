@@ -299,6 +299,7 @@ jobs:
           name: playwright-results
           path: packages/web/test-results/
           retention-days: 7
+          timeout-minutes: 30
 
   # ---------------------------------------------------------------------------
   # Job 2 — needs Docker. Two things, both against the live compose stack:
