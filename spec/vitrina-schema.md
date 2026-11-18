@@ -178,7 +178,7 @@ _Added by `002`._
 | `kdf_parallelism` | `integer`     | NULL — required for `kind = 'password'`                         |
 | `created_at`      | `timestamptz` | NOT NULL, default `now()`                                       |
 
-**Several rows per owner is the point.** Each holds the same `K_master` wrapped under a different credential — the password today, a recovery key in Phase 2, potentially a per-device key later. Brief §11: a single `master_key_wrapped` column on `owners` would choose no-recovery permanently, whereas this makes Phase 2 an `INSERT` with no migration and no re-encryption.
+**Several rows per owner is the point.** Each holds the same `K_master` wrapped under a different credential — the password today, a recovery key in Phase 2, potentially a per-device key later. Brief §11: a single `master_key_wrapped` column on `owners` would choose no-recovery permanently, whereas this makes Phase 2's wrapping an `INSERT` with no re-encryption. _This said "with no migration" until 18 November 2026: true of the wrapping, false of authentication. See the recovery verifier below._
 
 A password change re-wraps `K_master` and updates the `password` row. **Album keys are never touched**, because `K_album` is wrapped by `K_master` rather than derived from it (encryption spec §2).
 
@@ -211,6 +211,32 @@ CREATE UNIQUE INDEX "UQ_owner_keys_one_password"
 Two routes select by that predicate — `/login/params` and `/owner/key` (api-sketch §7.5, §8.3) — and a `SELECT … LIMIT 1` without it works until a second row exists. The rule was prose in two documents with no mechanism until `002`; a partial unique index is the mechanism.
 
 **v1 has exactly one row per owner** in practice as well as by constraint, `kind = 'password'`. Recovery is Phase 2, and arrives as an `INSERT` the index above permits.
+
+**The recovery verifier — specified 18 November 2026, for `007` (not yet applied).** A recovery credential authenticates (encryption spec §6.6.3), and v1 has nowhere to keep its verifier: `owners.auth_hash` is the password's, one per account. `007` adds, additively and in one release:
+
+| Column      | Type    | Constraints                                                                                  |
+| ----------- | ------- | -------------------------------------------------------------------------------------------- |
+| `auth_hash` | `bytea` | NULL. 32 bytes when present — `HMAC(server_secret, "vitrina-recovery-pepper-v1" ‖ R_proof)` (encryption spec §6.6.3) |
+
+```sql
+CHECK (auth_hash IS NULL OR octet_length(auth_hash) = 32)
+CHECK (kind <> 'password' OR auth_hash IS NULL)
+CHECK (
+  kind <> 'recovery' OR (
+        auth_hash IS NOT NULL
+    AND kdf_salt IS NULL AND kdf_memory_kib IS NULL
+    AND kdf_iterations IS NULL AND kdf_parallelism IS NULL
+  )
+)
+CREATE UNIQUE INDEX "UQ_owner_keys_one_recovery"
+  ON "owner_keys" ("owner_id") WHERE kind = 'recovery';
+```
+
+Every existing row is a password row with a `NULL` `auth_hash`, so all three checks validate without a backfill, and the previous release never writes a recovery row, so it runs unchanged on the new schema (the migration rule, `deploy/README.md` section 3). **The password's verifier stays on `owners.auth_hash`.** Moving it onto its row would take three releases (add and backfill, switch reads, drop) for a cosmetic gain; it can wait for a third credential kind, or never happen. The cost is an asymmetry — one verifier on `owners`, one on `owner_keys` — and every invariant still lives inside a single row.
+
+**`007` also replaces the table comment `002` wrote**, which says recovery needs no migration. An applied migration is never edited (§0); a later `COMMENT ON TABLE` is how live database text is corrected.
+
+**Three writes touch this table, each one function:** signup inserts the password row (with `owners`, one transaction); replacing the password credential updates the password row and `owners.auth_hash` together; creating or replacing the recovery key upserts the recovery row under the index above. Recovery and a password change both delete the recovery row in the same transaction that replaces the password (encryption spec §6.6.4). An upsert that replaces a recovery key resets its `created_at`: it is a new key.
 
 ### `albums`
 

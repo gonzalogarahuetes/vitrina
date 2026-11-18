@@ -10,8 +10,8 @@
 - **Each flow is a sequence of transitions between the key states in §1.** A step names the route it calls exactly as that route's row appears in api-sketch §11.8. Bodies live there and are not restated.
 - **One route has no api-sketch §11.8 row yet:** `DELETE /v1/media/{media_id}`, built in parallel (§3.7). Its row is owed.
 - **Copy slots** are marked ⟦copy: _name_ — _rule_⟧. The text is written where the screen is built. The rule named is what it must satisfy. Every slot is also bound by brief §3's never-claim list and, in every language but English, by brief §15.3. The one text quoted here is brief §16, in §4.3.
-- **Two failures apply to every call and are listed once, here.** Network loss: an offline state that retries and **never changes key state** — no storage cleared, no handle freed. Only an owner `401`, a recipient `403`/`401`, or a `429` on a credential route (below) does that. And `429 RATE_LIMITED`: wait for the interval in `Retry-After`, then retry (api-sketch §11.5). **Except on the three credential routes** (`/signup`, `/login/params`, `/login`, limited per IP by api-sketch §7.6): there a `429` frees every key handle, zeroes the proof, clears the password field and returns to the form, with a countdown from `Retry-After`. The person resubmits, and the app derives again. Holding key material through a wait of up to 15 minutes buys nothing that two seconds of derivation doesn't. A `429` on `/signup` means no account was created; it never shares a path with a lost response, which stays `signup.uncertain` (§3.2).
-- **Not drawn:** "my albums / shared with me", password change and recovery, a persistent "this is my device", album deletion, video, native apps, universal links, device-bound invites, and "remember on this device" for recipients.
+- **Two failures apply to every call and are listed once, here.** Network loss: an offline state that retries and **never changes key state** — no storage cleared, no handle freed. Only an owner `401`, a recipient `403`/`401`, or a `429` on a credential route (below) does that. And `429 RATE_LIMITED`: wait for the interval in `Retry-After`, then retry (api-sketch §11.5). **Except on the credential routes** — the five limited per IP by api-sketch §7.6 (`/signup`, `/login/params`, `/login`, `/recovery/key`, `/recovery/password`) and the two owner-scheme credential writes (`/owner/password`, `PUT /owner/recovery-key`, api-sketch §12): there a `429` frees every key handle, zeroes the proof, clears the password and recovery-key fields and returns to the form, with a countdown from `Retry-After`. During recovery that means back to `O-none`. The person resubmits, and the app derives again. Holding key material through a wait of up to 15 minutes buys nothing that two seconds of derivation doesn't. A `429` on `/signup` means no account was created; it never shares a path with a lost response, which stays `signup.uncertain` (§3.2).
+- **Not drawn:** "my albums / shared with me", a persistent "this is my device", album deletion, video, native apps, universal links, device-bound invites, and "remember on this device" for recipients.
 
 ## 1. Key state is UI state
 
@@ -22,10 +22,11 @@
 | `O-none`   | nothing          | nothing                                                    | sign in · sign up              |
 | `O-locked` | token, `expires_at` | `wrapped_master` + parameters, from `GET /v1/owner/key` | unlock                         |
 | `O-open`   | token, `expires_at` | `K_master`, plus every `K_album` from `GET /v1/albums`  | album list and everything after |
+| `O-recovering` | nothing      | `K_master`, `R_proof`, during recovery only (§3.15)      | new password                   |
 
 - **Only the token and its `expires_at` are stored** (brief §12, "Session refresh"). The expiry is neither secret nor personal. It is stored because the unlock path never receives it, and without it no warning is possible after a reload (§3.12). No key, KEK, password or email goes to storage.
-- **The KEK and password exist only during a derivation wait (§2) and the step after it.** The proof is zeroed after `POST /v1/signup` or `POST /v1/login`. `K_master` is not stored in any state.
-- **A `401` from any owner route, in any state:** clear storage, free every handle (api-sketch §8.4), go to `O-none`. Any work in progress is lost (§3.6).
+- **The KEK and password exist only during a derivation wait (§2) and the step after it.** The proof is zeroed after `POST /v1/signup` or `POST /v1/login` — except that after signup it is held, in memory, through the optional recovery-key step (§3.14), and a password change or recovery-key creation holds the current proof until its own call (§3.13, §3.14). `K_master` is not stored in any state.
+- **A `401` from any owner route, in any state:** clear storage, free every handle (api-sketch §8.4), go to `O-none`. Any work in progress is lost (§3.6). A rejected proof on an owner route is `403 CREDENTIAL_REJECTED`, not `401`, so it never triggers this (api-sketch §12).
 - **Nothing moves `O-open` to `O-locked` except a page load.** There is no "lock" action in v1.
 - `sessionStorage` is per tab. A new tab usually starts in `O-none` and its sign-in mints another session. A duplicated tab may start in `O-locked`. The page-load branch in §3.1 handles both.
 
@@ -65,7 +66,7 @@
 
 - **The `401` branch is settled before any password is asked for.** If the session has already ended, nobody types a password into its unlock screen.
 - **A wrong password is the AEAD tag failing locally.** No request is made, nothing is logged, and no limiter counts it. Each attempt costs only the wait. Unlock never calls `POST /v1/login`, so it never mints a session (brief §12).
-- **No password policy check here.** The policy applies at signup only (brief §12).
+- **No password policy check here.** The policy applies when a password is set — signup, change and recovery (§3.2, §3.13, §3.15) — never when one is used (brief §12).
 - **Sign-out is offered from the unlock screen** (§3.11), for a shared device or the wrong account.
 
 **Decided: the unlock screen says only "Unlock". No email is stored.** Brief §12 limits storage to the token and its expiry. Keeping the address as well would widen that just to supply a label. It would also put personal data in storage that any script on the origin can read, and buy no capability in return: `GET /v1/owner/key` is scoped by the token, so the address plays no part in unlocking. The cost: on a shared device, the screen does not say whose account it is. The sign-out action covers that case.
@@ -84,16 +85,17 @@
 | ---- | --------------------------------------------------------------------------- | ------------------- | ----------------------------------------------------------- |
 | 1    | address and password; policy checked locally                                | —                   | password (a JS string, which cannot be wiped — api-sketch §8.4) |
 | 2    | generate `K_master` and salt → derivation wait → KEK and proof → wrap `K_master` | —                   | `K_master`, KEK, proof                                      |
-| 3    | create the account                                                          | `POST /v1/signup`   | token, `expires_at` → `sessionStorage`; proof zeroed; KEK freed |
+| 3    | create the account                                                          | `POST /v1/signup`   | token, `expires_at` → `sessionStorage`; KEK freed; the proof kept for step 5 only |
 | 4    | —                                                                           | —                   | `O-open`, empty album list. No `GET /v1/owner/key`          |
+| 5    | optional: make a recovery key, skippable (§3.14)                             | `PUT /v1/owner/recovery-key` | the signup proof, until this step completes or is skipped |
 
-- **The password policy is enforced here and nowhere else** (brief §12, "Owner password policy").
+- **The password policy is enforced when a password is set** — here, and in §3.13 and §3.15 — never when one is used (brief §12, "Owner password policy").
 - **The consequence of forgetting the password is shown before submission**, not discovered later (brief §11).
 
 **Failing:** `403 SIGNUP_NOT_ALLOWED` means signup is by invitation only and this address isn't invited (`signup.not-allowed`) · `409 CONFLICT` means the address is already registered, so offer sign-in instead · `400` means a client build error (api-sketch §7.5), shown as a generic failure · **the response is lost after sending**, so the account may exist: offer sign-in with the same password, which succeeds if it was created. A blind retry would answer `409`.
 
 ⟦copy: signup.policy — brief §12's policy: a length floor and a blocklist, with no composition rules⟧
-⟦copy: signup.loss — forgetting the password loses every album, and no reset recovers them (brief §11, "Accepted cost")⟧
+⟦copy: signup.loss — forgetting the password loses every album unless a recovery key was made, and nothing else recovers them (brief §11, "Accepted cost")⟧
 ⟦copy: signup.taken — must not claim that account existence is private (brief §11, "Account existence is discoverable through signup")⟧
 ⟦copy: signup.not-allowed — signup is by invitation; ask the person who invited you. Says nothing about whether an account exists⟧
 ⟦copy: signup.uncertain — the account may have been created. Sign in to find out⟧
@@ -241,6 +243,73 @@
 
 ⟦copy: session.ending — when the session ends, and that uploads still running at that point will be lost⟧
 ⟦copy: session.ended — signed out because the session ended. Sign in again⟧
+
+### 3.13 Change password
+
+_Added 18 November 2026_ (encryption spec §6.6.4; api-sketch §12.2). `O-open` → `O-open`.
+
+| Step | What                                                                                       | Call                          | Secrets afterwards                       |
+| ---- | ------------------------------------------------------------------------------------------ | ----------------------------- | ---------------------------------------- |
+| 1    | current password, new password twice; the new one checked against the policy              | —                             | both passwords (JS strings)              |
+| 2    | derivation wait on the current password → its KEK opens the stored wrapping locally       | `GET /v1/owner/key`           | current proof; the current KEK freed     |
+| 3    | fresh salt → derivation wait on the new password → new KEK and proof → checked wrap of `K_master` | —                     | current proof, new proof, new wrapping   |
+| 4    | replace the credential                                                                     | `POST /v1/owner/password`     | both proofs zeroed; new KEK freed        |
+
+- **Steps 2 and 3 are one continuous wait**, about twice the usual one (§2).
+- **A wrong current password is caught at step 2, locally,** like a wrong unlock (§3.1). No request is made.
+- **The checked wrap refuses to post** if the new wrapping does not open to `K_master` (encryption spec §6.6.4). Shown as _could not derive_, never as a wrong password.
+- **Afterwards** the owner stays signed in here; every other device is signed out and must sign in with the new password. **Any recovery key is deleted**, and the owner is asked to make a new one (§3.14): whoever knew the old password could have replaced it (encryption spec §6.6.4).
+
+**Failing:** `403 CREDENTIAL_REJECTED` (step 2 passed locally, so a broken build or a change made elsewhere meanwhile) · `429` on the per-owner cap.
+
+⟦copy: password.change — what changes: the password, and every other device signs out⟧
+⟦copy: password.wrong-current — as unlock.wrong: no counting, no lockout⟧
+⟦copy: password.done — changed; other devices are signed out; the recovery key no longer works, make a new one. Must not say that anyone who already opened the albums loses them (encryption spec §10)⟧
+
+### 3.14 The recovery key: create, replace, status
+
+_Added 18 November 2026_ (encryption spec §6.6.3; api-sketch §12.3). `O-open` → `O-open`.
+
+| Step | What                                                                                        | Call                              | Secrets afterwards                    |
+| ---- | ------------------------------------------------------------------------------------------- | --------------------------------- | ------------------------------------- |
+| 1    | the current password → derivation wait → its KEK opens the stored wrapping locally          | `GET /v1/owner/key`               | current proof                         |
+| 2    | the crate generates the secret → the written form is shown, once                            | —                                 | secret, current proof                 |
+| 3    | wrap under the generated key's `R_KEK`; the owner types it back in full → the checked wrap opens it under an `R_KEK` derived from **what was typed** | — | `R_proof`, the wrapping, current proof |
+| 4    | activate                                                                                    | `PUT /v1/owner/recovery-key`      | every secret zeroed                   |
+
+- **After signup, step 1 is skipped:** the signup proof is still in memory, and the step is offered straight after the account is created (§3.2), skippable. The proof is zeroed when it completes or is skipped.
+- **Status** comes from `GET /v1/owner/recovery-key`, on a settings screen. An owner with none is prompted once after unlock, dismissibly.
+- **Replacing** is the same flow. The previous key stops working when step 4 succeeds.
+- **The key is not activated until it has been typed back.** The typed-back string, not the generated one, derives the KEK the checked wrap verifies with, which catches a key copied down wrong.
+
+**Failing:** a typo at step 3 (`recovery.typo`, local) · `403 CREDENTIAL_REJECTED` · `429`.
+
+⟦copy: recovery.status — whether this account has a recovery key, and since when⟧
+⟦copy: recovery.create · recovery.replace — anyone with the key can open the account and every album; it cannot be shown again or recovered for you; losing both the password and the key loses every album⟧
+⟦copy: recovery.show — keep it on paper or in a password manager; a screenshot goes to the photo backup. Must not call it a backup of the photos, or imply that anyone keeps a copy⟧
+⟦copy: recovery.confirm · recovery.confirm.mismatch — type it back to activate it⟧
+
+### 3.15 Recover with the recovery key
+
+_Added 18 November 2026_ (encryption spec §6.6.4; api-sketch §12.4, §12.5). `O-none` → `O-recovering` → `O-open`. Reached from the sign-in screen.
+
+| Step | What                                                                                            | Call                            | Client holds afterwards                       |
+| ---- | ----------------------------------------------------------------------------------------------- | ------------------------------- | --------------------------------------------- |
+| 1    | address and recovery key; the key read back and checked locally                                  | —                               | `R_KEK`, `R_proof`                            |
+| 2    | fetch the recovery wrapping → unwrap                                                             | `POST /v1/recovery/key`         | `K_master`, `R_proof` → `O-recovering`        |
+| 3    | new password twice, policy checked → derivation wait → checked wrap of `K_master`               | —                               | `K_master`, `R_proof`, the new credential     |
+| 4    | replace the credential                                                                           | `POST /v1/recovery/password`    | token, `expires_at` → `sessionStorage`; proofs zeroed |
+| 5    | the album keys                                                                                   | `GET /v1/albums`                | `O-open`                                      |
+
+- **No token exists until step 4.** `O-recovering` holds `K_master` with nothing in storage; a reload in it returns to `O-none` and the owner starts again. Nothing about it is stored.
+- **The key is used up at step 4.** Afterwards the owner is asked to make a new one (§3.14). Every other device is signed out.
+
+**Failing:** a typo at step 1 (local) · `401 INVALID_CREDENTIALS` at step 2 or 4, identical for an unknown address, an account without a key and a wrong key (api-sketch §4.3) · the unwrap fails after a `200` (not a wrong key: a hard failure, as `signin.cannot-unlock`) · `429`.
+
+⟦copy: signin.recover — the entry point: forgot the password, and have a recovery key⟧
+⟦copy: recovery.enter · recovery.typo — local errors name what is wrong (length, a character, the check) and nothing else⟧
+⟦copy: recovery.failed — one message for all three server cases; must not say which (api-sketch §4.3)⟧
+⟦copy: recovery.new-password · recovery.done — signed in with the new password; other devices signed out; the key is used up, make a new one⟧
 
 ## 4. Recipient flows
 

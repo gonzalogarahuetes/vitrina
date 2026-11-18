@@ -51,6 +51,15 @@ A list, kept current: one row per item, its order, who does it, whether it needs
 | 7   | "This is my device"     | Opt-in persistence for owners; only after 6, its one remedy for a lost device (brief §12)    | Interactive         | Yes     | —      |
 | 8   | Recipient re-invitation | A new invite for someone already in the album, without revoking blind (roadmap, Phase 2)     | Interactive         | Maybe   | —      |
 
+**5 and 6 — designed together, 18 November 2026** (encryption spec §6.6.3, §6.6.4; api-sketch §12; `vitrina-client-flows.md` §3.13–§3.15). One "replace the password credential" write, authorised by the current password's proof (6) or the recovery proof (5); **6 is built first.** Every credential write needs proof from an existing credential, never a session alone; every new wrapping is checked inside the crate before it is posted. Recovery key: 128 random bits, no KDF, written as 28 Crockford base32 characters with a 12-bit check; single-use; activated only after being typed back; deleted by a password change (added on review: a key planted by someone who knew the old password would otherwise survive it). Its verifier lives on its own `owner_keys` row (`007`); the password's stays on `owners`. Build order: owner — the crate's checked wrap and `changePassword` → one-shot — `007` and the replace use case with `POST /v1/owner/password` → owner — the recovery key in the crate and its key functions → delegated: vectors and bindings, recovery routes, UI. R1 and staging before the release with `007`.
+
+**5 — copy, decided 18 November 2026:** the new `signup.loss`, when recovery ships —
+EN *"We never see your password. That's why we can't open your photos, and why, if you forget it and haven't made a recovery key, nobody can give you back access to your albums, not even us."*
+ES *«Nosotros nunca vemos tu contraseña. Por eso no podemos abrir tus fotos y, por eso, si la olvidas y no has creado una clave de recuperación, nadie podrá devolverte el acceso a tus álbumes, ni siquiera nosotros.»*
+"Forgot your password?" without a key: *"Without a recovery key, you can't get back into your albums"*, plus that the photos on the phone are unaffected and where to write. **Open:** explaining *why* the password is tied to the albums — candidate lead-in *«Tu contraseña no solo sirve para entrar: es la llave de tus álbumes.»*, which matches brief §16's «El enlace es la llave»; length and placement (a "¿Por qué?" or an onboarding step) belong to the redesign, item 26.
+
+**7 — noted 18 November 2026:** a password change revokes sessions; it does not rotate `K_master`. "This is my device" can rely on password change as its lost-device remedy only if what it keeps on the device is useless without a live session. Keeping `K_master` itself on the device would not be cut off by a password change.
+
 ## M. Album membership — before C
 
 | #   | Item             | Scope                                                                                                                                                                                                                           | Who         | Staging | Status |
