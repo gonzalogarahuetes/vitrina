@@ -570,6 +570,19 @@ describe("not recognised", () => {
     expect(Array.from(held)).toEqual(new Array(32).fill(0));
   });
 
+  // Flows §4.2: a 404 here is not recognised, never the offline state, whose retry would meet the same 404 for ever.
+  for (const fragment of [QR_FRAGMENT, PASS_FRAGMENT]) {
+    it(`is a 404 from /recipient/key (${fragment === QR_FRAGMENT ? "QR" : "passphrase"}), and forgets the stored invite`, async () => {
+      const h = harness();
+      h.override("/v1/recipient/key", h.err(404, "NOT_FOUND"));
+      h.session.start(fragment);
+      await settle();
+      expect(h.screen()).toEqual({ kind: "not-recognised" });
+      expect(h.session.current.offline).toBe(false);
+      expect(h.forgotten()).toBe(1);
+    });
+  }
+
   it("is a 401 mid-grid", async () => {
     const h = harness();
     h.override(METADATA, h.err(401, "UNAUTHENTICATED"));

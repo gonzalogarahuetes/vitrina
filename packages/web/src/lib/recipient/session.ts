@@ -352,7 +352,18 @@ export class RecipientSession {
    * recognised, never a guess at the other unwrap. Null once terminal.
    */
   private async fetchMaterial<K extends RecipientKeyMaterial["kind"]>(kind: K): Promise<Extract<RecipientKeyMaterial, { kind: K }> | null> {
-    const material = await this.call((api) => api.key());
+    let material: RecipientKeyMaterial;
+    try {
+      material = await this.call((api) => api.key());
+    } catch (e) {
+      // Flows §4.2: a 404 here is not recognised. Left to guarded(), it would
+      // be the offline state, and its retry would meet the same 404 for ever.
+      if (e instanceof ApiFailure && e.status === 404) {
+        this.terminal("not-recognised");
+        return null;
+      }
+      throw e;
+    }
     if (material.kind !== kind) {
       this.terminal("not-recognised");
       return null;
