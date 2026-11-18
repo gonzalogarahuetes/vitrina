@@ -649,6 +649,17 @@ describe("429 waits for Retry-After", () => {
     expect(paths(h.sent).filter((p) => p === METADATA)).toHaveLength(2);
     expect(albumScreen(h).phase).toBe("ready");
   });
+
+  it("says so while it waits, as the owner path does, and stops saying so after", async () => {
+    const h = harness();
+    const seen: boolean[] = [];
+    h.session.subscribe((s) => seen.push(s.rateLimited));
+    h.override(METADATA, h.err(429, "RATE_LIMITED", { "Retry-After": "7" }));
+    await toGrid(h);
+    expect(seen).toContain(true);
+    expect(h.session.current.rateLimited).toBe(false);
+    expect(h.session.current.offline).toBe(false);
+  });
 });
 
 // ── Damaged links and versions ────────────────────────────────────────────

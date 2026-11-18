@@ -38,6 +38,11 @@
   let password = $state("");
   const busy = $derived(phase === "busy" || phase === "deriving");
   const ready = $derived(email.trim() !== "" && password !== "");
+  /** Submit was pressed with a field empty: say so, as unlock does, rather than a button that does nothing. */
+  let empty = $state(false);
+  $effect(() => {
+    if (ready) empty = false;
+  });
 
   // A failed or paused attempt empties the password field, as the board does.
   // A 429 keeps the address (flows §0).
@@ -48,7 +53,11 @@
 
   function submit(e: SubmitEvent): void {
     e.preventDefault();
-    if (busy || !ready || phase === "paused") return;
+    if (busy || phase === "paused") return;
+    if (!ready) {
+      empty = true;
+      return;
+    }
     onSubmit(email, password);
   }
 </script>
@@ -92,7 +101,9 @@
         />
       </fieldset>
 
-      {#if phase === "failed"}
+      {#if empty}
+        <Alert text={t["signin.empty"]} />
+      {:else if phase === "failed"}
         <Alert text={t["signin.failed"]} />
       {:else if phase === "paused" && pausedUntil !== null}
         <Paused until={pausedUntil} />
@@ -106,7 +117,7 @@
         <button
           class="btn"
           type="submit"
-          disabled={!ready || phase === "paused"}>{t["signin.submit"]}</button
+          disabled={phase === "paused"}>{t["signin.submit"]}</button
         >
       {/if}
     </form>

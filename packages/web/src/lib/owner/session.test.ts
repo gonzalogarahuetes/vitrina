@@ -352,6 +352,24 @@ describe("sign-in on a new device (flows §3.3)", () => {
     expect(routes(h.sent)).toEqual(["POST /v1/login/params"]);
   });
 
+  it("a wrong password, an unknown address and a password no account can have are one screen, so one string (api-sketch §4.3)", async () => {
+    const wrong = harness();
+    wrong.session.start();
+    wrong.session.submitSignin(EMAIL, "the wrong password");
+    const unknown = harness();
+    unknown.override("POST /v1/login", unknown.err(401, "INVALID_CREDENTIALS"));
+    unknown.session.start();
+    unknown.session.submitSignin("nobody@example.com", PASSWORD);
+    const impossible = harness({ derive: "invalid-password" });
+    impossible.session.start();
+    impossible.session.submitSignin(EMAIL, "x\uD800y");
+    await settle();
+    const screens = [wrong, unknown, impossible].map((h) => h.screen());
+    expect(screens[0]).toEqual({ kind: "signin", phase: "failed", notice: null, email: "", pausedUntil: null });
+    expect(screens[1]).toEqual(screens[0]);
+    expect(screens[2]).toEqual(screens[0]);
+  });
+
   it("cannot-unlock after a successful login: revokes the new session, clears storage, never says wrong password", async () => {
     for (const error of ["cannot-unlock", "unusable-material"] as const) {
       const h = harness({ openMaster: error });

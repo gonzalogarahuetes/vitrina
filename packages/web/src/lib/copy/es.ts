@@ -29,12 +29,12 @@ export const es: Copy = {
 
   "open.loading": "Abriendo el álbum…",
   "open.newer-version":
-    "Esta invitación se hizo para una versión más reciente de esta aplicación, así que aquí no se puede abrir. Pregunta a la persona que te la envió.",
+    "Esta invitación necesita una versión más reciente de la aplicación. Pregunta a quien te la envió.",
 
   "derive.wait":
     "Desbloqueando en este dispositivo. Puede tardar unos segundos.",
   "derive.failed":
-    "Este dispositivo no ha podido terminar de abrir el álbum. Vuelve a abrir el enlace de tu invitación para intentarlo otra vez, o usa otro móvil u ordenador.",
+    "Este dispositivo no ha podido terminar de abrir el álbum. Vuelve a abrir el enlace o usa otro dispositivo.",
 
   "recipient.passphrase.title": "Escribe tu frase de contraseña",
   "recipient.passphrase.label":
@@ -55,7 +55,8 @@ export const es: Copy = {
   "grid.cell.loading.a11y": (i: number, n: number) =>
     `Foto ${n_(i)} de ${n_(n)}, cargando`,
   "grid.cell.failed": "No se ha podido cargar. Toca para volver a intentarlo.",
-  "grid.cell.unavailable": "Esta foto no se puede mostrar.",
+  "grid.cell.unavailable":
+    "Esta foto no se puede mostrar. Pregunta a la persona que te invitó.",
 
   watermark: (label: string, date: string) => `${label} · ${date}`,
 
@@ -71,13 +72,14 @@ export const es: Copy = {
   "viewer.pan-right": "Mover a la derecha",
   "viewer.fit": "Ajustar",
   "viewer.removed": "Esta foto ya no está en este álbum.",
-  "viewer.failed": "Esta foto no se ha podido mostrar en este dispositivo.",
+  "viewer.failed":
+    "Esta foto no se ha podido mostrar en este dispositivo. Vuelve al álbum y prueba a abrirla otra vez, o usa otro móvil u ordenador.",
 
   revoked:
     "Este álbum ya no se comparte contigo. La persona que te invitó puede darte más detalles.",
   notrecognised:
     "Esta invitación no funciona. Pide a la persona que te la envió que la revise o que te envíe una nueva.",
-  dead: "Vuelve a abrir el enlace de tu invitación para ver el álbum.",
+  dead: "Vuelve a abrir el enlace de tu invitación para ver el álbum. Si ya no lo tienes, pídeselo a la persona que te lo envió.",
 
   offline:
     "Ahora mismo no se puede acceder al álbum. Comprueba tu conexión y vuelve a intentarlo.",
@@ -124,6 +126,7 @@ export const es: Copy = {
   "signin.unavailable":
     "El inicio de sesión no funciona ahora mismo. Vuelve a intentarlo en un momento.",
   "signin.retry": "Volver a intentarlo",
+  "signin.empty": "Escribe primero tu correo electrónico y tu contraseña.",
   "signin.cannot-unlock":
     "Tu contraseña se ha aceptado, pero los álbumes de esta cuenta no se han podido abrir en este dispositivo.",
   "signin.back": "Volver al inicio de sesión",
@@ -145,11 +148,12 @@ export const es: Copy = {
   "signup.loss":
     "Si olvidas esta contraseña, pierdes todos los álbumes de esta cuenta. No hay forma de restablecerla y nadie puede recuperarlos, ni siquiera nosotros.",
   "signup.submit": "Crear cuenta",
+  "signup.empty": "Escribe primero tu correo electrónico y elige una contraseña.",
   "signup.busy": "Creando tu cuenta…",
   "signup.taken":
     "Ya hay una cuenta con este correo electrónico. Si es tuya, inicia sesión.",
   "signup.not-allowed":
-    "Registro solo mediante invitación. Pregunta a quien te invitó para más detalles.",
+    "Solo puedes crear una cuenta si te han invitado. Comprueba que usas el correo electrónico con el que te invitaron, o pregunta a la persona que te invitó.",
   "signup.not-allowed.signin": "Iniciar sesión",
   "signup.taken.signin": "Iniciar sesión",
   "signup.uncertain":
@@ -209,7 +213,7 @@ export const es: Copy = {
     `Vista previa de ${name}, cargando`,
   "upload.review.preview.failed": "Sin vista previa en este dispositivo",
   "upload.review.unreadable":
-    "Esta foto no se ha podido leer. Vuelve a elegirla.",
+    "Esta foto no se ha podido leer. Pulsa Descartar y vuelve a elegirla con Añadir fotos.",
   "upload.too-large":
     "Esas fotos son demasiado grandes para añadirlas juntas. Elige menos fotos cada vez.",
   "upload.review.caption.label": "Pie de foto (opcional)",
@@ -240,8 +244,8 @@ export const es: Copy = {
     `Enviando fotos: ${n_(done)} de ${n_(total)}`,
   "upload.batch.failed": (n: number) =>
     plural(L, n, {
-      one: (k) => `${k} foto no ha terminado de subirse.`,
-      other: (k) => `${k} fotos no han terminado de subirse.`,
+      one: (k) => `${k} foto no ha terminado de subirse. Búscala más abajo.`,
+      other: (k) => `${k} fotos no han terminado de subirse. Búscalas más abajo.`,
     }),
   "upload.batch.stay": "Deja esta página abierta hasta que termine.",
 
@@ -256,11 +260,13 @@ export const es: Copy = {
   "upload.resend": "Volver a enviar",
 
   "upload.not-stripped":
-    "Esta foto no se ha enviado: este dispositivo no ha podido confirmar que se eliminaran su ubicación y los datos de la cámara.",
+    "Esta foto no se ha enviado: este dispositivo no ha podido confirmar que se eliminaran su ubicación y los datos de la cámara. Prueba a añadirla desde otro móvil u ordenador.",
   "upload.not-prepared":
-    "Esta foto no se ha podido preparar en este dispositivo, así que no se ha enviado nada.",
+    "Esta foto no se ha podido preparar en este dispositivo, así que no se ha enviado nada. Prueba a añadirla desde otro móvil u ordenador.",
   "upload.refused":
-    "El servidor no ha aceptado esta foto, así que no se ha guardado nada.",
+    "El servidor no ha aceptado esta foto, así que no se ha guardado nada. Prueba a añadirla desde otro móvil u ordenador.",
+  "album.cell.unavailable":
+    "Esta foto no se puede mostrar. Quítala y vuelve a añadirla.",
   "upload.dismiss": "Cerrar",
 
   "album.leaving":

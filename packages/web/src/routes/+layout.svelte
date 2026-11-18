@@ -1,5 +1,6 @@
 <script lang="ts">
   import "$lib/theme.css";
+  import { page } from "$app/state";
   import { copy } from "$lib/copy/language.svelte";
   import LanguageSwitch from "$lib/ui/LanguageSwitch.svelte";
   import type { Snippet } from "svelte";
@@ -18,9 +19,12 @@
 {#if data.envelope.status === "ready"}
   {@render children()}
 {:else}
-  <!-- Flows §2's "could not derive" family: never shown as a wrong password. -->
+  <!-- Flows §2's "could not derive" family: never shown as a wrong password. Each path in its own words; a reload is the next step. -->
   <main class="screen centred" role="alert" data-state="envelope-unavailable">
-    <h1>{t["derive.failed"]}</h1>
+    <h1>{page.url.pathname.startsWith("/v/") ? t["derive.failed"] : t["derive.failed.owner"]}</h1>
+    <div class="bottom">
+      <button class="btn" type="button" onclick={() => location.reload()}>{t["derive.failed.retry"]}</button>
+    </div>
   </main>
 {/if}
 

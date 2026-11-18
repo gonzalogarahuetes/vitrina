@@ -25,7 +25,7 @@
   let { data }: { data: LayoutData } = $props();
 
   // Raw: the session replaces the state whole and owns its pictures; nothing here proxies them.
-  let ui = $state.raw<State>({ screen: { kind: "starting" }, offline: false });
+  let ui = $state.raw<State>({ screen: { kind: "starting" }, offline: false, rateLimited: false });
   let session: RecipientSession | undefined;
   let album: HTMLDivElement | undefined = $state();
 
@@ -104,7 +104,8 @@
 {:else if screen.kind === "revoked"}
   <Message text={t.revoked} kind="closed" />
 {:else if screen.kind === "device-failed"}
-  <Message text={t["derive.failed"]} kind="device" />
+  <!-- Flows §4.7: device failed keeps the stored invite, so a reload may recover. -->
+  <Message text={t["derive.failed"]} kind="device" action={{ label: t["derive.failed.retry"], onclick: () => location.reload() }} />
 {:else if screen.kind === "passphrase"}
   <Passphrase phase={screen.phase} onSubmit={(words) => session?.submitPassphrase(words)} />
 {:else if screen.kind === "onboarding"}
@@ -132,6 +133,13 @@
         onClose={() => session?.closeViewer()}
       />
     {/if}
+  </div>
+{/if}
+
+{#if ui.rateLimited && !ui.offline}
+  <!-- A 429's Retry-After, waited out in place (flows §0), worded as on the owner path. -->
+  <div class="offline" role="status">
+    <span>{t["wait.rate-limited"]}</span>
   </div>
 {/if}
 

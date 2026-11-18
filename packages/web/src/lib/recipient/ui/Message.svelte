@@ -1,6 +1,16 @@
 <script lang="ts">
-  /* A screen that is one sentence: revoked, not recognised, dead, newer version, device failed, loading. */
-  let { text, role = "alert", kind = "plain" }: { text: string; role?: "alert" | "status"; kind?: "plain" | "closed" | "device" } = $props();
+  /* A screen that is one sentence: revoked, not recognised, dead, newer version, device failed, loading. With `action`, one button: the next step. */
+  let {
+    text,
+    role = "alert",
+    kind = "plain",
+    action = undefined,
+  }: {
+    text: string;
+    role?: "alert" | "status";
+    kind?: "plain" | "closed" | "device";
+    action?: { readonly label: string; readonly onclick: () => void } | undefined;
+  } = $props();
 </script>
 
 <main class="screen centred" {role}>
@@ -16,6 +26,11 @@
     </div>
   {/if}
   <h1>{text}</h1>
+  {#if action !== undefined}
+    <div class="bottom">
+      <button class="btn" type="button" onclick={action.onclick}>{action.label}</button>
+    </div>
+  {/if}
 </main>
 
 <style>

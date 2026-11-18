@@ -32,11 +32,12 @@ export const en = {
 
   "open.loading": "Opening the album…",
   "open.newer-version":
-    "This invitation was made for a newer version of this app, so it can't be opened here. Ask the person who sent it.",
+    "This invitation needs a newer version of this app. Ask the person who sent it.",
 
   "derive.wait": "Unlocking on this device. This can take a few seconds.",
+  /** Flows §2's third exit. Never a wrong passphrase. Shown with a reload, which recovers from the stored invite (flows §4.7). */
   "derive.failed":
-    "This device couldn't finish opening the album. Open your invitation link again to try once more, or use another phone or computer.",
+    "This device couldn't finish opening the album. Open the link again, or use another device.",
 
   "recipient.passphrase.title": "Enter your passphrase",
   "recipient.passphrase.label":
@@ -57,8 +58,9 @@ export const en = {
   "grid.cell.loading.a11y": (i: number, n: number) =>
     `Photo ${n_(i)} of ${n_(n)}, loading`,
   "grid.cell.failed": "Couldn't load. Tap to try again.",
-  /** Its metadata is unusable, so retrying cannot help. */
-  "grid.cell.unavailable": "This photo can't be shown.",
+  /** Its metadata is unusable, so retrying cannot help. The owner can replace it. */
+  "grid.cell.unavailable":
+    "This photo can't be shown. Ask the person who invited you.",
 
   /** Drawn into the pixels, one short line in a corner. Social, not forensic: names, never identifies or traces. */
   watermark: (label: string, date: string) => `${label} · ${date}`,
@@ -75,13 +77,16 @@ export const en = {
   "viewer.pan-right": "Move right",
   "viewer.fit": "Fit",
   "viewer.removed": "This photo is no longer in this album.",
-  "viewer.failed": "This photo couldn't be shown on this device.",
+  /** Flows §4.5: could not be shown on this device. The way to try again is the Back button beside it. */
+  "viewer.failed":
+    "This photo couldn't be shown on this device. Go back and try opening it again, or use another phone or computer.",
 
   revoked:
     "This album is no longer shared with you. The person who invited you can tell you more.",
   notrecognised:
     "This invitation doesn't work. Ask the person who sent it to check it, or to send you a new one.",
-  dead: "Open your invitation link again to see the album.",
+  /** Flows §4.7: open the link again. Nothing else is known, so no cause is given. */
+  dead: "Open your invitation link again to see the album. If you no longer have it, ask the person who sent it to you.",
 
   offline:
     "Can't reach the album right now. Check your connection, then try again.",
@@ -151,6 +156,8 @@ export const en = {
   "signin.unavailable":
     "Sign-in isn't working right now. Try again in a moment.",
   "signin.retry": "Try again",
+  /** Submit with a field empty, as unlock.empty. Says nothing about any account. */
+  "signin.empty": "Type your email address and password first.",
   /** Flows §3.3: signed in, but this account's key would not open. Not a password error. */
   "signin.cannot-unlock":
     "Your password was accepted, but this account's albums couldn't be opened on this device.",
@@ -176,13 +183,18 @@ export const en = {
   "signup.loss":
     "If you forget this password, you lose every album in this account. There is no reset, and nobody can recover them, not even us.",
   "signup.submit": "Create account",
+  /** Submit with a field empty, as unlock.empty. */
+  "signup.empty": "Type your email address and choose a password first.",
   "signup.busy": "Creating your account…",
   /** Flows §3.2: must not claim that account existence is private (brief §11). */
   "signup.taken":
     "There's already an account with this email address. If it's yours, sign in.",
-  /** A 403 SIGNUP_NOT_ALLOWED: the server's allowlist does not hold this address. */
+  /**
+   * A 403 SIGNUP_NOT_ALLOWED: the server's allowlist does not hold this address.
+   * Flows §3.2: ask the person who invited you; nothing about whether an account exists.
+   */
   "signup.not-allowed":
-    "Sign-up is by invitation only. Ask the person who invited you to the app for more details.",
+    "Sign-up is by invitation only. Check you're using the email address you were invited with, or ask the person who invited you.",
   "signup.not-allowed.signin": "Sign in",
   "signup.taken.signin": "Sign in",
   /** Flows §3.2: the account may have been created. Sign in to find out. */
@@ -251,8 +263,9 @@ export const en = {
   "upload.review.preview.loading.a11y": (name: string) =>
     `Preview of ${name}, loading`,
   "upload.review.preview.failed": "No preview on this device",
-  /** Its bytes could not be read when chosen: the remedy is choosing it again. */
-  "upload.review.unreadable": "This photo couldn't be read. Pick it again.",
+  /** Its bytes could not be read when chosen: the remedy is choosing it again. Names the two buttons as they read (en.test.ts). */
+  "upload.review.unreadable":
+    "This photo couldn't be read. Press Take out, then choose it again with Add photos.",
   /** A choice over the cap on originals held at once (album.ts ORIGINALS_CAP). */
   "upload.too-large":
     "Those photos are too large to add together. Choose fewer photos at a time.",
@@ -291,8 +304,8 @@ export const en = {
   /** During the batch, and alone as its closing line: failed, or never ready. The cells say what to do; no reason (api-sketch §9.8). */
   "upload.batch.failed": (n: number) =>
     plural(L, n, {
-      one: (k) => `${k} photo hasn't finished uploading.`,
-      other: (k) => `${k} photos haven't finished uploading.`,
+      one: (k) => `${k} photo hasn't finished uploading. Look for it below.`,
+      other: (k) => `${k} photos haven't finished uploading. Look for them below.`,
     }),
   /** No technical reason, and no claim about security (brief §3). */
   "upload.batch.stay": "Keep this page open until it finishes.",
@@ -318,11 +331,14 @@ export const en = {
   // Failed on this device: nothing about it was sent.
   /** #17: stripping could not be confirmed, so it was not sent. Says what was not sent, not why the check failed. */
   "upload.not-stripped":
-    "This photo wasn't sent: this device couldn't confirm its location and camera details were removed.",
+    "This photo wasn't sent: this device couldn't confirm its location and camera details were removed. Try adding it from another phone or computer.",
   "upload.not-prepared":
-    "This photo couldn't be prepared on this device, so nothing was sent.",
+    "This photo couldn't be prepared on this device, so nothing was sent. Try adding it from another phone or computer.",
   "upload.refused":
-    "The server didn't accept this photo, so nothing was stored.",
+    "The server didn't accept this photo, so nothing was stored. Try adding it from another phone or computer.",
+  /** The owner's cell whose metadata is unusable: the Remove button is beside it. */
+  "album.cell.unavailable":
+    "This photo can't be shown. Remove it, then add it again.",
   "upload.dismiss": "Dismiss",
 
   "album.leaving":

@@ -30,6 +30,11 @@
   let password = $state("");
   const busy = $derived(phase === "busy" || phase === "deriving");
   const ready = $derived(email.trim() !== "" && password !== "");
+  /** Submit was pressed with a field empty: say so, as unlock does, rather than a button that does nothing. */
+  let empty = $state(false);
+  $effect(() => {
+    if (ready) empty = false;
+  });
   const passwordProblem = $derived(
     phase === "too-short"
       ? t["signup.too-short"]
@@ -49,7 +54,11 @@
 
   function submit(e: SubmitEvent): void {
     e.preventDefault();
-    if (busy || !ready || phase === "paused") return;
+    if (busy || phase === "paused") return;
+    if (!ready) {
+      empty = true;
+      return;
+    }
     onSubmit(email, password);
   }
 </script>
@@ -123,7 +132,9 @@
       <strong>{t["signup.loss"]}</strong>
     </div>
 
-    {#if phase === "failed"}
+    {#if empty}
+      <Alert text={t["signup.empty"]} />
+    {:else if phase === "failed"}
       <Alert text={t["signup.failed"]} />
     {:else if phase === "paused" && pausedUntil !== null}
       <Paused until={pausedUntil} />
@@ -134,7 +145,7 @@
     {:else if phase === "busy"}
       <p class="note" role="status">{t["signup.busy"]}</p>
     {:else}
-      <button class="btn" type="submit" disabled={!ready || phase === "paused"}
+      <button class="btn" type="submit" disabled={phase === "paused"}
         >{t["signup.submit"]}</button
       >
     {/if}

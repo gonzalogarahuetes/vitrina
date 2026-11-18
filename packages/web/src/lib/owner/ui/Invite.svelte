@@ -228,6 +228,10 @@
       {#if problemText(invite.problem) !== null}
         <Alert text={problemText(invite.problem) ?? ""} />
       {/if}
+      {#if invite.problem === "device"}
+        <!-- invite.device says to reload: the button does it. The token is kept, so the reload comes back to unlock. -->
+        <button class="btn ghost" type="button" onclick={() => location.reload()}>{t["derive.failed.retry"]}</button>
+      {/if}
 
       {#if invite.step === "creating"}
         <p class="note" role="status">{t["invite.creating"]}</p>
