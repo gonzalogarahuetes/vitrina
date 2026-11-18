@@ -68,6 +68,8 @@ const JFIF = ascii("JFIF\u0000");
 const JFXX = ascii("JFXX\u0000");
 const ICC = ascii("ICC_PROFILE\u0000");
 const EXIF_APP1 = ascii("Exif\u0000");
+/* The full Exif APP1 identifier, which the TIFF header follows. */
+const EXIF_SIG = ascii("Exif\u0000\u0000");
 const XMP_NS = ascii("ns.adobe.com/");
 
 /* Frame markers that carry dimensions: baseline, extended, progressive. The arithmetic and lossless ones a canvas never writes. */
@@ -102,10 +104,10 @@ function segmentFinding(
 
 /**
  * The stored frame size of an ORIGINAL file, from its SOF segment, for
- * choosing a downscaled decode. Reads markers only, never their contents:
- * this is not the EXIF parser the brief avoids. Not oriented — but its long
- * edge is the oriented long edge, because rotation only swaps the two.
- * Null when `b` is not a JPEG or the frame is not within it.
+ * choosing a downscaled decode. Reads markers only, never their contents.
+ * Not oriented — but its long edge is the oriented long edge, because
+ * rotation only swaps the two. Null when `b` is not a JPEG or the frame is
+ * not within it.
  */
 export function jpegFrameSize(
   b: Uint8Array,
@@ -136,6 +138,66 @@ export function jpegFrameSize(
       return width > 0 && height > 0 ? { width, height } : null;
     }
     i += length;
+  }
+  return null;
+}
+
+/**
+ * The EXIF Orientation tag (0x0112) of an ORIGINAL file, from IFD0 of its
+ * first Exif APP1, both byte orders, past any other APP1 (XMP) before it.
+ * Null for no Exif, no tag, anything malformed or cut short, or a value
+ * outside 1–8. Read only to know which shape a correctly oriented decode has
+ * (prepare.ts's decode()); the browser is what applies it.
+ */
+export function exifOrientation(b: Uint8Array): number | null {
+  if (b.length < 4 || b[0] !== 0xff || b[1] !== 0xd8) return null;
+  let i = 2;
+  while (i + 4 <= b.length) {
+    if (b[i] !== 0xff) return null;
+    while (i < b.length && b[i] === 0xff) i++;
+    const marker = b[i] as number;
+    i++;
+    if (marker === 0xd9 || marker === 0xda) return null; // the end, or image data: no Exif before it
+    if ((marker >= 0xd0 && marker <= 0xd7) || marker === 0x01) continue;
+    if (i + 2 > b.length) return null;
+    const length = ((b[i] as number) << 8) | (b[i + 1] as number);
+    if (length < 2 || i + length > b.length) return null;
+    const dataAt = i + 2;
+    if (marker === 0xe1 && startsWith(b, dataAt, EXIF_SIG))
+      return tiffOrientation(b.subarray(dataAt + EXIF_SIG.length, i + length));
+    i += length;
+  }
+  return null;
+}
+
+function tiffOrientation(t: Uint8Array): number | null {
+  if (t.length < 8) return null;
+  const le = t[0] === 0x49 && t[1] === 0x49; // "II"
+  if (!le && !(t[0] === 0x4d && t[1] === 0x4d)) return null; // "MM"
+  const u16 = (o: number): number | null =>
+    o + 2 > t.length
+      ? null
+      : le
+        ? (t[o] as number) | ((t[o + 1] as number) << 8)
+        : ((t[o] as number) << 8) | (t[o + 1] as number);
+  const u32 = (o: number): number | null => {
+    const a = u16(o);
+    const c = u16(o + 2);
+    if (a === null || c === null) return null;
+    return le ? a + c * 65536 : a * 65536 + c;
+  };
+  if (u16(2) !== 42) return null;
+  const ifd = u32(4);
+  if (ifd === null) return null;
+  const n = u16(ifd);
+  if (n === null) return null;
+  for (let k = 0; k < n; k++) {
+    const e = ifd + 2 + 12 * k;
+    if (e + 12 > t.length) return null; // the IFD runs off the end
+    if (u16(e) !== 0x0112) continue;
+    if (u16(e + 2) !== 3) return null; // SHORT, as the standard has it
+    const v = u16(e + 8);
+    return v !== null && v >= 1 && v <= 8 ? v : null;
   }
   return null;
 }
